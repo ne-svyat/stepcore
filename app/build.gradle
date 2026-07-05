@@ -11,8 +11,23 @@ android {
         applicationId "com.vasil.stepcore"
         minSdk 30
         targetSdk 34
-        versionCode 1
-        versionName "0.1"
+        versionCode 2
+        versionName "0.2"
+    }
+
+    signingConfigs {
+        stable {
+            storeFile file("release.keystore")
+            storePassword "stepcore123"
+            keyAlias "stepcore"
+            keyPassword "stepcore123"
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.stable
+        }
     }
 
     compileOptions {
