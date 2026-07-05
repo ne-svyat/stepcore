@@ -39,6 +39,12 @@ class StepService : Service(), SensorEventListener {
     // Тикер жив, а событий сенсора нет = система усыпила сенсор.
     // Нет ни того ни другого в журнале при дыре в счёте = сервис был убит.
     @Volatile private var lastSensorEventMs = 0L
+
+    // Гибрид: аппаратный TYPE_STEP_COUNTER (чип, считает при спящем CPU).
+    // Пока наш детектор жив - его база догоняет аппаратный итог (delta=0).
+    // После дыры в событиях акселерометра (сон/убийство) разница
+    // база->итог досчитывается как шаги ходьбы.
+    private var hwBaseline = -1L
     @Volatile private var sensorSilenceLogged = false
     private var currentDay: String = ""
 
@@ -88,6 +94,13 @@ class StepService : Service(), SensorEventListener {
         detector.hasGyro = gyro != null
         if (gyro != null) {
             sensorManager.registerListener(this, gyro, SensorManager.SENSOR_DELAY_GAME)
+        }
+        hwBaseline = prefs.getLong(KEY_HW_BASE, -1L)
+        val hwCounter = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
+        if (hwCounter != null) {
+            sensorManager.registerListener(this, hwCounter, SensorManager.SENSOR_DELAY_NORMAL)
+        } else {
+            logEvent("⚠ Аппаратного счётчика шагов нет на устройстве")
         }
         StepsState.serviceRunning.value = true
 
@@ -164,6 +177,38 @@ class StepService : Service(), SensorEventListener {
         sensorSilenceLogged = false
         val timeMs = event.timestamp / 1_000_000
         when (event.sensor.type) {
+            Sensor.TYPE_STEP_COUNTER -> {
+                val hwTotal = event.values[0].toLong()
+                // сброс после перезагрузки телефона (чип стартует с нуля)
+                if (hwBaseline < 0 || hwTotal < hwBaseline) {
+                    hwBaseline = hwTotal
+                    persistHwBase()
+                    return
+                }
+                val accelGapMs = SystemClock.elapsedRealtime() - lastSensorEventMs
+                if (accelGapMs < 60_000) {
+                    // наш детектор жив - аппаратный просто следит
+                    hwBaseline = hwTotal
+                    persistHwBase()
+                } else {
+                    // была дыра (экран выключен / сервис спал) - досчитываем
+                    val delta = (hwTotal - hwBaseline).toInt()
+                    hwBaseline = hwTotal
+                    persistHwBase()
+                    if (delta > 0) {
+                        rolloverDayIfNeeded()
+                        walkSteps += delta
+                        detector.restoreCount(detector.stepCount + delta)
+                        StepsState.steps.value = detector.stepCount
+                        persistPrefs()
+                        persistDb()
+                        logEvent("Досчитано аппаратно: $delta шагов (телефон спал ${accelGapMs / 1000} с)")
+                        getSystemService(NotificationManager::class.java)
+                            .notify(NOTIF_ID, buildNotification(detector.stepCount))
+                    }
+                }
+                return
+            }
             Sensor.TYPE_GYROSCOPE -> {
                 if (calibrating == null) {
                     detector.onGyro(event.values[0], event.values[1], event.values[2], timeMs)
@@ -256,6 +301,11 @@ class StepService : Service(), SensorEventListener {
         detector.restoreCount(0)
     }
 
+    private fun persistHwBase() {
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+            .putLong(KEY_HW_BASE, hwBaseline).apply()
+    }
+
     private fun persistPrefs() {
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
             .putString(KEY_DAY, currentDay)
@@ -315,6 +365,7 @@ class StepService : Service(), SensorEventListener {
         const val KEY_STEPS = "steps"
         const val KEY_WALK = "walk_steps"
         const val KEY_RUN = "run_steps"
+        const val KEY_HW_BASE = "hw_baseline"
         const val ACTION_CAL_WALK = "cal_walk"
         const val ACTION_CAL_RUN = "cal_run"
         const val ACTION_CAL_STOP = "cal_stop"
