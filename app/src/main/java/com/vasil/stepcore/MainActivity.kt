@@ -34,6 +34,7 @@ class MainActivity : AppCompatActivity() {
         val modeView = findViewById<TextView>(R.id.modeText)
         val calView = findViewById<TextView>(R.id.calText)
         val toggleBtn = findViewById<Button>(R.id.toggleButton)
+        val historyBtn = findViewById<Button>(R.id.historyButton)
         val calWalkBtn = findViewById<Button>(R.id.calWalkButton)
         val calRunBtn = findViewById<Button>(R.id.calRunButton)
         val hapticSwitch = findViewById<SwitchCompat>(R.id.hapticSwitch)
@@ -48,9 +49,6 @@ class MainActivity : AppCompatActivity() {
         hapticSwitch.setOnCheckedChangeListener { _, checked ->
             StepsState.hapticEnabled.value = checked
             prefs.edit().putBoolean("haptic", checked).apply()
-            // ДИАГНОСТИКА: тестовая вибрация при включении.
-            // Чувствуешь её - мотор и права ок, дело было в сервисе.
-            // Не чувствуешь - вибрацию режет система (MIUI).
             if (checked) {
                 val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
                 vm.defaultVibrator.vibrate(VibrationEffect.createOneShot(200, 255))
@@ -66,6 +64,10 @@ class MainActivity : AppCompatActivity() {
                     Manifest.permission.POST_NOTIFICATIONS
                 ))
             }
+        }
+
+        historyBtn.setOnClickListener {
+            startActivity(Intent(this, HistoryActivity::class.java))
         }
 
         calWalkBtn.setOnClickListener { toggleCalibration("walk", calWalkBtn, calRunBtn) }

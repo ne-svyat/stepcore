@@ -15,6 +15,11 @@ import android.os.IBinder
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import java.time.LocalDate
 
 class StepService : Service(), SensorEventListener {
@@ -22,8 +27,15 @@ class StepService : Service(), SensorEventListener {
     private lateinit var sensorManager: SensorManager
     private lateinit var vibrator: Vibrator
     private val detector = StepDetector()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var lastNotifiedSteps = -1
     private var currentDay: String = ""
+
+    // раздельный счёт по режимам
+    private var walkSteps = 0
+    private var runSteps = 0
+    private var lastLoggedMode = "IDLE"
+    private var stepsSinceDbWrite = 0
 
     private var calibrating: String? = null
     private val calIntervals = ArrayList<Long>()
@@ -38,10 +50,10 @@ class StepService : Service(), SensorEventListener {
         currentDay = LocalDate.now().toString()
         val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
         if (prefs.getString(KEY_DAY, "") == currentDay) {
-            detector.restoreCount(prefs.getInt(KEY_STEPS, 0))
+            walkSteps = prefs.getInt(KEY_WALK, 0)
+            runSteps = prefs.getInt(KEY_RUN, 0)
+            detector.restoreCount(walkSteps + runSteps)
         }
-        // ФИКС: сервис сам читает настройку вибрации из prefs,
-        // а не ждёт, пока её выставит открытый экран
         StepsState.hapticEnabled.value = prefs.getBoolean("haptic", false)
         loadProfile()
         StepsState.steps.value = detector.stepCount
@@ -84,8 +96,7 @@ class StepService : Service(), SensorEventListener {
         val median = calIntervals.sorted()[calIntervals.size / 2]
         val lo = (median * 0.65).toLong()
         val hi = (median * 1.35).toLong()
-        val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
-        prefs.edit()
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
             .putLong("${kind}_min_interval", lo)
             .putLong("${kind}_max_interval", hi)
             .apply()
@@ -116,22 +127,21 @@ class StepService : Service(), SensorEventListener {
                 val added = detector.onAccel(
                     event.values[0], event.values[1], event.values[2], timeMs
                 )
+                maybeLogModeChange()
                 if (added > 0) {
                     if (calibrating != null) {
                         if (calLastStepMs > 0) calIntervals.add(timeMs - calLastStepMs)
                         calLastStepMs = timeMs
                     }
-                    val today = LocalDate.now().toString()
-                    if (today != currentDay) {
-                        currentDay = today
-                        detector.restoreCount(0)
-                    }
+                    rolloverDayIfNeeded()
+                    if (detector.mode == StepDetector.Mode.RUN) runSteps += added
+                    else walkSteps += added
                     StepsState.steps.value = detector.stepCount
                     StepsState.mode.value = detector.mode.name
-                    persist()
+                    persistPrefs()
+                    stepsSinceDbWrite += added
+                    if (stepsSinceDbWrite >= 25) { stepsSinceDbWrite = 0; persistDb() }
                     if (StepsState.hapticEnabled.value) {
-                        // ФИКС: 50 мс на максимальной амплитуде -
-                        // короче/тише мотор Xiaomi не отрабатывает
                         vibrator.vibrate(VibrationEffect.createOneShot(50, 255))
                     }
                     if (detector.stepCount - lastNotifiedSteps >= 10) {
@@ -147,19 +157,54 @@ class StepService : Service(), SensorEventListener {
         }
     }
 
-    private fun persist() {
+    /** Смена режима -> строка в журнал (не чаще, чем реальная смена). */
+    private fun maybeLogModeChange() {
+        val m = detector.mode.name
+        if (m == lastLoggedMode) return
+        lastLoggedMode = m
+        val text = when (m) { "WALK" -> "Ходьба"; "RUN" -> "Бег"; else -> "Покой" }
+        val now = System.currentTimeMillis()
+        val date = LocalDate.now().toString()
+        scope.launch {
+            AppDb.get(this@StepService).dao().addEvent(
+                EventRecord(timeMs = now, date = date, text = text)
+            )
+        }
+    }
+
+    private fun rolloverDayIfNeeded() {
+        val today = LocalDate.now().toString()
+        if (today == currentDay) return
+        persistDb() // дозаписать вчерашний день
+        currentDay = today
+        walkSteps = 0; runSteps = 0
+        detector.restoreCount(0)
+    }
+
+    private fun persistPrefs() {
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
             .putString(KEY_DAY, currentDay)
             .putInt(KEY_STEPS, detector.stepCount)
+            .putInt(KEY_WALK, walkSteps)
+            .putInt(KEY_RUN, runSteps)
             .apply()
+    }
+
+    private fun persistDb() {
+        val d = currentDay; val w = walkSteps; val r = runSteps
+        scope.launch {
+            AppDb.get(this@StepService).dao().upsertDay(DayRecord(d, w, r))
+        }
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
 
     override fun onDestroy() {
         sensorManager.unregisterListener(this)
-        persist()
+        persistPrefs()
+        persistDb()
         StepsState.serviceRunning.value = false
+        scope.cancel()
         super.onDestroy()
     }
 
@@ -192,6 +237,8 @@ class StepService : Service(), SensorEventListener {
         const val PREFS = "stepcore"
         const val KEY_DAY = "day"
         const val KEY_STEPS = "steps"
+        const val KEY_WALK = "walk_steps"
+        const val KEY_RUN = "run_steps"
         const val ACTION_CAL_WALK = "cal_walk"
         const val ACTION_CAL_RUN = "cal_run"
         const val ACTION_CAL_STOP = "cal_stop"

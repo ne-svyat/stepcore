@@ -37,20 +37,27 @@
         android:text="Старт"
         android:layout_marginTop="24dp" />
 
+    <Button
+        android:id="@+id/historyButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="История"
+        android:layout_marginTop="8dp" />
+
     <androidx.appcompat.widget.SwitchCompat
         android:id="@+id/hapticSwitch"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="Вибрация на шаг  "
         android:textSize="16sp"
-        android:layout_marginTop="20dp" />
+        android:layout_marginTop="16dp" />
 
     <Button
         android:id="@+id/calWalkButton"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="Калибровка: шаг"
-        android:layout_marginTop="20dp" />
+        android:layout_marginTop="16dp" />
 
     <Button
         android:id="@+id/calRunButton"
