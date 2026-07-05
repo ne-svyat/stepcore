@@ -45,6 +45,10 @@ class StepService : Service(), SensorEventListener {
     // После дыры в событиях акселерометра (сон/убийство) разница
     // база->итог досчитывается как шаги ходьбы.
     private var hwBaseline = -1L
+    // зазор считаем ТОЛЬКО по акселерометру: события чипа/гироскопа
+    // не должны маскировать дыру (баг V7.4)
+    @Volatile private var lastAccelEventMs = 0L
+    private var forceBackfill = false
     @Volatile private var sensorSilenceLogged = false
     private var currentDay: String = ""
 
@@ -96,6 +100,14 @@ class StepService : Service(), SensorEventListener {
             sensorManager.registerListener(this, gyro, SensorManager.SENSOR_DELAY_GAME)
         }
         hwBaseline = prefs.getLong(KEY_HW_BASE, -1L)
+        val lastAlive = prefs.getLong(KEY_ALIVE, 0L)
+        if (lastAlive > 0) {
+            val deadSec = (System.currentTimeMillis() - lastAlive) / 1000
+            if (deadSec > 60) {
+                forceBackfill = true
+                logEvent("⚠ Сервис был мёртв $deadSec с")
+            }
+        }
         val hwCounter = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
         if (hwCounter != null) {
             sensorManager.registerListener(this, hwCounter, SensorManager.SENSOR_DELAY_NORMAL)
@@ -114,12 +126,14 @@ class StepService : Service(), SensorEventListener {
                 if (tickGap > HEARTBEAT_MS + 15_000) {
                     logEvent("⚠ CPU спал ~${(tickGap - HEARTBEAT_MS) / 1000} с")
                 }
-                val silence = now - lastSensorEventMs
+                val silence = if (lastAccelEventMs == 0L) 0L else now - lastAccelEventMs
                 if (silence > 60_000 && !sensorSilenceLogged) {
                     sensorSilenceLogged = true
                     logEvent("⚠ Датчик молчит ${silence / 1000} с (CPU жив)")
                 }
                 lastTick = now
+                getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                    .putLong(KEY_ALIVE, System.currentTimeMillis()).apply()
             }
         }
     }
@@ -170,11 +184,14 @@ class StepService : Service(), SensorEventListener {
 
     override fun onSensorChanged(event: SensorEvent) {
         val nowRt = SystemClock.elapsedRealtime()
-        if (lastSensorEventMs > 0 && nowRt - lastSensorEventMs > 60_000) {
-            logEvent("⚠ Датчик молчал ${(nowRt - lastSensorEventMs) / 1000} с")
-        }
         lastSensorEventMs = nowRt
-        sensorSilenceLogged = false
+        if (event.sensor.type == Sensor.TYPE_ACCELEROMETER) {
+            if (lastAccelEventMs > 0 && nowRt - lastAccelEventMs > 60_000) {
+                logEvent("⚠ Акселерометр молчал ${(nowRt - lastAccelEventMs) / 1000} с")
+            }
+            lastAccelEventMs = nowRt
+            sensorSilenceLogged = false
+        }
         val timeMs = event.timestamp / 1_000_000
         when (event.sensor.type) {
             Sensor.TYPE_STEP_COUNTER -> {
@@ -185,8 +202,10 @@ class StepService : Service(), SensorEventListener {
                     persistHwBase()
                     return
                 }
-                val accelGapMs = SystemClock.elapsedRealtime() - lastSensorEventMs
-                if (accelGapMs < 60_000) {
+                val accelGapMs =
+                    if (lastAccelEventMs == 0L) Long.MAX_VALUE
+                    else SystemClock.elapsedRealtime() - lastAccelEventMs
+                if (!forceBackfill && accelGapMs < 60_000) {
                     // наш детектор жив - аппаратный просто следит
                     hwBaseline = hwTotal
                     persistHwBase()
@@ -195,6 +214,7 @@ class StepService : Service(), SensorEventListener {
                     val delta = (hwTotal - hwBaseline).toInt()
                     hwBaseline = hwTotal
                     persistHwBase()
+                    forceBackfill = false
                     if (delta > 0) {
                         rolloverDayIfNeeded()
                         walkSteps += delta
@@ -366,6 +386,7 @@ class StepService : Service(), SensorEventListener {
         const val KEY_WALK = "walk_steps"
         const val KEY_RUN = "run_steps"
         const val KEY_HW_BASE = "hw_baseline"
+        const val KEY_ALIVE = "last_alive_ms"
         const val ACTION_CAL_WALK = "cal_walk"
         const val ACTION_CAL_RUN = "cal_run"
         const val ACTION_CAL_STOP = "cal_stop"
