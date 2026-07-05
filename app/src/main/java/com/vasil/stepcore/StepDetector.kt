@@ -4,16 +4,14 @@ import kotlin.math.abs
 import kotlin.math.sqrt
 
 /**
- * Детектор V6.4.
+ * Детектор V6.5 = V6.4 + "тёплый повторный вход".
  *
- * Фикс дребезга WALK<->RUN (терял ~14% беговых шагов):
- * 1. Гистерезис режимов: в RUN при emaInterval < 380 мс, обратно в WALK
- *    только при > 500 мс. Зона 380-500 - мёртвая: режим держится.
- *    Раньше граница была одна (400 мс), беговой каденс 350-420 мс
- *    болтался на ней, и каждый флип ронял детектор в карантин.
- * 2. В подтверждённом движении интервал шага проверяется по
- *    ОБЪЕДИНЁННОМУ диапазону (runMin..walkMax): смена темпа не
- *    выбрасывает шаг, режим догоняет через гистерезис.
+ * Потери бега после V6.4 (~8-10/100) - пересборка карантина: каждый
+ * разрыв ритма (разворот, микропауза) требовал снова 4 идеальных шага.
+ * Фикс: если движение прервалось < WARM_WINDOW_MS назад, человек
+ * продолжает то же занятие - хватает 2 шагов. Холодный старт из покоя
+ * по-прежнему требует 4: разовые дёрганья не проходят в любом случае,
+ * ритм обязателен всегда.
  */
 class StepDetector {
 
@@ -51,6 +49,10 @@ class StepDetector {
     private val pendingAmps = ArrayList<Float>()
     private var lastConfirmedMs = 0L
 
+    // тёплый вход: когда движение потеряно и каким оно было
+    private var motionLostAtMs = 0L
+    private var lastMotionMode = Mode.IDLE
+
     private var emaIntervalMs = 0f
     private var emaAmp = 0f
 
@@ -69,7 +71,9 @@ class StepDetector {
         if (sqrt(gyroRmsSq) > cap) {
             shakeBlockUntilMs = timeMs + SHAKE_STICKY_MS
             pendingTimesMs.clear(); pendingAmps.clear()
-            mode = Mode.IDLE
+            // тряска - НЕ мягкая пауза: тёплый вход не положен
+            motionLostAtMs = 0L
+            dropMode(warm = false, timeMs = timeMs)
         }
     }
 
@@ -82,7 +86,10 @@ class StepDetector {
         val gn = sqrt(gx * gx + gy * gy + gz * gz)
         val gravTol = if (mode == Mode.RUN) 0.45f else 0.25f
         if (gn < 9.81f * (1 - gravTol) || gn > 9.81f * (1 + gravTol)) {
-            if (mode != Mode.RUN) { pendingTimesMs.clear(); pendingAmps.clear(); mode = Mode.IDLE }
+            if (mode != Mode.RUN) {
+                pendingTimesMs.clear(); pendingAmps.clear()
+                dropMode(warm = false, timeMs = timeMs)
+            }
             return 0
         }
 
@@ -103,8 +110,6 @@ class StepDetector {
 
         if (timeMs < shakeBlockUntilMs) return 0
 
-        // В движении потолки - от "мягчайшего" из режимов, чтобы смена
-        // темпа не резала пики до того, как гистерезис переключит режим
         val peakCap = if (mode != Mode.IDLE) profile.runPeakCap
         else maxOf(profile.walkPeakCap, profile.runPeakCap * 0.6f)
         val minInterval = if (mode != Mode.IDLE) profile.runMinIntervalMs else 280L
@@ -120,7 +125,9 @@ class StepDetector {
 
         if (!isPeak) {
             val timeout = maxTimeout()
-            if (mode != Mode.IDLE && timeMs - lastConfirmedMs > timeout) mode = Mode.IDLE
+            if (mode != Mode.IDLE && timeMs - lastConfirmedMs > timeout) {
+                dropMode(warm = true, timeMs = timeMs) // ритм угас сам - мягкая пауза
+            }
             if (mode == Mode.IDLE && pendingTimesMs.isNotEmpty() &&
                 timeMs - pendingTimesMs.last() > PENDING_TIMEOUT_MS
             ) { pendingTimesMs.clear(); pendingAmps.clear() }
@@ -132,7 +139,6 @@ class StepDetector {
 
         if (mode != Mode.IDLE) {
             val interval = timeMs - lastConfirmedMs
-            // объединённый диапазон обоих режимов
             if (interval in profile.runMinIntervalMs..profile.walkMaxIntervalMs) {
                 lastConfirmedMs = timeMs
                 updateEstimates(interval.toFloat(), vert)
@@ -140,16 +146,17 @@ class StepDetector {
                 stepCount++
                 return 1
             }
-            mode = Mode.IDLE
+            dropMode(warm = true, timeMs = timeMs)
         }
 
         pendingTimesMs.add(timeMs)
         pendingAmps.add(vert)
-        if (pendingTimesMs.size > QUARANTINE_STEPS) {
-            pendingTimesMs.removeAt(0); pendingAmps.removeAt(0)
+        val needed = quarantineNeeded(timeMs)
+        if (pendingTimesMs.size > needed) {
+            while (pendingTimesMs.size > needed) { pendingTimesMs.removeAt(0); pendingAmps.removeAt(0) }
         }
-        if (pendingTimesMs.size == QUARANTINE_STEPS) {
-            val cls = classifyPending()
+        if (pendingTimesMs.size == needed && needed >= 2) {
+            val cls = classifyPending(timeMs)
             if (cls != Mode.IDLE) {
                 mode = cls
                 lastConfirmedMs = timeMs
@@ -164,26 +171,43 @@ class StepDetector {
         return 0
     }
 
-    private fun classifyPending(): Mode {
+    /** Сколько шагов нужно для подтверждения: 2 после свежей паузы, иначе 4. */
+    private fun quarantineNeeded(timeMs: Long): Int =
+        if (motionLostAtMs > 0L && timeMs - motionLostAtMs < WARM_WINDOW_MS &&
+            lastMotionMode != Mode.IDLE
+        ) WARM_QUARANTINE_STEPS else QUARANTINE_STEPS
+
+    private fun dropMode(warm: Boolean, timeMs: Long) {
+        if (mode != Mode.IDLE) {
+            lastMotionMode = mode
+            motionLostAtMs = if (warm) timeMs else 0L
+        }
+        mode = Mode.IDLE
+    }
+
+    private fun classifyPending(timeMs: Long): Mode {
         val t = pendingTimesMs
         val intervals = ArrayList<Long>(t.size - 1)
         for (i in 1 until t.size) intervals.add(t[i] - t[i - 1])
         val mean = intervals.average()
         if (!intervals.all { abs(it - mean) / mean < 0.25 }) return Mode.IDLE
         val amp = pendingAmps.average().toFloat()
-        return when {
+        val byRange = when {
             mean >= profile.walkMinIntervalMs && mean <= profile.walkMaxIntervalMs &&
                     amp < profile.walkPeakCap -> Mode.WALK
             mean >= profile.runMinIntervalMs && mean <= profile.runMaxIntervalMs &&
                     amp < profile.runPeakCap -> Mode.RUN
             else -> Mode.IDLE
         }
+        // Тёплый вход (2 шага = 1 интервал): дополнительно требуем совпадения
+        // с прежним режимом - двум шагам доверяем только на продолжение
+        if (byRange != Mode.IDLE &&
+            quarantineNeeded(timeMs) == WARM_QUARANTINE_STEPS &&
+            byRange != lastMotionMode
+        ) return Mode.IDLE
+        return byRange
     }
 
-    /**
-     * Гистерезис: границы входа и выхода из RUN разнесены.
-     * < RUN_ENTER_MS -> RUN; > RUN_EXIT_MS -> WALK; между - держим режим.
-     */
     private fun reclassify() {
         mode = when {
             emaIntervalMs < RUN_ENTER_MS -> Mode.RUN
@@ -208,6 +232,8 @@ class StepDetector {
 
     companion object {
         private const val QUARANTINE_STEPS = 4
+        private const val WARM_QUARANTINE_STEPS = 2
+        private const val WARM_WINDOW_MS = 5000L
         private const val PENDING_TIMEOUT_MS = 2000L
         private const val SHAKE_STICKY_MS = 3000L
         private const val WIDTH_EXEMPT_AMP = 3.5f
