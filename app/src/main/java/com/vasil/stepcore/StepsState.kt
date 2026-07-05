@@ -6,4 +6,6 @@ object StepsState {
     val steps = MutableStateFlow(0)
     val serviceRunning = MutableStateFlow(false)
     val hapticEnabled = MutableStateFlow(false)
+    val mode = MutableStateFlow("IDLE")
+    val calibrationState = MutableStateFlow("")
 }

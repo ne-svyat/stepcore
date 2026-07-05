@@ -25,6 +25,11 @@ class StepService : Service(), SensorEventListener {
     private var lastNotifiedSteps = -1
     private var currentDay: String = ""
 
+    // --- калибровка: копим интервалы и амплитуды за сессию ---
+    private var calibrating: String? = null // "walk" | "run" | null
+    private val calIntervals = ArrayList<Long>()
+    private var calLastStepMs = 0L
+
     override fun onCreate() {
         super.onCreate()
         sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
@@ -36,6 +41,7 @@ class StepService : Service(), SensorEventListener {
         if (prefs.getString(KEY_DAY, "") == currentDay) {
             detector.restoreCount(prefs.getInt(KEY_STEPS, 0))
         }
+        loadProfile()
         StepsState.steps.value = detector.stepCount
 
         createChannel()
@@ -43,7 +49,6 @@ class StepService : Service(), SensorEventListener {
 
         val accel = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         sensorManager.registerListener(this, accel, SensorManager.SENSOR_DELAY_GAME)
-        // Гироскоп - страж против тряски
         val gyro = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
         if (gyro != null) {
             sensorManager.registerListener(this, gyro, SensorManager.SENSOR_DELAY_GAME)
@@ -51,11 +56,64 @@ class StepService : Service(), SensorEventListener {
         StepsState.serviceRunning.value = true
     }
 
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        when (intent?.action) {
+            ACTION_CAL_WALK -> startCalibration("walk")
+            ACTION_CAL_RUN -> startCalibration("run")
+            ACTION_CAL_STOP -> finishCalibration()
+        }
+        return START_STICKY
+    }
+
+    private fun startCalibration(kind: String) {
+        calibrating = kind
+        calIntervals.clear()
+        calLastStepMs = 0L
+        StepsState.calibrationState.value = if (kind == "walk") "Калибровка: иди обычным шагом" else "Калибровка: беги"
+    }
+
+    /**
+     * Завершение калибровки: берём медиану интервалов пользователя и
+     * строим персональный диапазон +-35% вокруг неё. Медиана вместо
+     * среднего - устойчива к паузам и сбоям.
+     */
+    private fun finishCalibration() {
+        val kind = calibrating ?: return
+        calibrating = null
+        if (calIntervals.size < 10) {
+            StepsState.calibrationState.value = "Мало данных (${calIntervals.size} шагов), профиль не изменён"
+            return
+        }
+        val median = calIntervals.sorted()[calIntervals.size / 2]
+        val lo = (median * 0.65).toLong()
+        val hi = (median * 1.35).toLong()
+        val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+        prefs.edit()
+            .putLong("${kind}_min_interval", lo)
+            .putLong("${kind}_max_interval", hi)
+            .apply()
+        loadProfile()
+        StepsState.calibrationState.value =
+            "Готово: твой ${if (kind == "walk") "шаг" else "бег"} = ${median} мс/шаг (диапазон $lo-$hi)"
+    }
+
+    private fun loadProfile() {
+        val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+        val p = detector.profile
+        p.walkMinIntervalMs = prefs.getLong("walk_min_interval", p.walkMinIntervalMs)
+        p.walkMaxIntervalMs = prefs.getLong("walk_max_interval", p.walkMaxIntervalMs)
+        p.runMinIntervalMs = prefs.getLong("run_min_interval", p.runMinIntervalMs)
+        p.runMaxIntervalMs = prefs.getLong("run_max_interval", p.runMaxIntervalMs)
+    }
+
     override fun onSensorChanged(event: SensorEvent) {
         val timeMs = event.timestamp / 1_000_000
         when (event.sensor.type) {
             Sensor.TYPE_GYROSCOPE -> {
-                detector.onGyro(event.values[0], event.values[1], event.values[2], timeMs)
+                // Во время калибровки бега страж гироскопа не должен мешать
+                if (calibrating == null) {
+                    detector.onGyro(event.values[0], event.values[1], event.values[2], timeMs)
+                }
                 return
             }
             Sensor.TYPE_ACCELEROMETER -> {
@@ -63,19 +121,21 @@ class StepService : Service(), SensorEventListener {
                     event.values[0], event.values[1], event.values[2], timeMs
                 )
                 if (added > 0) {
+                    if (calibrating != null) {
+                        if (calLastStepMs > 0) calIntervals.add(timeMs - calLastStepMs)
+                        calLastStepMs = timeMs
+                    }
                     val today = LocalDate.now().toString()
                     if (today != currentDay) {
                         currentDay = today
                         detector.restoreCount(0)
                     }
                     StepsState.steps.value = detector.stepCount
+                    StepsState.mode.value = detector.mode.name
                     persist()
                     if (StepsState.hapticEnabled.value) {
-                        // 30 мс + системная амплитуда: короче Xiaomi не отрабатывает
                         vibrator.vibrate(
-                            VibrationEffect.createOneShot(
-                                30, VibrationEffect.DEFAULT_AMPLITUDE
-                            )
+                            VibrationEffect.createOneShot(30, VibrationEffect.DEFAULT_AMPLITUDE)
                         )
                     }
                     if (detector.stepCount - lastNotifiedSteps >= 10) {
@@ -83,6 +143,9 @@ class StepService : Service(), SensorEventListener {
                         getSystemService(NotificationManager::class.java)
                             .notify(NOTIF_ID, buildNotification(detector.stepCount))
                     }
+                } else {
+                    val m = detector.mode.name
+                    if (StepsState.mode.value != m) StepsState.mode.value = m
                 }
             }
         }
@@ -133,5 +196,8 @@ class StepService : Service(), SensorEventListener {
         const val PREFS = "stepcore"
         const val KEY_DAY = "day"
         const val KEY_STEPS = "steps"
+        const val ACTION_CAL_WALK = "cal_walk"
+        const val ACTION_CAL_RUN = "cal_run"
+        const val ACTION_CAL_STOP = "cal_stop"
     }
 }

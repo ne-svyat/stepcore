@@ -20,16 +20,21 @@ class MainActivity : AppCompatActivity() {
             if (result.values.all { it }) startTracking()
         }
 
+    private var calibrating = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
         val stepsView = findViewById<TextView>(R.id.stepsText)
         val statusView = findViewById<TextView>(R.id.statusText)
+        val modeView = findViewById<TextView>(R.id.modeText)
+        val calView = findViewById<TextView>(R.id.calText)
         val toggleBtn = findViewById<Button>(R.id.toggleButton)
+        val calWalkBtn = findViewById<Button>(R.id.calWalkButton)
+        val calRunBtn = findViewById<Button>(R.id.calRunButton)
         val hapticSwitch = findViewById<SwitchCompat>(R.id.hapticSwitch)
 
-        // восстановить сохранённые шаги на экран даже без сервиса
         val prefs = getSharedPreferences(StepService.PREFS, MODE_PRIVATE)
         if (prefs.getString(StepService.KEY_DAY, "") == java.time.LocalDate.now().toString()) {
             StepsState.steps.value = prefs.getInt(StepService.KEY_STEPS, 0)
@@ -53,19 +58,49 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        calWalkBtn.setOnClickListener { toggleCalibration("walk", calWalkBtn, calRunBtn) }
+        calRunBtn.setOnClickListener { toggleCalibration("run", calRunBtn, calWalkBtn) }
+
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                launch {
-                    StepsState.steps.collect { stepsView.text = it.toString() }
-                }
+                launch { StepsState.steps.collect { stepsView.text = it.toString() } }
                 launch {
                     StepsState.serviceRunning.collect { running ->
                         statusView.text = if (running) "Считаю шаги" else "Остановлено"
                         toggleBtn.text = if (running) "Стоп" else "Старт"
                     }
                 }
+                launch {
+                    StepsState.mode.collect { m ->
+                        modeView.text = when (m) {
+                            "WALK" -> "Ходьба"
+                            "RUN" -> "Бег"
+                            else -> "Покой"
+                        }
+                    }
+                }
+                launch { StepsState.calibrationState.collect { calView.text = it } }
             }
         }
+    }
+
+    private fun toggleCalibration(kind: String, self: Button, other: Button) {
+        if (!StepsState.serviceRunning.value) {
+            StepsState.calibrationState.value = "Сначала нажми Старт"
+            return
+        }
+        val action = if (!calibrating) {
+            calibrating = true
+            self.text = if (kind == "walk") "Готово (шаг)" else "Готово (бег)"
+            other.isEnabled = false
+            if (kind == "walk") StepService.ACTION_CAL_WALK else StepService.ACTION_CAL_RUN
+        } else {
+            calibrating = false
+            self.text = if (kind == "walk") "Калибровка: шаг" else "Калибровка: бег"
+            other.isEnabled = true
+            StepService.ACTION_CAL_STOP
+        }
+        startForegroundService(Intent(this, StepService::class.java).setAction(action))
     }
 
     private fun startTracking() {

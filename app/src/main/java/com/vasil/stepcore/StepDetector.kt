@@ -4,23 +4,41 @@ import kotlin.math.abs
 import kotlin.math.sqrt
 
 /**
- * Детектор V3 = V2 (ритм-карантин) + три стража против тряски.
+ * Детектор V4: два режима (WALK / RUN) с автоматическим переключением.
  *
- * Страж 1 - ГИРОСКОП: рука не может трясти телефон без вращения
- * (кисть - шарнир). Ходьба почти не вращает телефон. RMS вращения
- * выше порога -> блок + залипание блока на 3 сек.
+ * Физика: у бега каденс 2.4-4 Гц и амплитуда 6-20 м/с2, у ходьбы
+ * 1.4-2.5 Гц и 1-4 м/с2. Один набор порогов не покрывает оба режима:
+ * потолки, спасающие от тряски рукой, режут бег.
  *
- * Страж 2 - АМПЛИТУДА: удар пятки на телефоне 1-4 м/с2. Тряска рукой
- * легко даёт 8+. Слишком сильный пик - не шаг.
+ * Решение: детектор ведёт скользящий каденс и медианную амплитуду
+ * ПОДТВЕРЖДЁННЫХ шагов. Профиль совпал с бегом -> потолки амплитуды
+ * и гироскопа поднимаются. Тряска всё равно блокируется: каденс > 4 Гц,
+ * или гироскоп выше даже бегового потолка, или ритм нестабилен.
  *
- * Страж 3 - ГРАВИТАЦИЯ: при жёсткой тряске EMA-оценка гравитации
- * разваливается и вертикальная проекция ловит горизонтальные рывки.
- * Если |g_оценка| ушла от 9.81 больше чем на 25% - счёт заморожен,
- * пока оценка не восстановится.
+ * Персональная калибровка: диапазоны можно заменить измеренными
+ * у конкретного человека (см. setProfile).
  */
 class StepDetector {
 
-    // --- оценка гравитации ---
+    enum class Mode { IDLE, WALK, RUN }
+
+    // --- профили порогов (могут быть переопределены калибровкой) ---
+    data class Profile(
+        var walkMinIntervalMs: Long = 400,
+        var walkMaxIntervalMs: Long = 1200,
+        var walkPeakCap: Float = 6f,
+        var walkGyroCap: Float = 3.5f,
+        var runMinIntervalMs: Long = 250,
+        var runMaxIntervalMs: Long = 420,
+        var runPeakCap: Float = 22f,
+        var runGyroCap: Float = 8f,
+    )
+    var profile = Profile()
+
+    var mode = Mode.IDLE
+        private set
+
+    // --- гравитация ---
     private var gx = 0f; private var gy = 0f; private var gz = 9.81f
     private val gravityAlpha = 0.02f
 
@@ -29,34 +47,38 @@ class StepDetector {
     private var wIdx = 0
     private var wFilled = 0
 
-    // --- анти-дребезг ---
+    // --- пики ---
     private var lastPeakMs = 0L
     private var crossedZero = true
     private var lastSign = 1
 
-    // --- ритм-карантин ---
+    // --- карантин ---
     private val pendingTimesMs = ArrayList<Long>()
-    private var walking = false
+    private val pendingAmps = ArrayList<Float>()
     private var lastConfirmedMs = 0L
 
-    // --- страж гироскопа ---
-    private var gyroRmsSq = 0f          // EMA квадрата угловой скорости
-    private var shakeBlockUntilMs = 0L  // залипание блока после тряски
+    // --- скользящие оценки для классификации ---
+    private var emaIntervalMs = 0f   // средний интервал подтверждённых шагов
+    private var emaAmp = 0f          // средняя амплитуда подтверждённых шагов
+
+    // --- гироскоп ---
+    private var gyroRmsSq = 0f
+    private var shakeBlockUntilMs = 0L
 
     var stepCount = 0
         private set
 
     fun restoreCount(saved: Int) { stepCount = saved }
 
-    /** События гироскопа. Вызывается сервисом. */
     fun onGyro(x: Float, y: Float, z: Float, timeMs: Long) {
         val sq = x * x + y * y + z * z
-        gyroRmsSq += 0.05f * (sq - gyroRmsSq) // EMA ~ окно 1 сек при 50 Гц
-        if (sqrt(gyroRmsSq) > GYRO_SHAKE_RADS) {
+        gyroRmsSq += 0.05f * (sq - gyroRmsSq)
+        // Потолок гироскопа зависит от режима: бегу разрешено трястись сильнее
+        val cap = if (mode == Mode.RUN) profile.runGyroCap else profile.walkGyroCap
+        if (sqrt(gyroRmsSq) > cap) {
             shakeBlockUntilMs = timeMs + SHAKE_STICKY_MS
-            // тряска обесценивает и накопленный карантин, и режим ходьбы
-            pendingTimesMs.clear()
-            walking = false
+            pendingTimesMs.clear(); pendingAmps.clear()
+            mode = Mode.IDLE
         }
     }
 
@@ -67,11 +89,10 @@ class StepDetector {
         val lx = x - gx; val ly = y - gy; val lz = z - gz
 
         val gn = sqrt(gx * gx + gy * gy + gz * gz)
-
-        // Страж 3: оценка гравитации недостоверна - замораживаем всё
-        if (gn < 9.81f * 0.75f || gn > 9.81f * 1.25f) {
-            pendingTimesMs.clear()
-            walking = false
+        // Страж гравитации. При беге допуск шире: оценка болтается сильнее.
+        val gravTol = if (mode == Mode.RUN) 0.45f else 0.25f
+        if (gn < 9.81f * (1 - gravTol) || gn > 9.81f * (1 + gravTol)) {
+            if (mode != Mode.RUN) { pendingTimesMs.clear(); pendingAmps.clear(); mode = Mode.IDLE }
             return 0
         }
 
@@ -87,65 +108,114 @@ class StepDetector {
         val sign = if (vert >= 0) 1 else -1
         if (sign != lastSign) { crossedZero = true; lastSign = sign }
 
-        // Страж 1: активная или недавняя тряска
         if (timeMs < shakeBlockUntilMs) return 0
 
+        // Абсолютный потолок: даже бег не даёт больше runPeakCap
+        val peakCap = if (mode == Mode.RUN) profile.runPeakCap else
+            maxOf(profile.walkPeakCap, profile.runPeakCap * 0.6f) // окно для входа в бег
+        val minInterval = if (mode == Mode.RUN) profile.runMinIntervalMs else 280L
+
         val isPeak = vert > threshold &&
-                vert < PEAK_CAP &&              // Страж 2: слишком сильный пик - не шаг
-                timeMs - lastPeakMs >= MIN_STEP_MS &&
+                vert < peakCap &&
+                timeMs - lastPeakMs >= minInterval &&
                 crossedZero &&
                 wFilled >= 50
 
         if (!isPeak) {
-            if (walking && timeMs - lastConfirmedMs > WALK_TIMEOUT_MS) walking = false
-            if (!walking && pendingTimesMs.isNotEmpty() &&
+            val timeout = maxTimeout()
+            if (mode != Mode.IDLE && timeMs - lastConfirmedMs > timeout) mode = Mode.IDLE
+            if (mode == Mode.IDLE && pendingTimesMs.isNotEmpty() &&
                 timeMs - pendingTimesMs.last() > PENDING_TIMEOUT_MS
-            ) pendingTimesMs.clear()
+            ) { pendingTimesMs.clear(); pendingAmps.clear() }
             return 0
         }
 
         lastPeakMs = timeMs
         crossedZero = false
 
-        if (walking) {
+        // --- подтверждённый режим: шаг сразу, плюс обновление оценок ---
+        if (mode != Mode.IDLE) {
             val interval = timeMs - lastConfirmedMs
-            if (interval in MIN_STEP_MS..WALK_TIMEOUT_MS) {
+            if (interval in minIntervalFor(mode)..maxIntervalFor(mode)) {
                 lastConfirmedMs = timeMs
+                updateEstimates(interval.toFloat(), vert)
+                reclassify()
                 stepCount++
                 return 1
             }
-            walking = false
+            mode = Mode.IDLE
         }
 
+        // --- карантин ---
         pendingTimesMs.add(timeMs)
-        if (pendingTimesMs.size > QUARANTINE_STEPS) pendingTimesMs.removeAt(0)
-        if (pendingTimesMs.size == QUARANTINE_STEPS && rhythmIsStable()) {
-            walking = true
-            lastConfirmedMs = timeMs
-            val granted = pendingTimesMs.size
-            pendingTimesMs.clear()
-            stepCount += granted
-            return granted
+        pendingAmps.add(vert)
+        if (pendingTimesMs.size > QUARANTINE_STEPS) {
+            pendingTimesMs.removeAt(0); pendingAmps.removeAt(0)
+        }
+        if (pendingTimesMs.size == QUARANTINE_STEPS) {
+            val cls = classifyPending()
+            if (cls != Mode.IDLE) {
+                mode = cls
+                lastConfirmedMs = timeMs
+                emaIntervalMs = avgPendingInterval()
+                emaAmp = pendingAmps.average().toFloat()
+                val granted = pendingTimesMs.size
+                pendingTimesMs.clear(); pendingAmps.clear()
+                stepCount += granted
+                return granted
+            }
         }
         return 0
     }
 
-    private fun rhythmIsStable(): Boolean {
+    /** Классификация карантинного буфера: WALK, RUN или отказ. */
+    private fun classifyPending(): Mode {
         val t = pendingTimesMs
         val intervals = ArrayList<Long>(t.size - 1)
         for (i in 1 until t.size) intervals.add(t[i] - t[i - 1])
-        if (intervals.any { it !in MIN_STEP_MS..WALK_TIMEOUT_MS }) return false
         val mean = intervals.average()
-        return intervals.all { abs(it - mean) / mean < 0.25 }
+        // ритм стабилен?
+        if (!intervals.all { abs(it - mean) / mean < 0.25 }) return Mode.IDLE
+        val amp = pendingAmps.average().toFloat()
+        return when {
+            mean >= profile.walkMinIntervalMs && mean <= profile.walkMaxIntervalMs &&
+                    amp < profile.walkPeakCap -> Mode.WALK
+            mean >= profile.runMinIntervalMs && mean <= profile.runMaxIntervalMs &&
+                    amp < profile.runPeakCap -> Mode.RUN
+            else -> Mode.IDLE
+        }
     }
+
+    /** Переключение WALK<->RUN на лету по скользящим оценкам. */
+    private fun reclassify() {
+        mode = when {
+            emaIntervalMs <= profile.runMaxIntervalMs && emaAmp > profile.walkPeakCap * 0.8f -> Mode.RUN
+            emaIntervalMs >= profile.walkMinIntervalMs -> Mode.WALK
+            else -> mode
+        }
+    }
+
+    private fun updateEstimates(intervalMs: Float, amp: Float) {
+        emaIntervalMs += 0.3f * (intervalMs - emaIntervalMs)
+        emaAmp += 0.3f * (amp - emaAmp)
+    }
+
+    private fun avgPendingInterval(): Float {
+        var s = 0L
+        for (i in 1 until pendingTimesMs.size) s += pendingTimesMs[i] - pendingTimesMs[i - 1]
+        return s.toFloat() / (pendingTimesMs.size - 1)
+    }
+
+    private fun minIntervalFor(m: Mode) =
+        if (m == Mode.RUN) profile.runMinIntervalMs else profile.walkMinIntervalMs
+    private fun maxIntervalFor(m: Mode) =
+        if (m == Mode.RUN) profile.runMaxIntervalMs + 200 else profile.walkMaxIntervalMs
+    private fun maxTimeout() =
+        if (mode == Mode.RUN) profile.runMaxIntervalMs + 400 else profile.walkMaxIntervalMs + 300
 
     companion object {
         private const val QUARANTINE_STEPS = 4
-        private const val WALK_TIMEOUT_MS = 1200L
         private const val PENDING_TIMEOUT_MS = 2000L
-        private const val MIN_STEP_MS = 300L        // каденс-потолок 3.3 Гц
-        private const val PEAK_CAP = 8f             // м/с2, потолок амплитуды шага
-        private const val GYRO_SHAKE_RADS = 3.5f    // рад/с, порог тряски
-        private const val SHAKE_STICKY_MS = 3000L   // залипание блока после тряски
+        private const val SHAKE_STICKY_MS = 3000L
     }
 }
