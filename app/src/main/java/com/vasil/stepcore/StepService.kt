@@ -35,7 +35,6 @@ class StepService : Service(), SensorEventListener {
     private var runSteps = 0
     private var stepsSinceDbWrite = 0
 
-    // --- гистерезис: общий для журнала И экрана ---
     private var lastLoggedMode = "IDLE"
     private var idleSinceMs = 0L
 
@@ -156,10 +155,10 @@ class StepService : Service(), SensorEventListener {
     }
 
     /**
-     * Единый гистерезис для экрана и журнала:
-     * - движение (WALK/RUN) показывается и логируется сразу;
-     * - "Покой" - только после 4 сек непрерывной паузы. Разворот в комнате
-     *   (пауза 1-2 сек) не мигает на экране и не мусорит журнал.
+     * Гистерезис для экрана и журнала:
+     * - WALK/RUN показываются и логируются сразу;
+     * - TRANSPORT логируется сразу ("Транспорт - шаги остановлены");
+     * - IDLE - только после 4 с непрерывной паузы.
      */
     private fun updateModeWithHysteresis() {
         val m = detector.mode.name
@@ -181,7 +180,14 @@ class StepService : Service(), SensorEventListener {
         if (m != lastLoggedMode) {
             lastLoggedMode = m
             StepsState.mode.value = m
-            logEvent(if (m == "RUN") "Бег" else "Ходьба")
+            logEvent(
+                when (m) {
+                    "RUN" -> "Бег"
+                    "WALK" -> "Ходьба"
+                    "TRANSPORT" -> "Транспорт — шаги остановлены"
+                    else -> m
+                }
+            )
         }
     }
 

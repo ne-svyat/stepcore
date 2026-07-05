@@ -4,18 +4,18 @@ import kotlin.math.abs
 import kotlin.math.sqrt
 
 /**
- * Детектор V6.5 = V6.4 + "тёплый повторный вход".
+ * Детектор V7 = V6.5 (стабильное ядро) + режим TRANSPORT.
  *
- * Потери бега после V6.4 (~8-10/100) - пересборка карантина: каждый
- * разрыв ритма (разворот, микропауза) требовал снова 4 идеальных шага.
- * Фикс: если движение прервалось < WARM_WINDOW_MS назад, человек
- * продолжает то же занятие - хватает 2 шагов. Холодный старт из покоя
- * по-прежнему требует 4: разовые дёрганья не проходят в любом случае,
- * ритм обязателен всегда.
+ * Сигнатура транспорта: вибрация дороги даёт МНОГО пиков порога,
+ * но ритм-карантин их НЕ подтверждает. Много кандидатов + ноль
+ * подтверждений за окно 15 с = транспорт: счёт блокирован (залипание
+ * 10 с после каждого нового пика), тёплый вход отключён, выход -
+ * только через тишину и полный холодный карантин.
+ * Пешеход в этот режим не попадает: его пики подтверждаются.
  */
 class StepDetector {
 
-    enum class Mode { IDLE, WALK, RUN }
+    enum class Mode { IDLE, WALK, RUN, TRANSPORT }
 
     data class Profile(
         var walkMinIntervalMs: Long = 400,
@@ -49,7 +49,6 @@ class StepDetector {
     private val pendingAmps = ArrayList<Float>()
     private var lastConfirmedMs = 0L
 
-    // тёплый вход: когда движение потеряно и каким оно было
     private var motionLostAtMs = 0L
     private var lastMotionMode = Mode.IDLE
 
@@ -58,6 +57,11 @@ class StepDetector {
 
     private var gyroRmsSq = 0f
     private var shakeBlockUntilMs = 0L
+
+    // --- транспорт ---
+    private val candidatePeaksMs = ArrayDeque<Long>() // все пики порога за окно
+    private var lastConfirmInWindowMs = 0L            // последнее подтверждение
+    private var transportBlockUntilMs = 0L
 
     var stepCount = 0
         private set
@@ -71,7 +75,6 @@ class StepDetector {
         if (sqrt(gyroRmsSq) > cap) {
             shakeBlockUntilMs = timeMs + SHAKE_STICKY_MS
             pendingTimesMs.clear(); pendingAmps.clear()
-            // тряска - НЕ мягкая пауза: тёплый вход не положен
             motionLostAtMs = 0L
             dropMode(warm = false, timeMs = timeMs)
         }
@@ -110,9 +113,9 @@ class StepDetector {
 
         if (timeMs < shakeBlockUntilMs) return 0
 
-        val peakCap = if (mode != Mode.IDLE) profile.runPeakCap
+        val peakCap = if (mode == Mode.WALK || mode == Mode.RUN) profile.runPeakCap
         else maxOf(profile.walkPeakCap, profile.runPeakCap * 0.6f)
-        val minInterval = if (mode != Mode.IDLE) profile.runMinIntervalMs else 280L
+        val minInterval = if (mode == Mode.WALK || mode == Mode.RUN) profile.runMinIntervalMs else 280L
 
         val widthOk = vert >= WIDTH_EXEMPT_AMP || wasAboveHalf
 
@@ -125,22 +128,47 @@ class StepDetector {
 
         if (!isPeak) {
             val timeout = maxTimeout()
-            if (mode != Mode.IDLE && timeMs - lastConfirmedMs > timeout) {
-                dropMode(warm = true, timeMs = timeMs) // ритм угас сам - мягкая пауза
-            }
+            if ((mode == Mode.WALK || mode == Mode.RUN) &&
+                timeMs - lastConfirmedMs > timeout
+            ) dropMode(warm = true, timeMs = timeMs)
             if (mode == Mode.IDLE && pendingTimesMs.isNotEmpty() &&
                 timeMs - pendingTimesMs.last() > PENDING_TIMEOUT_MS
             ) { pendingTimesMs.clear(); pendingAmps.clear() }
+            // выход из транспорта: тишина TRANSPORT_EXIT_SILENCE_MS
+            if (mode == Mode.TRANSPORT &&
+                (candidatePeaksMs.isEmpty() ||
+                        timeMs - candidatePeaksMs.last() > TRANSPORT_EXIT_SILENCE_MS)
+            ) mode = Mode.IDLE
             return 0
         }
 
         lastPeakMs = timeMs
         crossedZero = false
 
-        if (mode != Mode.IDLE) {
+        // --- учёт кандидата для транспортной сигнатуры ---
+        candidatePeaksMs.addLast(timeMs)
+        while (candidatePeaksMs.isNotEmpty() &&
+            timeMs - candidatePeaksMs.first() > TRANSPORT_WINDOW_MS
+        ) candidatePeaksMs.removeFirst()
+
+        val transportSignature = candidatePeaksMs.size >= TRANSPORT_PEAKS_MIN &&
+                timeMs - lastConfirmInWindowMs > TRANSPORT_WINDOW_MS
+        if (transportSignature || mode == Mode.TRANSPORT) {
+            if (transportSignature) {
+                mode = Mode.TRANSPORT
+                transportBlockUntilMs = timeMs + TRANSPORT_STICKY_MS
+                motionLostAtMs = 0L // тёплого входа после транспорта нет
+                pendingTimesMs.clear(); pendingAmps.clear()
+            }
+            if (timeMs < transportBlockUntilMs) return 0
+            mode = Mode.IDLE // залипание кончилось, пробуем с чистого листа
+        }
+
+        if (mode == Mode.WALK || mode == Mode.RUN) {
             val interval = timeMs - lastConfirmedMs
             if (interval in profile.runMinIntervalMs..profile.walkMaxIntervalMs) {
                 lastConfirmedMs = timeMs
+                lastConfirmInWindowMs = timeMs
                 updateEstimates(interval.toFloat(), vert)
                 reclassify()
                 stepCount++
@@ -152,14 +180,13 @@ class StepDetector {
         pendingTimesMs.add(timeMs)
         pendingAmps.add(vert)
         val needed = quarantineNeeded(timeMs)
-        if (pendingTimesMs.size > needed) {
-            while (pendingTimesMs.size > needed) { pendingTimesMs.removeAt(0); pendingAmps.removeAt(0) }
-        }
+        while (pendingTimesMs.size > needed) { pendingTimesMs.removeAt(0); pendingAmps.removeAt(0) }
         if (pendingTimesMs.size == needed && needed >= 2) {
             val cls = classifyPending(timeMs)
-            if (cls != Mode.IDLE) {
+            if (cls == Mode.WALK || cls == Mode.RUN) {
                 mode = cls
                 lastConfirmedMs = timeMs
+                lastConfirmInWindowMs = timeMs
                 emaIntervalMs = avgPendingInterval()
                 emaAmp = pendingAmps.average().toFloat()
                 val granted = pendingTimesMs.size
@@ -171,18 +198,17 @@ class StepDetector {
         return 0
     }
 
-    /** Сколько шагов нужно для подтверждения: 2 после свежей паузы, иначе 4. */
     private fun quarantineNeeded(timeMs: Long): Int =
         if (motionLostAtMs > 0L && timeMs - motionLostAtMs < WARM_WINDOW_MS &&
-            lastMotionMode != Mode.IDLE
+            (lastMotionMode == Mode.WALK || lastMotionMode == Mode.RUN)
         ) WARM_QUARANTINE_STEPS else QUARANTINE_STEPS
 
     private fun dropMode(warm: Boolean, timeMs: Long) {
-        if (mode != Mode.IDLE) {
+        if (mode == Mode.WALK || mode == Mode.RUN) {
             lastMotionMode = mode
             motionLostAtMs = if (warm) timeMs else 0L
         }
-        mode = Mode.IDLE
+        if (mode != Mode.TRANSPORT) mode = Mode.IDLE
     }
 
     private fun classifyPending(timeMs: Long): Mode {
@@ -199,8 +225,6 @@ class StepDetector {
                     amp < profile.runPeakCap -> Mode.RUN
             else -> Mode.IDLE
         }
-        // Тёплый вход (2 шага = 1 интервал): дополнительно требуем совпадения
-        // с прежним режимом - двум шагам доверяем только на продолжение
         if (byRange != Mode.IDLE &&
             quarantineNeeded(timeMs) == WARM_QUARANTINE_STEPS &&
             byRange != lastMotionMode
@@ -239,5 +263,10 @@ class StepDetector {
         private const val WIDTH_EXEMPT_AMP = 3.5f
         private const val RUN_ENTER_MS = 380f
         private const val RUN_EXIT_MS = 500f
+        // транспорт: >= 15 пиков за 15 с без единого подтверждения
+        private const val TRANSPORT_WINDOW_MS = 15000L
+        private const val TRANSPORT_PEAKS_MIN = 15
+        private const val TRANSPORT_STICKY_MS = 10000L
+        private const val TRANSPORT_EXIT_SILENCE_MS = 5000L
     }
 }

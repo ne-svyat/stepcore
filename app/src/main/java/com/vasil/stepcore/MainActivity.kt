@@ -87,6 +87,7 @@ class MainActivity : AppCompatActivity() {
                         modeView.text = when (m) {
                             "WALK" -> "Ходьба"
                             "RUN" -> "Бег"
+                            "TRANSPORT" -> "Транспорт"
                             else -> "Покой"
                         }
                     }
