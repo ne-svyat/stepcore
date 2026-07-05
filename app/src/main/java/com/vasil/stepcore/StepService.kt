@@ -12,6 +12,7 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.IBinder
+import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -29,6 +30,7 @@ class StepService : Service(), SensorEventListener {
     private val detector = StepDetector()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var lastNotifiedSteps = -1
+    private var wakeLock: PowerManager.WakeLock? = null
     private var currentDay: String = ""
 
     private var walkSteps = 0
@@ -62,9 +64,18 @@ class StepService : Service(), SensorEventListener {
         createChannel()
         startForeground(NOTIF_ID, buildNotification(detector.stepCount))
 
-        val accel = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        // CPU не должен засыпать при выключенном экране, иначе
+        // non-wakeup сенсоры перестают доставлять события и счёт стоит.
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "stepcore:steps")
+            .apply { acquire() }
+
+        // wakeup-вариант сенсора (true) как подстраховка; если его нет - обычный
+        val accel = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER, true)
+            ?: sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         sensorManager.registerListener(this, accel, SensorManager.SENSOR_DELAY_GAME)
-        val gyro = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
+        val gyro = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE, true)
+            ?: sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
         detector.hasGyro = gyro != null
         if (gyro != null) {
             sensorManager.registerListener(this, gyro, SensorManager.SENSOR_DELAY_GAME)
@@ -231,6 +242,7 @@ class StepService : Service(), SensorEventListener {
 
     override fun onDestroy() {
         sensorManager.unregisterListener(this)
+        wakeLock?.release(); wakeLock = null
         persistPrefs()
         persistDb()
         StepsState.serviceRunning.value = false
