@@ -4,14 +4,16 @@ import kotlin.math.abs
 import kotlin.math.sqrt
 
 /**
- * Детектор V6.3.
+ * Детектор V6.4.
  *
- * Анти-тап переделан: вместо времени над половиной порога (резало бег:
- * его крутой фронт проскакивает половину и порог за один сэмпл 50 Гц) -
- * проверка ПРЕДЫДУЩЕГО сэмпла. Пик валиден, если прошлый сэмпл уже был
- * выше половины порога. Тап-игла живёт один сэмпл, до неё тишина -
- * режется. Шаг/бег поднимаются 2+ сэмпла - проходят.
- * Дополнительно: пики >= 3.5 м/с2 освобождены (тап так не бьёт).
+ * Фикс дребезга WALK<->RUN (терял ~14% беговых шагов):
+ * 1. Гистерезис режимов: в RUN при emaInterval < 380 мс, обратно в WALK
+ *    только при > 500 мс. Зона 380-500 - мёртвая: режим держится.
+ *    Раньше граница была одна (400 мс), беговой каденс 350-420 мс
+ *    болтался на ней, и каждый флип ронял детектор в карантин.
+ * 2. В подтверждённом движении интервал шага проверяется по
+ *    ОБЪЕДИНЁННОМУ диапазону (runMin..walkMax): смена темпа не
+ *    выбрасывает шаг, режим догоняет через гистерезис.
  */
 class StepDetector {
 
@@ -43,7 +45,6 @@ class StepDetector {
     private var crossedZero = true
     private var lastSign = 1
 
-    // --- анти-тап: был ли предыдущий сэмпл выше половины порога ---
     private var prevAboveHalf = false
 
     private val pendingTimesMs = ArrayList<Long>()
@@ -94,7 +95,6 @@ class StepDetector {
         val median = sorted[wFilled / 2]
         val threshold = maxOf(median * 1.4f, 0.6f)
 
-        // фиксируем состояние прошлого сэмпла ДО обновления
         val wasAboveHalf = prevAboveHalf
         prevAboveHalf = vert > threshold * 0.5f
 
@@ -103,9 +103,11 @@ class StepDetector {
 
         if (timeMs < shakeBlockUntilMs) return 0
 
-        val peakCap = if (mode == Mode.RUN) profile.runPeakCap else
-            maxOf(profile.walkPeakCap, profile.runPeakCap * 0.6f)
-        val minInterval = if (mode == Mode.RUN) profile.runMinIntervalMs else 280L
+        // В движении потолки - от "мягчайшего" из режимов, чтобы смена
+        // темпа не резала пики до того, как гистерезис переключит режим
+        val peakCap = if (mode != Mode.IDLE) profile.runPeakCap
+        else maxOf(profile.walkPeakCap, profile.runPeakCap * 0.6f)
+        val minInterval = if (mode != Mode.IDLE) profile.runMinIntervalMs else 280L
 
         val widthOk = vert >= WIDTH_EXEMPT_AMP || wasAboveHalf
 
@@ -130,7 +132,8 @@ class StepDetector {
 
         if (mode != Mode.IDLE) {
             val interval = timeMs - lastConfirmedMs
-            if (interval in minIntervalFor(mode)..maxIntervalFor(mode)) {
+            // объединённый диапазон обоих режимов
+            if (interval in profile.runMinIntervalMs..profile.walkMaxIntervalMs) {
                 lastConfirmedMs = timeMs
                 updateEstimates(interval.toFloat(), vert)
                 reclassify()
@@ -177,10 +180,14 @@ class StepDetector {
         }
     }
 
+    /**
+     * Гистерезис: границы входа и выхода из RUN разнесены.
+     * < RUN_ENTER_MS -> RUN; > RUN_EXIT_MS -> WALK; между - держим режим.
+     */
     private fun reclassify() {
         mode = when {
-            emaIntervalMs <= profile.runMaxIntervalMs && emaAmp > profile.walkPeakCap * 0.8f -> Mode.RUN
-            emaIntervalMs >= profile.walkMinIntervalMs -> Mode.WALK
+            emaIntervalMs < RUN_ENTER_MS -> Mode.RUN
+            emaIntervalMs > RUN_EXIT_MS -> Mode.WALK
             else -> mode
         }
     }
@@ -196,10 +203,6 @@ class StepDetector {
         return s.toFloat() / (pendingTimesMs.size - 1)
     }
 
-    private fun minIntervalFor(m: Mode) =
-        if (m == Mode.RUN) profile.runMinIntervalMs else profile.walkMinIntervalMs
-    private fun maxIntervalFor(m: Mode) =
-        if (m == Mode.RUN) profile.runMaxIntervalMs + 200 else profile.walkMaxIntervalMs
     private fun maxTimeout() =
         if (mode == Mode.RUN) profile.runMaxIntervalMs + 400 else profile.walkMaxIntervalMs + 300
 
@@ -208,5 +211,7 @@ class StepDetector {
         private const val PENDING_TIMEOUT_MS = 2000L
         private const val SHAKE_STICKY_MS = 3000L
         private const val WIDTH_EXEMPT_AMP = 3.5f
+        private const val RUN_ENTER_MS = 380f
+        private const val RUN_EXIT_MS = 500f
     }
 }
