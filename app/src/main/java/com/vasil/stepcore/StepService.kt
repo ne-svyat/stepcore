@@ -5,8 +5,10 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -49,6 +51,33 @@ class StepService : Service(), SensorEventListener {
     // не должны маскировать дыру (баг V7.4)
     @Volatile private var lastAccelEventMs = 0L
     private var forceBackfill = false
+    // Экран выключен: MIUI деградирует поток акселерометра (рваные пачки),
+    // детектор на нём ложно уходит в TRANSPORT. Поэтому при выключенном
+    // экране детектор отключается, считает аппаратный чип.
+    @Volatile private var screenOff = false
+    private var hwSessionAdded = 0
+
+    private val screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context?, intent: Intent?) {
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_OFF -> {
+                    screenOff = true
+                    hwSessionAdded = 0
+                }
+                Intent.ACTION_SCREEN_ON -> {
+                    screenOff = false
+                    if (hwSessionAdded > 0) {
+                        logEvent("За время блокировки: $hwSessionAdded шагов (аппаратный чип)")
+                    }
+                    hwSessionAdded = 0
+                    forceBackfill = true // подобрать хвост из чипа
+                    detector.resetTransient()
+                    lastLoggedMode = "IDLE"
+                    StepsState.mode.value = "IDLE"
+                }
+            }
+        }
+    }
     @Volatile private var sensorSilenceLogged = false
     private var currentDay: String = ""
 
@@ -114,6 +143,12 @@ class StepService : Service(), SensorEventListener {
         } else {
             logEvent("⚠ Аппаратного счётчика шагов нет на устройстве")
         }
+        registerReceiver(screenReceiver, IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_SCREEN_ON)
+        })
+        screenOff = !pm.isInteractive
+
         StepsState.serviceRunning.value = true
 
         scope.launch {
@@ -202,6 +237,22 @@ class StepService : Service(), SensorEventListener {
                     persistHwBase()
                     return
                 }
+                if (screenOff) {
+                    val delta = (hwTotal - hwBaseline).toInt()
+                    hwBaseline = hwTotal
+                    persistHwBase()
+                    if (delta > 0) {
+                        rolloverDayIfNeeded()
+                        walkSteps += delta
+                        hwSessionAdded += delta
+                        detector.restoreCount(detector.stepCount + delta)
+                        StepsState.steps.value = detector.stepCount
+                        persistPrefs()
+                        getSystemService(NotificationManager::class.java)
+                            .notify(NOTIF_ID, buildNotification(detector.stepCount))
+                    }
+                    return
+                }
                 val accelGapMs =
                     if (lastAccelEventMs == 0L) Long.MAX_VALUE
                     else SystemClock.elapsedRealtime() - lastAccelEventMs
@@ -230,12 +281,14 @@ class StepService : Service(), SensorEventListener {
                 return
             }
             Sensor.TYPE_GYROSCOPE -> {
+                if (screenOff) return
                 if (calibrating == null) {
                     detector.onGyro(event.values[0], event.values[1], event.values[2], timeMs)
                 }
                 return
             }
             Sensor.TYPE_ACCELEROMETER -> {
+                if (screenOff) return
                 val added = detector.onAccel(
                     event.values[0], event.values[1], event.values[2], timeMs
                 )
@@ -346,6 +399,7 @@ class StepService : Service(), SensorEventListener {
 
     override fun onDestroy() {
         sensorManager.unregisterListener(this)
+        runCatching { unregisterReceiver(screenReceiver) }
         wakeLock?.release(); wakeLock = null
         persistPrefs()
         persistDb()

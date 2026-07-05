@@ -86,6 +86,28 @@ class StepDetector {
 
     fun restoreCount(saved: Int) { stepCount = saved }
 
+    /**
+     * Полный сброс транзитного состояния (режим, карантин, блокировки,
+     * окно порога). Вызывается при включении экрана: за время блокировки
+     * детектор получал рваный поток и мог залипнуть в TRANSPORT.
+     * Счёт шагов НЕ трогается.
+     */
+    fun resetTransient() {
+        mode = Mode.IDLE
+        pendingTimesMs.clear(); pendingAmps.clear()
+        candidatePeaksMs.clear()
+        shakeBlockUntilMs = 0L
+        transportBlockUntilMs = 0L
+        motionLostAtMs = 0L
+        lastConfirmInWindowMs = 0L
+        gyroRmsSq = 0f
+        wIdx = 0; wFilled = 0
+        lastPeakMs = 0L
+        crossedZero = true
+        prevAboveHalf = false
+        emaIntervalMs = 0f; emaAmp = 0f
+    }
+
     fun onGyro(x: Float, y: Float, z: Float, timeMs: Long) {
         val sq = x * x + y * y + z * z
         gyroRmsSq += 0.05f * (sq - gyroRmsSq)
