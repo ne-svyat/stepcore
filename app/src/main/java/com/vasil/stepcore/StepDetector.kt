@@ -4,14 +4,22 @@ import kotlin.math.abs
 import kotlin.math.sqrt
 
 /**
- * Детектор V7 = V6.5 (стабильное ядро) + режим TRANSPORT.
+ * Детектор V7.1 = V7 + фикс регрессии тапов.
  *
- * Сигнатура транспорта: вибрация дороги даёт МНОГО пиков порога,
- * но ритм-карантин их НЕ подтверждает. Много кандидатов + ноль
- * подтверждений за окно 15 с = транспорт: счёт блокирован (залипание
- * 10 с после каждого нового пика), тёплый вход отключён, выход -
- * только через тишину и полный холодный карантин.
- * Пешеход в этот режим не попадает: его пики подтверждаются.
+ * Дыра V6.5-V7: пик >= WIDTH_EXEMPT_AMP (3.5) полностью обходил
+ * анти-тап по ширине (освобождение вводилось ради крутого фронта бега).
+ * Сильный ритмичный таппинг пробивал 3.5 и проходил карантин как RUN.
+ *
+ * Фикс 1 (гиро-пол): узкий пик без ширины принимается только если
+ * телефон реально вращается (бег в руке/кармане качает корпус,
+ * RMS гироскопа - единицы рад/с; при таппинге телефон почти неподвижен,
+ * десятые доли). Инверсия гироскоп-стража: он режет слишком сильное
+ * вращение, здесь режем слишком слабое при сильных узких пиках.
+ * Без гироскопа на устройстве - поведение V7 (освобождение по амплитуде).
+ *
+ * Фикс 2 (тёплый вход): 2 шагов в окне 5 с мало - дополнительно
+ * амплитуда должна совпасть с профилем прежней сессии (±50% от EMA).
+ * Тапы сразу после остановки ходьбы больше не наследуют дешёвый вход.
  */
 class StepDetector {
 
@@ -30,6 +38,15 @@ class StepDetector {
     var profile = Profile()
 
     var mode = Mode.IDLE
+        private set
+
+    /** Есть ли гироскоп на устройстве (ставит StepService при старте). */
+    var hasGyro = false
+
+    // диагностика отбраковок (пока без UI; выводить при разборе провалов)
+    var rejectedNoRotation = 0
+        private set
+    var rejectedWarmAmp = 0
         private set
 
     private var gx = 0f; private var gy = 0f; private var gz = 9.81f
@@ -51,6 +68,7 @@ class StepDetector {
 
     private var motionLostAtMs = 0L
     private var lastMotionMode = Mode.IDLE
+    private var lastMotionAmp = 0f   // EMA-амплитуда прежней сессии для тёплого входа
 
     private var emaIntervalMs = 0f
     private var emaAmp = 0f
@@ -59,8 +77,8 @@ class StepDetector {
     private var shakeBlockUntilMs = 0L
 
     // --- транспорт ---
-    private val candidatePeaksMs = ArrayDeque<Long>() // все пики порога за окно
-    private var lastConfirmInWindowMs = 0L            // последнее подтверждение
+    private val candidatePeaksMs = ArrayDeque<Long>()
+    private var lastConfirmInWindowMs = 0L
     private var transportBlockUntilMs = 0L
 
     var stepCount = 0
@@ -117,7 +135,12 @@ class StepDetector {
         else maxOf(profile.walkPeakCap, profile.runPeakCap * 0.6f)
         val minInterval = if (mode == Mode.WALK || mode == Mode.RUN) profile.runMinIntervalMs else 280L
 
-        val widthOk = vert >= WIDTH_EXEMPT_AMP || wasAboveHalf
+        // Фикс тапов: освобождение по амплитуде теперь требует вращения корпуса.
+        // Бег качает телефон (RMS гироскопа много выше GYRO_FLOOR_FOR_EXEMPT),
+        // тап по неподвижному телефону - нет. Без гироскопа - как в V7.
+        val rotationOk = !hasGyro || sqrt(gyroRmsSq) >= GYRO_FLOOR_FOR_EXEMPT
+        val widthOk = wasAboveHalf || (vert >= WIDTH_EXEMPT_AMP && rotationOk)
+        if (!wasAboveHalf && vert >= WIDTH_EXEMPT_AMP && !rotationOk) rejectedNoRotation++
 
         val isPeak = vert > threshold &&
                 vert < peakCap &&
@@ -134,7 +157,6 @@ class StepDetector {
             if (mode == Mode.IDLE && pendingTimesMs.isNotEmpty() &&
                 timeMs - pendingTimesMs.last() > PENDING_TIMEOUT_MS
             ) { pendingTimesMs.clear(); pendingAmps.clear() }
-            // выход из транспорта: тишина TRANSPORT_EXIT_SILENCE_MS
             if (mode == Mode.TRANSPORT &&
                 (candidatePeaksMs.isEmpty() ||
                         timeMs - candidatePeaksMs.last() > TRANSPORT_EXIT_SILENCE_MS)
@@ -145,7 +167,6 @@ class StepDetector {
         lastPeakMs = timeMs
         crossedZero = false
 
-        // --- учёт кандидата для транспортной сигнатуры ---
         candidatePeaksMs.addLast(timeMs)
         while (candidatePeaksMs.isNotEmpty() &&
             timeMs - candidatePeaksMs.first() > TRANSPORT_WINDOW_MS
@@ -157,11 +178,11 @@ class StepDetector {
             if (transportSignature) {
                 mode = Mode.TRANSPORT
                 transportBlockUntilMs = timeMs + TRANSPORT_STICKY_MS
-                motionLostAtMs = 0L // тёплого входа после транспорта нет
+                motionLostAtMs = 0L
                 pendingTimesMs.clear(); pendingAmps.clear()
             }
             if (timeMs < transportBlockUntilMs) return 0
-            mode = Mode.IDLE // залипание кончилось, пробуем с чистого листа
+            mode = Mode.IDLE
         }
 
         if (mode == Mode.WALK || mode == Mode.RUN) {
@@ -206,6 +227,7 @@ class StepDetector {
     private fun dropMode(warm: Boolean, timeMs: Long) {
         if (mode == Mode.WALK || mode == Mode.RUN) {
             lastMotionMode = mode
+            lastMotionAmp = emaAmp
             motionLostAtMs = if (warm) timeMs else 0L
         }
         if (mode != Mode.TRANSPORT) mode = Mode.IDLE
@@ -225,10 +247,13 @@ class StepDetector {
                     amp < profile.runPeakCap -> Mode.RUN
             else -> Mode.IDLE
         }
-        if (byRange != Mode.IDLE &&
-            quarantineNeeded(timeMs) == WARM_QUARANTINE_STEPS &&
-            byRange != lastMotionMode
-        ) return Mode.IDLE
+        if (byRange != Mode.IDLE && quarantineNeeded(timeMs) == WARM_QUARANTINE_STEPS) {
+            // тёплый вход: тот же режим И тот же амплитудный профиль (±50%)
+            if (byRange != lastMotionMode) return Mode.IDLE
+            if (lastMotionAmp > 0f &&
+                (amp < lastMotionAmp * WARM_AMP_LO || amp > lastMotionAmp * WARM_AMP_HI)
+            ) { rejectedWarmAmp++; return Mode.IDLE }
+        }
         return byRange
     }
 
@@ -261,9 +286,15 @@ class StepDetector {
         private const val PENDING_TIMEOUT_MS = 2000L
         private const val SHAKE_STICKY_MS = 3000L
         private const val WIDTH_EXEMPT_AMP = 3.5f
+        // Пол вращения для освобождённых пиков. Бег: RMS в разы выше.
+        // Таппинг по неподвижному телефону: около нуля. При провале бега
+        // крутить ТОЛЬКО эту константу вниз (0.5), один раз.
+        private const val GYRO_FLOOR_FOR_EXEMPT = 0.8f
+        // Допуск амплитуды тёплого входа относительно прежней сессии
+        private const val WARM_AMP_LO = 0.5f
+        private const val WARM_AMP_HI = 1.5f
         private const val RUN_ENTER_MS = 380f
         private const val RUN_EXIT_MS = 500f
-        // транспорт: >= 15 пиков за 15 с без единого подтверждения
         private const val TRANSPORT_WINDOW_MS = 15000L
         private const val TRANSPORT_PEAKS_MIN = 15
         private const val TRANSPORT_STICKY_MS = 10000L

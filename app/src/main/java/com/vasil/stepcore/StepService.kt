@@ -65,6 +65,7 @@ class StepService : Service(), SensorEventListener {
         val accel = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         sensorManager.registerListener(this, accel, SensorManager.SENSOR_DELAY_GAME)
         val gyro = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
+        detector.hasGyro = gyro != null
         if (gyro != null) {
             sensorManager.registerListener(this, gyro, SensorManager.SENSOR_DELAY_GAME)
         }
