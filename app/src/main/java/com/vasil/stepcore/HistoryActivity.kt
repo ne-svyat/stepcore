@@ -43,7 +43,6 @@ class HistoryActivity : AppCompatActivity() {
                 val dao = AppDb.get(this@HistoryActivity).dao()
                 val days = dao.allDays()
                 val events = dao.allEvents()
-                // JSON руками: без сторонних библиотек, структура простая
                 val json = buildString {
                     appendLine("{")
                     appendLine("\"days\":[")
@@ -121,7 +120,6 @@ class HistoryActivity : AppCompatActivity() {
         }
     }
 
-    /** Строка дня: тап раскрывает журнал событий этого дня (до секунды). */
     private fun makeDayRow(day: DayRecord): View {
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val total = day.walkSteps + day.runSteps
@@ -157,16 +155,24 @@ class HistoryActivity : AppCompatActivity() {
         return col
     }
 
+    /** Копия видимого периода: дни + журнал событий каждого дня. */
     private fun copyVisible() {
-        val text = buildString {
-            appendLine("StepCore — история")
-            visibleDays.forEach {
-                appendLine("${it.date}  ${it.walkSteps + it.runSteps} шагов (ходьба ${it.walkSteps}, бег ${it.runSteps})")
+        lifecycleScope.launch {
+            val dao = AppDb.get(this@HistoryActivity).dao()
+            val text = buildString {
+                appendLine("StepCore — история")
+                visibleDays.forEach { d ->
+                    appendLine()
+                    appendLine("${d.date}  ${d.walkSteps + d.runSteps} шагов (ходьба ${d.walkSteps}, бег ${d.runSteps})")
+                    dao.eventsOfDay(d.date).forEach { e ->
+                        appendLine("  ${timeFmt.format(Date(e.timeMs))}  ${e.text}")
+                    }
+                }
             }
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            cm.setPrimaryClip(ClipData.newPlainText("StepCore", text))
+            toast("Скопировано с событиями")
         }
-        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        cm.setPrimaryClip(ClipData.newPlainText("StepCore", text))
-        toast("Скопировано")
     }
 
     private fun toast(msg: String) =

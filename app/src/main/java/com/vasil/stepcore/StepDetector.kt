@@ -4,15 +4,14 @@ import kotlin.math.abs
 import kotlin.math.sqrt
 
 /**
- * Детектор V6.2.
+ * Детектор V6.3.
  *
- * Проверка формы пика (против тапов) теперь амплитудно-зависимая:
- * - слабый пик (< WIDTH_EXEMPT_AMP): обязан продержаться над половиной
- *   порога >= 20 мс - тап-игла режется;
- * - сильный пик (>= WIDTH_EXEMPT_AMP): ширина не проверяется. Удар
- *   пятки при беге в 5-20 м/с2 имеет фронт круче одного сэмпла (50 Гц)
- *   и резался проверкой (V6.1 терял ~30% беговых шагов). Тап по экрану
- *   таких амплитуд не достигает, абуз не возвращается.
+ * Анти-тап переделан: вместо времени над половиной порога (резало бег:
+ * его крутой фронт проскакивает половину и порог за один сэмпл 50 Гц) -
+ * проверка ПРЕДЫДУЩЕГО сэмпла. Пик валиден, если прошлый сэмпл уже был
+ * выше половины порога. Тап-игла живёт один сэмпл, до неё тишина -
+ * режется. Шаг/бег поднимаются 2+ сэмпла - проходят.
+ * Дополнительно: пики >= 3.5 м/с2 освобождены (тап так не бьёт).
  */
 class StepDetector {
 
@@ -44,7 +43,8 @@ class StepDetector {
     private var crossedZero = true
     private var lastSign = 1
 
-    private var aboveHalfSinceMs = 0L
+    // --- анти-тап: был ли предыдущий сэмпл выше половины порога ---
+    private var prevAboveHalf = false
 
     private val pendingTimesMs = ArrayList<Long>()
     private val pendingAmps = ArrayList<Float>()
@@ -94,11 +94,9 @@ class StepDetector {
         val median = sorted[wFilled / 2]
         val threshold = maxOf(median * 1.4f, 0.6f)
 
-        if (vert > threshold * 0.5f) {
-            if (aboveHalfSinceMs == 0L) aboveHalfSinceMs = timeMs
-        } else {
-            aboveHalfSinceMs = 0L
-        }
+        // фиксируем состояние прошлого сэмпла ДО обновления
+        val wasAboveHalf = prevAboveHalf
+        prevAboveHalf = vert > threshold * 0.5f
 
         val sign = if (vert >= 0) 1 else -1
         if (sign != lastSign) { crossedZero = true; lastSign = sign }
@@ -109,9 +107,7 @@ class StepDetector {
             maxOf(profile.walkPeakCap, profile.runPeakCap * 0.6f)
         val minInterval = if (mode == Mode.RUN) profile.runMinIntervalMs else 280L
 
-        // Ширина обязательна только для слабых пиков (тапы слабые, бег сильный)
-        val widthOk = vert >= WIDTH_EXEMPT_AMP ||
-                (aboveHalfSinceMs > 0L && timeMs - aboveHalfSinceMs >= MIN_PEAK_WIDTH_MS)
+        val widthOk = vert >= WIDTH_EXEMPT_AMP || wasAboveHalf
 
         val isPeak = vert > threshold &&
                 vert < peakCap &&
@@ -211,7 +207,6 @@ class StepDetector {
         private const val QUARANTINE_STEPS = 4
         private const val PENDING_TIMEOUT_MS = 2000L
         private const val SHAKE_STICKY_MS = 3000L
-        private const val MIN_PEAK_WIDTH_MS = 20L
-        private const val WIDTH_EXEMPT_AMP = 5f  // м/с2: выше - ширина не проверяется
+        private const val WIDTH_EXEMPT_AMP = 3.5f
     }
 }
