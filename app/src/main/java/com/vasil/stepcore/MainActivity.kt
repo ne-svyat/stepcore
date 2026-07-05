@@ -7,6 +7,7 @@ import android.widget.Button
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.SwitchCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -26,6 +27,20 @@ class MainActivity : AppCompatActivity() {
         val stepsView = findViewById<TextView>(R.id.stepsText)
         val statusView = findViewById<TextView>(R.id.statusText)
         val toggleBtn = findViewById<Button>(R.id.toggleButton)
+        val hapticSwitch = findViewById<SwitchCompat>(R.id.hapticSwitch)
+
+        // восстановить сохранённые шаги на экран даже без сервиса
+        val prefs = getSharedPreferences(StepService.PREFS, MODE_PRIVATE)
+        if (prefs.getString(StepService.KEY_DAY, "") == java.time.LocalDate.now().toString()) {
+            StepsState.steps.value = prefs.getInt(StepService.KEY_STEPS, 0)
+        }
+
+        hapticSwitch.isChecked = prefs.getBoolean("haptic", false)
+        StepsState.hapticEnabled.value = hapticSwitch.isChecked
+        hapticSwitch.setOnCheckedChangeListener { _, checked ->
+            StepsState.hapticEnabled.value = checked
+            prefs.edit().putBoolean("haptic", checked).apply()
+        }
 
         toggleBtn.setOnClickListener {
             if (StepsState.serviceRunning.value) {
