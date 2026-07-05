@@ -31,7 +31,6 @@ class StepService : Service(), SensorEventListener {
         val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
         vibrator = vm.defaultVibrator
 
-        // восстановить шаги за сегодня
         currentDay = LocalDate.now().toString()
         val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
         if (prefs.getString(KEY_DAY, "") == currentDay) {
@@ -41,33 +40,50 @@ class StepService : Service(), SensorEventListener {
 
         createChannel()
         startForeground(NOTIF_ID, buildNotification(detector.stepCount))
+
         val accel = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         sensorManager.registerListener(this, accel, SensorManager.SENSOR_DELAY_GAME)
+        // Гироскоп - страж против тряски
+        val gyro = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
+        if (gyro != null) {
+            sensorManager.registerListener(this, gyro, SensorManager.SENSOR_DELAY_GAME)
+        }
         StepsState.serviceRunning.value = true
     }
 
     override fun onSensorChanged(event: SensorEvent) {
-        if (event.sensor.type != Sensor.TYPE_ACCELEROMETER) return
-        val added = detector.onAccel(
-            event.values[0], event.values[1], event.values[2],
-            event.timestamp / 1_000_000
-        )
-        if (added > 0) {
-            // смена суток - обнуление
-            val today = LocalDate.now().toString()
-            if (today != currentDay) {
-                currentDay = today
-                detector.restoreCount(0)
+        val timeMs = event.timestamp / 1_000_000
+        when (event.sensor.type) {
+            Sensor.TYPE_GYROSCOPE -> {
+                detector.onGyro(event.values[0], event.values[1], event.values[2], timeMs)
+                return
             }
-            StepsState.steps.value = detector.stepCount
-            persist()
-            if (StepsState.hapticEnabled.value) {
-                vibrator.vibrate(VibrationEffect.createOneShot(15, 120))
-            }
-            if (detector.stepCount - lastNotifiedSteps >= 10) {
-                lastNotifiedSteps = detector.stepCount
-                getSystemService(NotificationManager::class.java)
-                    .notify(NOTIF_ID, buildNotification(detector.stepCount))
+            Sensor.TYPE_ACCELEROMETER -> {
+                val added = detector.onAccel(
+                    event.values[0], event.values[1], event.values[2], timeMs
+                )
+                if (added > 0) {
+                    val today = LocalDate.now().toString()
+                    if (today != currentDay) {
+                        currentDay = today
+                        detector.restoreCount(0)
+                    }
+                    StepsState.steps.value = detector.stepCount
+                    persist()
+                    if (StepsState.hapticEnabled.value) {
+                        // 30 мс + системная амплитуда: короче Xiaomi не отрабатывает
+                        vibrator.vibrate(
+                            VibrationEffect.createOneShot(
+                                30, VibrationEffect.DEFAULT_AMPLITUDE
+                            )
+                        )
+                    }
+                    if (detector.stepCount - lastNotifiedSteps >= 10) {
+                        lastNotifiedSteps = detector.stepCount
+                        getSystemService(NotificationManager::class.java)
+                            .notify(NOTIF_ID, buildNotification(detector.stepCount))
+                    }
+                }
             }
         }
     }
