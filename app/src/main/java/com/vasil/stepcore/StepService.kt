@@ -25,8 +25,7 @@ class StepService : Service(), SensorEventListener {
     private var lastNotifiedSteps = -1
     private var currentDay: String = ""
 
-    // --- калибровка: копим интервалы и амплитуды за сессию ---
-    private var calibrating: String? = null // "walk" | "run" | null
+    private var calibrating: String? = null
     private val calIntervals = ArrayList<Long>()
     private var calLastStepMs = 0L
 
@@ -41,6 +40,9 @@ class StepService : Service(), SensorEventListener {
         if (prefs.getString(KEY_DAY, "") == currentDay) {
             detector.restoreCount(prefs.getInt(KEY_STEPS, 0))
         }
+        // ФИКС: сервис сам читает настройку вибрации из prefs,
+        // а не ждёт, пока её выставит открытый экран
+        StepsState.hapticEnabled.value = prefs.getBoolean("haptic", false)
         loadProfile()
         StepsState.steps.value = detector.stepCount
 
@@ -72,11 +74,6 @@ class StepService : Service(), SensorEventListener {
         StepsState.calibrationState.value = if (kind == "walk") "Калибровка: иди обычным шагом" else "Калибровка: беги"
     }
 
-    /**
-     * Завершение калибровки: берём медиану интервалов пользователя и
-     * строим персональный диапазон +-35% вокруг неё. Медиана вместо
-     * среднего - устойчива к паузам и сбоям.
-     */
     private fun finishCalibration() {
         val kind = calibrating ?: return
         calibrating = null
@@ -110,7 +107,6 @@ class StepService : Service(), SensorEventListener {
         val timeMs = event.timestamp / 1_000_000
         when (event.sensor.type) {
             Sensor.TYPE_GYROSCOPE -> {
-                // Во время калибровки бега страж гироскопа не должен мешать
                 if (calibrating == null) {
                     detector.onGyro(event.values[0], event.values[1], event.values[2], timeMs)
                 }
@@ -134,9 +130,9 @@ class StepService : Service(), SensorEventListener {
                     StepsState.mode.value = detector.mode.name
                     persist()
                     if (StepsState.hapticEnabled.value) {
-                        vibrator.vibrate(
-                            VibrationEffect.createOneShot(30, VibrationEffect.DEFAULT_AMPLITUDE)
-                        )
+                        // ФИКС: 50 мс на максимальной амплитуде -
+                        // короче/тише мотор Xiaomi не отрабатывает
+                        vibrator.vibrate(VibrationEffect.createOneShot(50, 255))
                     }
                     if (detector.stepCount - lastNotifiedSteps >= 10) {
                         lastNotifiedSteps = detector.stepCount

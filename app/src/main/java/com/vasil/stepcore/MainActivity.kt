@@ -1,8 +1,11 @@
 package com.vasil.stepcore
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.os.VibrationEffect
+import android.os.VibratorManager
 import android.widget.Button
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
@@ -45,6 +48,13 @@ class MainActivity : AppCompatActivity() {
         hapticSwitch.setOnCheckedChangeListener { _, checked ->
             StepsState.hapticEnabled.value = checked
             prefs.edit().putBoolean("haptic", checked).apply()
+            // ДИАГНОСТИКА: тестовая вибрация при включении.
+            // Чувствуешь её - мотор и права ок, дело было в сервисе.
+            // Не чувствуешь - вибрацию режет система (MIUI).
+            if (checked) {
+                val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+                vm.defaultVibrator.vibrate(VibrationEffect.createOneShot(200, 255))
+            }
         }
 
         toggleBtn.setOnClickListener {
