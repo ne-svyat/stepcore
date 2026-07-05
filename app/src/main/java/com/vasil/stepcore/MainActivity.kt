@@ -3,9 +3,12 @@ package com.vasil.stepcore
 import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.VibratorManager
+import android.provider.Settings
 import android.widget.Button
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
@@ -117,6 +120,17 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startTracking() {
+        // Без Doze-whitelist система игнорирует wakelock сервиса
+        // при выключенном экране - счёт останавливается.
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+            startActivity(
+                Intent(
+                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:" + packageName)
+                )
+            )
+        }
         startForegroundService(Intent(this, StepService::class.java))
     }
 }

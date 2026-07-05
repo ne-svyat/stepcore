@@ -13,6 +13,7 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.IBinder
 import android.os.PowerManager
+import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -20,6 +21,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 
@@ -31,6 +33,13 @@ class StepService : Service(), SensorEventListener {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var lastNotifiedSteps = -1
     private var wakeLock: PowerManager.WakeLock? = null
+
+    // Диагностика "почему не считает при выключенном экране":
+    // тикер раз в 30 с. Задержка тикера = CPU спал (wakelock игнорируется).
+    // Тикер жив, а событий сенсора нет = система усыпила сенсор.
+    // Нет ни того ни другого в журнале при дыре в счёте = сервис был убит.
+    @Volatile private var lastSensorEventMs = 0L
+    @Volatile private var sensorSilenceLogged = false
     private var currentDay: String = ""
 
     private var walkSteps = 0
@@ -81,6 +90,25 @@ class StepService : Service(), SensorEventListener {
             sensorManager.registerListener(this, gyro, SensorManager.SENSOR_DELAY_GAME)
         }
         StepsState.serviceRunning.value = true
+
+        scope.launch {
+            var lastTick = SystemClock.elapsedRealtime()
+            lastSensorEventMs = lastTick
+            while (true) {
+                delay(HEARTBEAT_MS)
+                val now = SystemClock.elapsedRealtime()
+                val tickGap = now - lastTick
+                if (tickGap > HEARTBEAT_MS + 15_000) {
+                    logEvent("⚠ CPU спал ~${(tickGap - HEARTBEAT_MS) / 1000} с")
+                }
+                val silence = now - lastSensorEventMs
+                if (silence > 60_000 && !sensorSilenceLogged) {
+                    sensorSilenceLogged = true
+                    logEvent("⚠ Датчик молчит ${silence / 1000} с (CPU жив)")
+                }
+                lastTick = now
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -128,6 +156,12 @@ class StepService : Service(), SensorEventListener {
     }
 
     override fun onSensorChanged(event: SensorEvent) {
+        val nowRt = SystemClock.elapsedRealtime()
+        if (lastSensorEventMs > 0 && nowRt - lastSensorEventMs > 60_000) {
+            logEvent("⚠ Датчик молчал ${(nowRt - lastSensorEventMs) / 1000} с")
+        }
+        lastSensorEventMs = nowRt
+        sensorSilenceLogged = false
         val timeMs = event.timestamp / 1_000_000
         when (event.sensor.type) {
             Sensor.TYPE_GYROSCOPE -> {
@@ -285,5 +319,6 @@ class StepService : Service(), SensorEventListener {
         const val ACTION_CAL_RUN = "cal_run"
         const val ACTION_CAL_STOP = "cal_stop"
         private const val IDLE_LOG_DELAY_MS = 4000L
+        private const val HEARTBEAT_MS = 30_000L
     }
 }
