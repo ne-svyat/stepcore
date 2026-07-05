@@ -4,12 +4,13 @@ import kotlin.math.abs
 import kotlin.math.sqrt
 
 /**
- * Детектор V6 = V4 (режимы WALK/RUN, три стража) + проверка ФОРМЫ пика.
+ * Детектор V6.1 = режимы WALK/RUN + три стража + проверка ФОРМЫ пика.
  *
- * Новое: тап по экрану / удар пальцем - "игла" шириной 10-30 мс.
- * Настоящий шаг - "горб" 100-300 мс: тело нагружает ногу постепенно.
- * Требование: перед пиком сигнал должен продержаться над половиной
- * порога минимум MIN_PEAK_WIDTH_MS. Иглы отсекаются, горбы проходят.
+ * Форма пика: тап по экрану - "игла" в 1 сэмпл, шаг - "горб" 100-300 мс.
+ * Датчик работает на ~50 Гц (сэмпл каждые ~20 мс), поэтому порог ширины
+ * = 20 мс: игла не успевает накопить время над половиной порога,
+ * шаговый горб успевает всегда. (40 мс в V6 требовало 2+ сэмплов до
+ * пересечения порога и резало настоящие шаги с крутым фронтом.)
  */
 class StepDetector {
 
@@ -42,7 +43,7 @@ class StepDetector {
     private var lastSign = 1
 
     // --- проверка формы пика ---
-    private var aboveHalfSinceMs = 0L  // с какого момента сигнал выше половины порога
+    private var aboveHalfSinceMs = 0L
 
     private val pendingTimesMs = ArrayList<Long>()
     private val pendingAmps = ArrayList<Float>()
@@ -92,7 +93,6 @@ class StepDetector {
         val median = sorted[wFilled / 2]
         val threshold = maxOf(median * 1.4f, 0.6f)
 
-        // --- форма пика: следим, как долго сигнал выше половины порога ---
         if (vert > threshold * 0.5f) {
             if (aboveHalfSinceMs == 0L) aboveHalfSinceMs = timeMs
         } else {
@@ -208,6 +208,6 @@ class StepDetector {
         private const val QUARANTINE_STEPS = 4
         private const val PENDING_TIMEOUT_MS = 2000L
         private const val SHAKE_STICKY_MS = 3000L
-        private const val MIN_PEAK_WIDTH_MS = 40L  // тап-игла короче, шаг-горб длиннее
+        private const val MIN_PEAK_WIDTH_MS = 20L  // 1 сэмпл при 50 Гц: игла режется, горб проходит
     }
 }

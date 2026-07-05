@@ -35,7 +35,7 @@ class StepService : Service(), SensorEventListener {
     private var runSteps = 0
     private var stepsSinceDbWrite = 0
 
-    // --- журнал с гистерезисом ---
+    // --- гистерезис: общий для журнала И экрана ---
     private var lastLoggedMode = "IDLE"
     private var idleSinceMs = 0L
 
@@ -129,7 +129,7 @@ class StepService : Service(), SensorEventListener {
                 val added = detector.onAccel(
                     event.values[0], event.values[1], event.values[2], timeMs
                 )
-                maybeLogModeChange()
+                updateModeWithHysteresis()
                 if (added > 0) {
                     if (calibrating != null) {
                         if (calLastStepMs > 0) calIntervals.add(timeMs - calLastStepMs)
@@ -139,7 +139,6 @@ class StepService : Service(), SensorEventListener {
                     if (detector.mode == StepDetector.Mode.RUN) runSteps += added
                     else walkSteps += added
                     StepsState.steps.value = detector.stepCount
-                    StepsState.mode.value = detector.mode.name
                     persistPrefs()
                     stepsSinceDbWrite += added
                     if (stepsSinceDbWrite >= 25) { stepsSinceDbWrite = 0; persistDb() }
@@ -151,20 +150,18 @@ class StepService : Service(), SensorEventListener {
                         getSystemService(NotificationManager::class.java)
                             .notify(NOTIF_ID, buildNotification(detector.stepCount))
                     }
-                } else {
-                    val m = detector.mode.name
-                    if (StepsState.mode.value != m) StepsState.mode.value = m
                 }
             }
         }
     }
 
     /**
-     * Журнал с гистерезисом: "Покой" пишется только если пауза > 4 сек.
-     * Короткий разрыв (разворот в комнате) склеивается: ни "Покой",
-     * ни повторная "Ходьба" в журнал не попадают.
+     * Единый гистерезис для экрана и журнала:
+     * - движение (WALK/RUN) показывается и логируется сразу;
+     * - "Покой" - только после 4 сек непрерывной паузы. Разворот в комнате
+     *   (пауза 1-2 сек) не мигает на экране и не мусорит журнал.
      */
-    private fun maybeLogModeChange() {
+    private fun updateModeWithHysteresis() {
         val m = detector.mode.name
         val now = System.currentTimeMillis()
 
@@ -174,15 +171,16 @@ class StepService : Service(), SensorEventListener {
             if (now - idleSinceMs >= IDLE_LOG_DELAY_MS) {
                 idleSinceMs = 0L
                 lastLoggedMode = "IDLE"
+                StepsState.mode.value = "IDLE"
                 logEvent("Покой")
             }
             return
         }
 
-        // движение: сбрасываем таймер паузы
         idleSinceMs = 0L
         if (m != lastLoggedMode) {
             lastLoggedMode = m
+            StepsState.mode.value = m
             logEvent(if (m == "RUN") "Бег" else "Ходьба")
         }
     }
