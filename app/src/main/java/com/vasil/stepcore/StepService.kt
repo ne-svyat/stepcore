@@ -70,7 +70,6 @@ class StepService : Service(), SensorEventListener {
                         logEvent("За время блокировки: $hwSessionAdded шагов (аппаратный чип)")
                     }
                     hwSessionAdded = 0
-                    forceBackfill = true // подобрать хвост из чипа
                     detector.resetTransient()
                     lastLoggedMode = "IDLE"
                     StepsState.mode.value = "IDLE"
