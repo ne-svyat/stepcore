@@ -1,37 +1,174 @@
 package com.vasil.stepcore
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.os.Bundle
+import android.view.View
+import android.widget.Button
+import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
-import java.time.LocalDate
 import java.util.Date
 import java.util.Locale
 
 class HistoryActivity : AppCompatActivity() {
 
+    private var currentFilterDays = 7
+    private var visibleDays: List<DayRecord> = emptyList()
+    private val timeFmt = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+
+    private val csvSaver =
+        registerForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
+            if (uri != null) lifecycleScope.launch {
+                val days = AppDb.get(this@HistoryActivity).dao().allDays()
+                val csv = buildString {
+                    appendLine("date,walk_steps,run_steps,total")
+                    days.forEach { appendLine("${it.date},${it.walkSteps},${it.runSteps},${it.walkSteps + it.runSteps}") }
+                }
+                contentResolver.openOutputStream(uri)?.use { it.write(csv.toByteArray()) }
+                toast("CSV сохранён")
+            }
+        }
+
+    private val jsonSaver =
+        registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+            if (uri != null) lifecycleScope.launch {
+                val dao = AppDb.get(this@HistoryActivity).dao()
+                val days = dao.allDays()
+                val events = dao.allEvents()
+                // JSON руками: без сторонних библиотек, структура простая
+                val json = buildString {
+                    appendLine("{")
+                    appendLine("\"days\":[")
+                    append(days.joinToString(",\n") {
+                        "{\"date\":\"${it.date}\",\"walk\":${it.walkSteps},\"run\":${it.runSteps}}"
+                    })
+                    appendLine("],")
+                    appendLine("\"events\":[")
+                    append(events.joinToString(",\n") {
+                        "{\"timeMs\":${it.timeMs},\"date\":\"${it.date}\",\"text\":\"${it.text}\"}"
+                    })
+                    appendLine("]}")
+                }
+                contentResolver.openOutputStream(uri)?.use { it.write(json.toByteArray()) }
+                toast("JSON сохранён")
+            }
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_history)
-        val daysView = findViewById<TextView>(R.id.daysText)
-        val eventsView = findViewById<TextView>(R.id.eventsText)
 
+        findViewById<Button>(R.id.filter7).setOnClickListener { setFilter(7) }
+        findViewById<Button>(R.id.filter30).setOnClickListener { setFilter(30) }
+        findViewById<Button>(R.id.filter365).setOnClickListener { setFilter(365) }
+        findViewById<Button>(R.id.filterAll).setOnClickListener { setFilter(Int.MAX_VALUE) }
+
+        findViewById<Button>(R.id.copyButton).setOnClickListener { copyVisible() }
+        findViewById<Button>(R.id.exportCsvButton).setOnClickListener {
+            csvSaver.launch("stepcore_days.csv")
+        }
+        findViewById<Button>(R.id.exportJsonButton).setOnClickListener {
+            jsonSaver.launch("stepcore_full.json")
+        }
+
+        findViewById<Button>(R.id.deleteButton).setOnClickListener {
+            val input = findViewById<EditText>(R.id.deleteConfirmInput).text.toString().trim()
+            if (input != "УДАЛИТЬ ДАННЫЕ") {
+                toast("Для удаления введи точно: УДАЛИТЬ ДАННЫЕ")
+                return@setOnClickListener
+            }
+            lifecycleScope.launch {
+                val dao = AppDb.get(this@HistoryActivity).dao()
+                dao.deleteAllDays()
+                dao.deleteAllEvents()
+                findViewById<EditText>(R.id.deleteConfirmInput).setText("")
+                toast("Вся история удалена")
+                reload()
+            }
+        }
+
+        setFilter(7)
+    }
+
+    private fun setFilter(days: Int) {
+        currentFilterDays = days
+        reload()
+    }
+
+    private fun reload() {
         lifecycleScope.launch {
             val dao = AppDb.get(this@HistoryActivity).dao()
+            visibleDays = if (currentFilterDays == Int.MAX_VALUE) dao.allDays()
+            else dao.recentDays(currentFilterDays)
 
-            val days = dao.recentDays(60)
-            daysView.text = if (days.isEmpty()) "Пока нет данных" else
-                days.joinToString("\n") { d ->
-                    val total = d.walkSteps + d.runSteps
-                    "${d.date}   $total шагов (ходьба ${d.walkSteps}, бег ${d.runSteps})"
-                }
+            val summary = findViewById<TextView>(R.id.summaryText)
+            val totalWalk = visibleDays.sumOf { it.walkSteps }
+            val totalRun = visibleDays.sumOf { it.runSteps }
+            summary.text = "Дней: ${visibleDays.size}   " +
+                    "Всего: ${totalWalk + totalRun}   Ходьба: $totalWalk   Бег: $totalRun"
 
-            val fmt = SimpleDateFormat("HH:mm", Locale.getDefault())
-            val events = dao.eventsOfDay(LocalDate.now().toString())
-            eventsView.text = if (events.isEmpty()) "Событий сегодня нет" else
-                events.joinToString("\n") { e -> "${fmt.format(Date(e.timeMs))}  ${e.text}" }
+            val container = findViewById<LinearLayout>(R.id.daysContainer)
+            container.removeAllViews()
+            visibleDays.forEach { day -> container.addView(makeDayRow(day)) }
         }
     }
+
+    /** Строка дня: тап раскрывает журнал событий этого дня (до секунды). */
+    private fun makeDayRow(day: DayRecord): View {
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val total = day.walkSteps + day.runSteps
+        val header = TextView(this).apply {
+            text = "${day.date}   $total шагов (ходьба ${day.walkSteps}, бег ${day.runSteps})  ▸"
+            textSize = 16f
+            setPadding(0, 20, 0, 20)
+        }
+        val details = TextView(this).apply {
+            textSize = 14f
+            typeface = android.graphics.Typeface.MONOSPACE
+            visibility = View.GONE
+            setPadding(24, 0, 0, 12)
+        }
+        header.setOnClickListener {
+            if (details.visibility == View.GONE) {
+                details.visibility = View.VISIBLE
+                header.text = header.text.toString().replace("▸", "▾")
+                lifecycleScope.launch {
+                    val events = AppDb.get(this@HistoryActivity).dao().eventsOfDay(day.date)
+                    details.text = if (events.isEmpty()) "Событий нет"
+                    else events.joinToString("\n") { e ->
+                        "${timeFmt.format(Date(e.timeMs))}  ${e.text}"
+                    }
+                }
+            } else {
+                details.visibility = View.GONE
+                header.text = header.text.toString().replace("▾", "▸")
+            }
+        }
+        col.addView(header)
+        col.addView(details)
+        return col
+    }
+
+    private fun copyVisible() {
+        val text = buildString {
+            appendLine("StepCore — история")
+            visibleDays.forEach {
+                appendLine("${it.date}  ${it.walkSteps + it.runSteps} шагов (ходьба ${it.walkSteps}, бег ${it.runSteps})")
+            }
+        }
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        cm.setPrimaryClip(ClipData.newPlainText("StepCore", text))
+        toast("Скопировано")
+    }
+
+    private fun toast(msg: String) =
+        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
 }

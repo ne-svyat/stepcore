@@ -31,11 +31,13 @@ class StepService : Service(), SensorEventListener {
     private var lastNotifiedSteps = -1
     private var currentDay: String = ""
 
-    // раздельный счёт по режимам
     private var walkSteps = 0
     private var runSteps = 0
-    private var lastLoggedMode = "IDLE"
     private var stepsSinceDbWrite = 0
+
+    // --- журнал с гистерезисом ---
+    private var lastLoggedMode = "IDLE"
+    private var idleSinceMs = 0L
 
     private var calibrating: String? = null
     private val calIntervals = ArrayList<Long>()
@@ -157,12 +159,35 @@ class StepService : Service(), SensorEventListener {
         }
     }
 
-    /** Смена режима -> строка в журнал (не чаще, чем реальная смена). */
+    /**
+     * Журнал с гистерезисом: "Покой" пишется только если пауза > 4 сек.
+     * Короткий разрыв (разворот в комнате) склеивается: ни "Покой",
+     * ни повторная "Ходьба" в журнал не попадают.
+     */
     private fun maybeLogModeChange() {
         val m = detector.mode.name
-        if (m == lastLoggedMode) return
-        lastLoggedMode = m
-        val text = when (m) { "WALK" -> "Ходьба"; "RUN" -> "Бег"; else -> "Покой" }
+        val now = System.currentTimeMillis()
+
+        if (m == "IDLE") {
+            if (lastLoggedMode == "IDLE") { idleSinceMs = 0L; return }
+            if (idleSinceMs == 0L) { idleSinceMs = now; return }
+            if (now - idleSinceMs >= IDLE_LOG_DELAY_MS) {
+                idleSinceMs = 0L
+                lastLoggedMode = "IDLE"
+                logEvent("Покой")
+            }
+            return
+        }
+
+        // движение: сбрасываем таймер паузы
+        idleSinceMs = 0L
+        if (m != lastLoggedMode) {
+            lastLoggedMode = m
+            logEvent(if (m == "RUN") "Бег" else "Ходьба")
+        }
+    }
+
+    private fun logEvent(text: String) {
         val now = System.currentTimeMillis()
         val date = LocalDate.now().toString()
         scope.launch {
@@ -175,7 +200,7 @@ class StepService : Service(), SensorEventListener {
     private fun rolloverDayIfNeeded() {
         val today = LocalDate.now().toString()
         if (today == currentDay) return
-        persistDb() // дозаписать вчерашний день
+        persistDb()
         currentDay = today
         walkSteps = 0; runSteps = 0
         detector.restoreCount(0)
@@ -242,5 +267,6 @@ class StepService : Service(), SensorEventListener {
         const val ACTION_CAL_WALK = "cal_walk"
         const val ACTION_CAL_RUN = "cal_run"
         const val ACTION_CAL_STOP = "cal_stop"
+        private const val IDLE_LOG_DELAY_MS = 4000L
     }
 }

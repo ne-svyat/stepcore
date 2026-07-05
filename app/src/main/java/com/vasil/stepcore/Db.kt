@@ -11,16 +11,9 @@ import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-/**
- * Схема рассчитана на десятилетия:
- * - DayRecord: одна строка на день (~30 байт). 100 лет = 36500 строк.
- * - EventRecord: журнал смен режимов. photoUri заложен на будущее
- *   (фото-воспоминания): храним ссылку, не сам файл.
- * SQLite-формат стабилен с 2000 года; изменения схемы - через миграции Room.
- */
 @Entity(tableName = "days")
 data class DayRecord(
-    @PrimaryKey val date: String,   // "2026-07-05"
+    @PrimaryKey val date: String,
     val walkSteps: Int = 0,
     val runSteps: Int = 0,
 )
@@ -28,10 +21,10 @@ data class DayRecord(
 @Entity(tableName = "events")
 data class EventRecord(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val timeMs: Long,               // System.currentTimeMillis()
-    val date: String,               // для выборки по дню
-    val text: String,               // "Ходьба", "Бег", "Покой"
-    val photoUri: String? = null,   // задел на будущее
+    val timeMs: Long,
+    val date: String,
+    val text: String,
+    val photoUri: String? = null,
 )
 
 @Dao
@@ -45,11 +38,23 @@ interface StepDao {
     @Query("SELECT * FROM days ORDER BY date DESC LIMIT :limit")
     suspend fun recentDays(limit: Int): List<DayRecord>
 
+    @Query("SELECT * FROM days ORDER BY date DESC")
+    suspend fun allDays(): List<DayRecord>
+
     @Insert
     suspend fun addEvent(e: EventRecord)
 
-    @Query("SELECT * FROM events WHERE date = :date ORDER BY timeMs DESC LIMIT 200")
+    @Query("SELECT * FROM events WHERE date = :date ORDER BY timeMs ASC")
     suspend fun eventsOfDay(date: String): List<EventRecord>
+
+    @Query("SELECT * FROM events ORDER BY timeMs ASC")
+    suspend fun allEvents(): List<EventRecord>
+
+    @Query("DELETE FROM days")
+    suspend fun deleteAllDays()
+
+    @Query("DELETE FROM events")
+    suspend fun deleteAllEvents()
 }
 
 @Database(entities = [DayRecord::class, EventRecord::class], version = 1, exportSchema = false)
