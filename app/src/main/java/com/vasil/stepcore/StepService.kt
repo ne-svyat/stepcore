@@ -84,6 +84,10 @@ class StepService : Service(), SensorEventListener {
     private var walkSteps = 0
     private var runSteps = 0
     private var stepsSinceDbWrite = 0
+    // почасовой аккумулятор (батчится в БД вместе с persistDb)
+    private var pendKey = ""
+    private var pendW = 0
+    private var pendR = 0
 
     private var lastLoggedMode = "IDLE"
     private var idleSinceMs = 0L
@@ -331,6 +335,7 @@ class StepService : Service(), SensorEventListener {
                     if (delta > 0) {
                         rolloverDayIfNeeded()
                         walkSteps += delta
+                        bumpHour(delta, 0)
                         hwSessionAdded += delta
                         detector.restoreCount(detector.stepCount + delta)
                         StepsState.steps.value = detector.stepCount
@@ -356,6 +361,7 @@ class StepService : Service(), SensorEventListener {
                     if (delta > 0) {
                         rolloverDayIfNeeded()
                         walkSteps += delta
+                        bumpHour(delta, 0)
                         detector.restoreCount(detector.stepCount + delta)
                         StepsState.steps.value = detector.stepCount
                         persistPrefs()
@@ -386,8 +392,8 @@ class StepService : Service(), SensorEventListener {
                         calLastStepMs = timeMs
                     }
                     rolloverDayIfNeeded()
-                    if (detector.mode == StepDetector.Mode.RUN) runSteps += added
-                    else walkSteps += added
+                    if (detector.mode == StepDetector.Mode.RUN) { runSteps += added; bumpHour(0, added) }
+                    else { walkSteps += added; bumpHour(added, 0) }
                     StepsState.steps.value = detector.stepCount
                     persistPrefs()
                     stepsSinceDbWrite += added
@@ -475,7 +481,29 @@ class StepService : Service(), SensorEventListener {
             .apply()
     }
 
+    private fun hourKeyNow(): String {
+        val n = java.time.LocalDateTime.now()
+        return "%04d-%02d-%02d %02d".format(n.year, n.monthValue, n.dayOfMonth, n.hour)
+    }
+
+    private fun bumpHour(w: Int, r: Int) {
+        val k = hourKeyNow()
+        if (k != pendKey) { flushHour(); pendKey = k }
+        pendW += w; pendR += r
+    }
+
+    private fun flushHour() {
+        if (pendKey.isEmpty() || (pendW == 0 && pendR == 0)) return
+        val k = pendKey; val w = pendW; val r = pendR
+        pendW = 0; pendR = 0
+        scope.launch {
+            val dao = AppDb.get(this@StepService).dao()
+            dao.ensureHour(k); dao.addHour(k, w, r)
+        }
+    }
+
     private fun persistDb() {
+        flushHour()
         val d = currentDay; val w = walkSteps; val r = runSteps
         scope.launch {
             AppDb.get(this@StepService).dao().upsertDay(DayRecord(d, w, r))
@@ -493,6 +521,7 @@ class StepService : Service(), SensorEventListener {
         wakeLock?.release(); wakeLock = null
         persistPrefs()
         persistDb()
+        flushHour()
         StepsState.serviceRunning.value = false
         scope.cancel()
         super.onDestroy()

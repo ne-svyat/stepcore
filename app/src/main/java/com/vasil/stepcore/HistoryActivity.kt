@@ -96,6 +96,7 @@ class HistoryActivity : AppCompatActivity() {
                 val dao = AppDb.get(this@HistoryActivity).dao()
                 dao.deleteAllDays()
                 dao.deleteAllEvents()
+                    dao.deleteAllHours()
                 findViewById<EditText>(R.id.deleteConfirmInput).setText("")
                 toast("Вся история удалена")
                 reload()
