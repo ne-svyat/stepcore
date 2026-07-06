@@ -9,4 +9,5 @@ object StepsState {
     val mode = MutableStateFlow("IDLE")
     val calibrationState = MutableStateFlow("")
     val diag = MutableStateFlow("")
+    val detailLog = MutableStateFlow(false)
 }

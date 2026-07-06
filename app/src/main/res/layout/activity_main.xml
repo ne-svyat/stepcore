@@ -90,6 +90,14 @@
         android:fontFamily="monospace"
         android:layout_marginTop="12dp" />
 
+    <androidx.appcompat.widget.SwitchCompat
+        android:id="@+id/detailLogSwitch"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Детальный лог (диагностика)  "
+        android:textSize="15sp"
+        android:layout_marginTop="12dp" />
+
     <Button
         android:id="@+id/diagButton"
         android:layout_width="wrap_content"

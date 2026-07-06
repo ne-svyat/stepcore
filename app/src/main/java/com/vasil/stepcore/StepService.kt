@@ -106,6 +106,7 @@ class StepService : Service(), SensorEventListener {
             detector.restoreCount(walkSteps + runSteps)
         }
         StepsState.hapticEnabled.value = prefs.getBoolean("haptic", false)
+        StepsState.detailLog.value = prefs.getBoolean("detail_log", false)
         loadProfile()
         StepsState.steps.value = detector.stepCount
 
@@ -183,6 +184,25 @@ class StepService : Service(), SensorEventListener {
                     "чистота %.0f%% | грязь %d | каденс %d | гиро %.2f"
                         .format(detector.cleanliness * 100, detector.rejectedNoisy,
                             detector.cadenceLockedSteps, detector.gyroRms)
+            }
+        }
+
+        scope.launch {
+            var stepsAtSnap = detector.stepCount
+            var dropsAtSnap = detector.dropCount
+            while (true) {
+                delay(5000)
+                if (!StepsState.detailLog.value) { stepsAtSnap = detector.stepCount; continue }
+                val d = detector
+                val dSteps = d.stepCount - stepsAtSnap
+                val dDrops = d.dropCount - dropsAtSnap
+                stepsAtSnap = d.stepCount; dropsAtSnap = d.dropCount
+                val reason = if (dDrops > 0) " сброс${dDrops}:${d.lastDropReason}" else ""
+                logEvent(
+                    "[диаг] +${dSteps}ш ${d.mode.name} чист${(d.cleanliness * 100).toInt()}%% " +
+                    "гиро%.2f фон%.1f инт${d.lastIntervalMs.toInt()}мс%s грязь${d.rejectedNoisy} кад${d.cadenceLockedSteps}"
+                        .format(d.gyroRms, d.recentMean, reason)
+                )
             }
         }
 

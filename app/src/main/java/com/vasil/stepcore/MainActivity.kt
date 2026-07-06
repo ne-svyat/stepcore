@@ -44,6 +44,7 @@ class MainActivity : AppCompatActivity() {
         val calWalkBtn = findViewById<Button>(R.id.calWalkButton)
         val calRunBtn = findViewById<Button>(R.id.calRunButton)
         val hapticSwitch = findViewById<SwitchCompat>(R.id.hapticSwitch)
+        val detailLogSwitch = findViewById<SwitchCompat>(R.id.detailLogSwitch)
 
         val prefs = getSharedPreferences(StepService.PREFS, MODE_PRIVATE)
         if (prefs.getString(StepService.KEY_DAY, "") == java.time.LocalDate.now().toString()) {
@@ -89,6 +90,13 @@ class MainActivity : AppCompatActivity() {
 
         val diagBtn = findViewById<Button>(R.id.diagButton)
         var diagOn = false
+        detailLogSwitch.isChecked = prefs.getBoolean("detail_log", false)
+        StepsState.detailLog.value = detailLogSwitch.isChecked
+        detailLogSwitch.setOnCheckedChangeListener { _, checked ->
+            StepsState.detailLog.value = checked
+            prefs.edit().putBoolean("detail_log", checked).apply()
+        }
+
         diagBtn.setOnClickListener {
             if (!StepsState.serviceRunning.value) {
                 StepsState.calibrationState.value = "Сначала нажми Старт"

@@ -43,6 +43,13 @@ class StepDetector {
     /** Есть ли гироскоп на устройстве (ставит StepService при старте). */
     var hasGyro = false
 
+    // Инструментовка (не влияет на детекцию): почему ушли в IDLE и как часто.
+    var lastDropReason = ""
+        private set
+    var dropCount = 0
+        private set
+    val lastIntervalMs: Float get() = emaIntervalMs
+
     // диагностика отбраковок (пока без UI; выводить при разборе провалов)
     // Анти-импульс: фон |верт| за последние 0.5 с. У походки между
     // ударами тело продолжает колебаться (фон высокий), у тапа - тишина.
@@ -152,7 +159,7 @@ class StepDetector {
             shakeBlockUntilMs = timeMs + SHAKE_STICKY_MS
             pendingTimesMs.clear(); pendingAmps.clear()
             motionLostAtMs = 0L
-            dropMode(warm = false, timeMs = timeMs)
+            dropMode(warm = false, timeMs = timeMs, reason = "тряска")
         }
     }
 
@@ -167,7 +174,7 @@ class StepDetector {
         if (gn < 9.81f * (1 - gravTol) || gn > 9.81f * (1 + gravTol)) {
             if (mode != Mode.RUN) {
                 pendingTimesMs.clear(); pendingAmps.clear()
-                dropMode(warm = false, timeMs = timeMs)
+                dropMode(warm = false, timeMs = timeMs, reason = "гравитация")
             }
             return 0
         }
@@ -242,7 +249,7 @@ class StepDetector {
             val timeout = maxTimeout()
             if ((mode == Mode.WALK || mode == Mode.RUN) &&
                 timeMs - lastConfirmedMs > timeout
-            ) dropMode(warm = true, timeMs = timeMs)
+            ) dropMode(warm = true, timeMs = timeMs, reason = "таймаут")
             if (mode == Mode.IDLE && pendingTimesMs.isNotEmpty() &&
                 timeMs - pendingTimesMs.last() > PENDING_TIMEOUT_MS
             ) { pendingTimesMs.clear(); pendingAmps.clear() }
@@ -277,7 +284,7 @@ class StepDetector {
             }
             rejectedNoisy++
             pendingTimesMs.clear(); pendingAmps.clear()
-            if (mode == Mode.WALK || mode == Mode.RUN) dropMode(warm = false, timeMs = timeMs)
+            if (mode == Mode.WALK || mode == Mode.RUN) dropMode(warm = false, timeMs = timeMs, reason = "грязь")
             return 0
         }
 
@@ -309,7 +316,7 @@ class StepDetector {
                 stepCount++
                 return 1
             }
-            dropMode(warm = true, timeMs = timeMs)
+            dropMode(warm = true, timeMs = timeMs, reason = "интервал")
         }
 
         pendingTimesMs.add(timeMs)
@@ -338,11 +345,13 @@ class StepDetector {
             (lastMotionMode == Mode.WALK || lastMotionMode == Mode.RUN)
         ) WARM_QUARANTINE_STEPS else QUARANTINE_STEPS
 
-    private fun dropMode(warm: Boolean, timeMs: Long) {
+    private fun dropMode(warm: Boolean, timeMs: Long, reason: String = "") {
         if (mode == Mode.WALK || mode == Mode.RUN) {
             lastMotionMode = mode
             lastMotionAmp = emaAmp
             motionLostAtMs = if (warm) timeMs else 0L
+            lastDropReason = reason
+            dropCount++
         }
         if (mode != Mode.TRANSPORT) mode = Mode.IDLE
     }

@@ -146,7 +146,16 @@ class HistoryActivity : AppCompatActivity() {
                         details.addView(TextView(this@HistoryActivity).apply {
                             text = "Событий нет"; textSize = 14f
                         })
-                    } else events.forEach { e ->
+                    } else {
+                        val allLines = "$headerLine\n" + events.joinToString("\n") { e ->
+                            "${timeFmt.format(Date(e.timeMs))}  ${e.text}"
+                        }
+                        details.addView(Button(this@HistoryActivity).apply {
+                            text = "⧉ Копировать весь день (${events.size})"
+                            setOnClickListener { copyLine(allLines) }
+                        })
+                    }
+                    events.forEach { e ->
                         val line = "${timeFmt.format(Date(e.timeMs))}  ${e.text}"
                         details.addView(TextView(this@HistoryActivity).apply {
                             text = line
