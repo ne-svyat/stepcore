@@ -151,6 +151,16 @@ class StepService : Service(), SensorEventListener {
         StepsState.serviceRunning.value = true
 
         scope.launch {
+            while (true) {
+                delay(1000)
+                StepsState.diag.value =
+                    "гиро %.2f | узких принято %d / срезано %d | тёплых срезано %d"
+                        .format(detector.gyroRms, detector.acceptedExempt,
+                            detector.rejectedNoRotation, detector.rejectedWarmAmp)
+            }
+        }
+
+        scope.launch {
             var lastTick = SystemClock.elapsedRealtime()
             lastSensorEventMs = lastTick
             while (true) {

@@ -8,4 +8,5 @@ object StepsState {
     val hapticEnabled = MutableStateFlow(false)
     val mode = MutableStateFlow("IDLE")
     val calibrationState = MutableStateFlow("")
+    val diag = MutableStateFlow("")
 }

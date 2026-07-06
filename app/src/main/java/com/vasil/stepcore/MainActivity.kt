@@ -96,6 +96,7 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
                 launch { StepsState.calibrationState.collect { calView.text = it } }
+                launch { StepsState.diag.collect { findViewById<TextView>(R.id.diagText).text = it } }
             }
         }
     }

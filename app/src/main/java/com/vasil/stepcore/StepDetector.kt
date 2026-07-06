@@ -44,6 +44,9 @@ class StepDetector {
     var hasGyro = false
 
     // диагностика отбраковок (пока без UI; выводить при разборе провалов)
+    var acceptedExempt = 0
+        private set
+    val gyroRms: Float get() = sqrt(gyroRmsSq)
     var rejectedNoRotation = 0
         private set
     var rejectedWarmAmp = 0
@@ -162,7 +165,9 @@ class StepDetector {
         // тап по неподвижному телефону - нет. Без гироскопа - как в V7.
         val rotationOk = !hasGyro || sqrt(gyroRmsSq) >= GYRO_FLOOR_FOR_EXEMPT
         val widthOk = wasAboveHalf || (vert >= WIDTH_EXEMPT_AMP && rotationOk)
-        if (!wasAboveHalf && vert >= WIDTH_EXEMPT_AMP && !rotationOk) rejectedNoRotation++
+        if (!wasAboveHalf && vert >= WIDTH_EXEMPT_AMP) {
+            if (rotationOk) acceptedExempt++ else rejectedNoRotation++
+        }
 
         val isPeak = vert > threshold &&
                 vert < peakCap &&
