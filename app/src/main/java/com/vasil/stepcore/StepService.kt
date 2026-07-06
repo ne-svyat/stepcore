@@ -25,6 +25,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import java.time.LocalDate
 
 class StepService : Service(), SensorEventListener {
@@ -62,6 +63,11 @@ class StepService : Service(), SensorEventListener {
     private var hwAtTransportEnter = -1L
     private var renewalsAtEnter = 0
     private var transportEnterWallMs = 0L
+    // Сверка с чипом (V8.11): якорь чипа на начало дня.
+    // Ворота решения V9 "чип считает всегда": N дней автоматических
+    // сравнений вместо ручных вечерних записей.
+    private var hwDayAnchor = -1L
+    private var hwDayPaused = false   // был Стоп/перезагрузка - сверка дня неполная
 
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context?, intent: Intent?) {
@@ -139,6 +145,11 @@ class StepService : Service(), SensorEventListener {
             sensorManager.registerListener(this, gyro, SensorManager.SENSOR_DELAY_GAME)
         }
         hwBaseline = prefs.getLong(KEY_HW_BASE, -1L)
+        hwDayAnchor =
+            if (prefs.getString(KEY_HW_ANCHOR_DAY, "") == currentDay)
+                prefs.getLong(KEY_HW_DAY_ANCHOR, -1L)
+            else -1L   // чужой день - переякоримся на первом событии чипа
+        hwDayPaused = prefs.getBoolean(KEY_HW_DAY_PAUSED, false)
         // если прошлая жизнь упала с исключением - имя в журнал
         prefs.getString(KEY_CRASH, null)?.let {
             logEvent("⚠ Падение сервиса: $it")
@@ -321,6 +332,11 @@ class StepService : Service(), SensorEventListener {
             Sensor.TYPE_STEP_COUNTER -> {
                 val hwTotal = event.values[0].toLong()
                 hwLastTotal = hwTotal
+                if (hwDayAnchor < 0) {                    // первый отсчёт дня
+                    hwDayAnchor = hwTotal; persistHwAnchor()
+                } else if (hwTotal < hwDayAnchor) {        // перезагрузка телефона
+                    hwDayAnchor = hwTotal; hwDayPaused = true; persistHwAnchor()
+                }
                 // сброс после перезагрузки телефона (чип стартует с нуля)
                 if (hwBaseline < 0 || hwTotal < hwBaseline) {
                     hwBaseline = hwTotal
@@ -485,9 +501,56 @@ class StepService : Service(), SensorEventListener {
         val today = LocalDate.now().toString()
         if (today == currentDay) return
         persistDb()
+        logHwComparison("итог дня")
+        hwDayAnchor = hwLastTotal
+        hwDayPaused = false
         currentDay = today
+        persistHwAnchor()
         walkSteps = 0; runSteps = 0
         detector.restoreCount(0)
+    }
+
+    /**
+     * Строка сверки в журнал: наш дневной счёт против дельты чипа за день.
+     * Разница > нескольких % за полный день без пауз - материал решения V9.
+     */
+    private fun logHwComparison(tag: String) {
+        if (hwDayAnchor < 0 || hwLastTotal < 0) return
+        val chip = (hwLastTotal - hwDayAnchor).toInt()
+        val own = walkSteps + runSteps
+        if (chip <= 0 && own <= 0) return
+        val diff = own - chip
+        val pct = if (chip > 0) 100f * diff / chip else 0f
+        val note = if (hwDayPaused) " · день с паузой/перезагрузкой, сверка неполная" else ""
+        logEvent("Сверка [$tag]: StepCore $own · чип $chip · разница " +
+                (if (diff >= 0) "+" else "") + "$diff (${"%.1f".format(pct)}%)$note")
+    }
+
+    /** То же, но синхронно: для onDestroy, где scope.cancel() убьёт launch. */
+    private fun logHwComparisonBlocking(tag: String) {
+        if (hwDayAnchor < 0 || hwLastTotal < 0) return
+        val chip = (hwLastTotal - hwDayAnchor).toInt()
+        val own = walkSteps + runSteps
+        if (chip <= 0 && own <= 0) return
+        val diff = own - chip
+        val pct = if (chip > 0) 100f * diff / chip else 0f
+        val note = if (hwDayPaused) " · день с паузой/перезагрузкой, сверка неполная" else ""
+        val text = "Сверка [$tag]: StepCore $own · чип $chip · разница " +
+                (if (diff >= 0) "+" else "") + "$diff (${"%.1f".format(pct)}%)$note"
+        runBlocking {
+            AppDb.get(this@StepService).dao().addEvent(
+                EventRecord(timeMs = System.currentTimeMillis(),
+                    date = LocalDate.now().toString(), text = text)
+            )
+        }
+    }
+
+    private fun persistHwAnchor() {
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+            .putLong(KEY_HW_DAY_ANCHOR, hwDayAnchor)
+            .putString(KEY_HW_ANCHOR_DAY, currentDay)
+            .putBoolean(KEY_HW_DAY_PAUSED, hwDayPaused)
+            .apply()
     }
 
     private fun persistHwBase() {
@@ -538,6 +601,8 @@ class StepService : Service(), SensorEventListener {
     override fun onDestroy() {
         sensorManager.unregisterListener(this)
         runCatching { unregisterReceiver(screenReceiver) }
+        logHwComparisonBlocking("стоп")
+        hwDayPaused = true; persistHwAnchor()   // чип за паузу насчитает - пометить день
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
             .putLong(KEY_ALIVE, System.currentTimeMillis())
             .putBoolean(KEY_CLEAN_STOP, true).apply()
@@ -585,6 +650,9 @@ class StepService : Service(), SensorEventListener {
         const val KEY_ALIVE = "last_alive_ms"
         const val KEY_CRASH = "last_crash"
         const val KEY_CLEAN_STOP = "clean_stop"
+        const val KEY_HW_DAY_ANCHOR = "hw_day_anchor"
+        const val KEY_HW_ANCHOR_DAY = "hw_anchor_day"
+        const val KEY_HW_DAY_PAUSED = "hw_day_paused"
         const val ACTION_CAL_WALK = "cal_walk"
         const val ACTION_CAL_RUN = "cal_run"
         const val ACTION_CAL_STOP = "cal_stop"
