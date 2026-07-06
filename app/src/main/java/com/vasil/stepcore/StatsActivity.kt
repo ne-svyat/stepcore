@@ -62,7 +62,46 @@ class StatsActivity : AppCompatActivity() {
             root.addView(sectionTitle("АКТИВНОСТЬ ЗА ГОД"))
             root.addView(buildHeatmap(byDate))
             root.addView(buildLegend())
+
+            // ---- ГОД В ЦИФРАХ ----
+            val year = LocalDate.now().year.toString()
+            val yearDays = days.filter { it.date.startsWith(year) }
+            if (yearDays.isNotEmpty()) {
+                root.addView(sectionTitle("$year В ЦИФРАХ"))
+                val w = yearDays.sumOf { it.walkSteps }
+                val r = yearDays.sumOf { it.runSteps }
+                val total = w + r
+                val km = Stats.distanceKm(this@StatsActivity, w, r)
+                // оценка часов движения: ~100 шагов/мин
+                val hours = total / 100.0 / 60.0
+                val avg = total / yearDays.size
+                // лучший месяц
+                val byMonth = HashMap<String, Int>()
+                yearDays.forEach {
+                    val m = it.date.substring(0, 7)
+                    byMonth[m] = (byMonth[m] ?: 0) + it.walkSteps + it.runSteps
+                }
+                val best = byMonth.maxByOrNull { it.value }
+
+                root.addView(UiKit.statCard(this@StatsActivity, "Шагов за год",
+                    "$total", "ходьба $w · бег $r", R.color.accent_red))
+                if (km > 0) root.addView(UiKit.statCard(this@StatsActivity, "Пройдено",
+                    "${"%.1f".format(km)} км", "оценка", R.color.accent_blue))
+                root.addView(UiKit.statCard(this@StatsActivity, "В движении",
+                    "${"%.0f".format(hours)} ч", "оценка по шагам", R.color.accent_blue))
+                if (best != null) root.addView(UiKit.statCard(this@StatsActivity, "Самый активный месяц",
+                    monthName(best.key), "${best.value} шагов", R.color.accent_red))
+                root.addView(UiKit.statCard(this@StatsActivity, "Среднее в день",
+                    "$avg шагов", "${yearDays.size} дней с данными", R.color.accent_blue))
+            }
         }
+    }
+
+    private fun monthName(ym: String): String {
+        val names = listOf("январь","февраль","март","апрель","май","июнь",
+            "июль","август","сентябрь","октябрь","ноябрь","декабрь")
+        val m = ym.substring(5).toIntOrNull() ?: return ym
+        return names.getOrElse(m - 1) { ym } + " " + ym.substring(0, 4)
     }
 
     private fun currentStreak(byDate: Map<String, DayRecord>): Int {

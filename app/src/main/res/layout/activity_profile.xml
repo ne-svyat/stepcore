@@ -18,13 +18,26 @@
             android:textSize="26sp"
             android:letterSpacing="0.05" />
 
+        <TextView
+            android:id="@+id/dataToggle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="ДАННЫЕ  ▾"
+            android:textColor="@color/text_dim"
+            android:fontFamily="sans-serif-condensed"
+            android:textSize="14sp"
+            android:letterSpacing="0.05"
+            android:paddingTop="18dp"
+            android:paddingBottom="10dp" />
+
         <LinearLayout
+            android:id="@+id/dataContainer"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:background="@drawable/card_asym"
             android:padding="16dp"
-            android:layout_marginTop="16dp">
+            android:visibility="gone">
 
             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
                 android:text="ВЕС, КГ" android:textColor="@color/text_dim"
@@ -43,7 +56,7 @@
                 android:textColor="@color/text_main" />
 
             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-                android:text="ВОЗРАСT" android:textColor="@color/text_dim"
+                android:text="ВОЗРАСТ" android:textColor="@color/text_dim"
                 android:fontFamily="sans-serif-condensed" android:textSize="12sp"
                 android:letterSpacing="0.05" android:layout_marginTop="8dp" />
             <EditText android:id="@+id/ageInput" android:layout_width="match_parent"
@@ -72,11 +85,11 @@
                     android:layout_height="wrap_content" android:text="Женский"
                     android:textColor="@color/text_main" android:layout_marginStart="20dp" />
             </RadioGroup>
-        </LinearLayout>
 
-        <Button android:id="@+id/saveButton" android:layout_width="match_parent"
-            android:layout_height="52dp" android:text="Сохранить"
-            android:layout_marginTop="12dp" />
+            <Button android:id="@+id/saveButton" android:layout_width="match_parent"
+                android:layout_height="52dp" android:text="Сохранить"
+                android:layout_marginTop="16dp" />
+        </LinearLayout>
 
         <TextView
             android:layout_width="wrap_content"

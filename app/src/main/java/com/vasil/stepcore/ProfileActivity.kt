@@ -3,6 +3,7 @@ package com.vasil.stepcore
 import android.os.Bundle
 import android.widget.Button
 import android.widget.EditText
+import android.view.View
 import android.widget.LinearLayout
 import android.widget.RadioButton
 import android.widget.Toast
@@ -48,6 +49,19 @@ class ProfileActivity : AppCompatActivity() {
                 .putString("p_sex", if (sexF.isChecked) "f" else "m")
                 .apply()
             Toast.makeText(this, "Сохранено", Toast.LENGTH_SHORT).show()
+        }
+
+        val dataToggle = findViewById<android.widget.TextView>(R.id.dataToggle)
+        val dataContainer = findViewById<LinearLayout>(R.id.dataContainer)
+        // если профиль пустой — раскрыть сразу, иначе свёрнут
+        if (!prefs.contains("p_weight")) {
+            dataContainer.visibility = View.VISIBLE
+            dataToggle.text = "ДАННЫЕ  ▴"
+        }
+        dataToggle.setOnClickListener {
+            val open = dataContainer.visibility == View.VISIBLE
+            dataContainer.visibility = if (open) View.GONE else View.VISIBLE
+            dataToggle.text = if (open) "ДАННЫЕ  ▾" else "ДАННЫЕ  ▴"
         }
 
         loadPassport()
