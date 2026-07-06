@@ -123,36 +123,55 @@ class HistoryActivity : AppCompatActivity() {
     private fun makeDayRow(day: DayRecord): View {
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val total = day.walkSteps + day.runSteps
+        val headerLine = "${day.date}   $total шагов (ходьба ${day.walkSteps}, бег ${day.runSteps})"
         val header = TextView(this).apply {
-            text = "${day.date}   $total шагов (ходьба ${day.walkSteps}, бег ${day.runSteps})  ▸"
+            text = "$headerLine  ▸"
             textSize = 16f
             setPadding(0, 20, 0, 20)
+            setOnLongClickListener { copyLine(headerLine); true }
         }
-        val details = TextView(this).apply {
-            textSize = 14f
-            typeface = android.graphics.Typeface.MONOSPACE
+        val details = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
             visibility = View.GONE
             setPadding(24, 0, 0, 12)
         }
         header.setOnClickListener {
             if (details.visibility == View.GONE) {
                 details.visibility = View.VISIBLE
-                header.text = header.text.toString().replace("▸", "▾")
+                header.text = "$headerLine  ▾"
                 lifecycleScope.launch {
+                    details.removeAllViews()
                     val events = AppDb.get(this@HistoryActivity).dao().eventsOfDay(day.date)
-                    details.text = if (events.isEmpty()) "Событий нет"
-                    else events.joinToString("\n") { e ->
-                        "${timeFmt.format(Date(e.timeMs))}  ${e.text}"
+                    if (events.isEmpty()) {
+                        details.addView(TextView(this@HistoryActivity).apply {
+                            text = "Событий нет"; textSize = 14f
+                        })
+                    } else events.forEach { e ->
+                        val line = "${timeFmt.format(Date(e.timeMs))}  ${e.text}"
+                        details.addView(TextView(this@HistoryActivity).apply {
+                            text = line
+                            textSize = 14f
+                            typeface = android.graphics.Typeface.MONOSPACE
+                            setPadding(0, 6, 0, 6)
+                            setOnClickListener { copyLine(line) }
+                        })
                     }
                 }
             } else {
                 details.visibility = View.GONE
-                header.text = header.text.toString().replace("▾", "▸")
+                header.text = "$headerLine  ▸"
             }
         }
         col.addView(header)
         col.addView(details)
         return col
+    }
+
+    /** Тап по строке журнала кладёт её одну в буфер обмена. */
+    private fun copyLine(line: String) {
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        cm.setPrimaryClip(ClipData.newPlainText("StepCore", line))
+        toast("Строка скопирована")
     }
 
     /** Копия видимого периода: дни + журнал событий каждого дня. */

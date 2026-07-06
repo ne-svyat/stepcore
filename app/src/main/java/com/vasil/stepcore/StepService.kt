@@ -128,6 +128,11 @@ class StepService : Service(), SensorEventListener {
             sensorManager.registerListener(this, gyro, SensorManager.SENSOR_DELAY_GAME)
         }
         hwBaseline = prefs.getLong(KEY_HW_BASE, -1L)
+        // если прошлая жизнь упала с исключением - имя в журнал
+        prefs.getString(KEY_CRASH, null)?.let {
+            logEvent("⚠ Падение сервиса: $it")
+            prefs.edit().remove(KEY_CRASH).apply()
+        }
         val lastAlive = prefs.getLong(KEY_ALIVE, 0L)
         if (lastAlive > 0) {
             val deadSec = (System.currentTimeMillis() - lastAlive) / 1000
@@ -135,6 +140,20 @@ class StepService : Service(), SensorEventListener {
                 forceBackfill = true
                 logEvent("⚠ Сервис был мёртв $deadSec с")
             }
+        }
+        // отметка «жив» СРАЗУ: жизнь короче 30 с не успевала записаться,
+        // серия рестартов меряла смерть от древней метки и каждый раз
+        // дёргала принудительный досчёт (шторм 06:35 в журнале)
+        prefs.edit().putLong(KEY_ALIVE, System.currentTimeMillis()).apply()
+        val prevHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { t, e ->
+            runCatching {
+                getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(
+                    KEY_CRASH,
+                    "${e.javaClass.simpleName}: ${e.message} @ ${e.stackTrace.firstOrNull()}"
+                ).commit()
+            }
+            prevHandler?.uncaughtException(t, e)
         }
         val hwCounter = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
         if (hwCounter != null) {
@@ -434,6 +453,8 @@ class StepService : Service(), SensorEventListener {
     override fun onDestroy() {
         sensorManager.unregisterListener(this)
         runCatching { unregisterReceiver(screenReceiver) }
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+            .putLong(KEY_ALIVE, System.currentTimeMillis()).apply()
         wakeLock?.release(); wakeLock = null
         persistPrefs()
         persistDb()
@@ -475,6 +496,7 @@ class StepService : Service(), SensorEventListener {
         const val KEY_RUN = "run_steps"
         const val KEY_HW_BASE = "hw_baseline"
         const val KEY_ALIVE = "last_alive_ms"
+        const val KEY_CRASH = "last_crash"
         const val ACTION_CAL_WALK = "cal_walk"
         const val ACTION_CAL_RUN = "cal_run"
         const val ACTION_CAL_STOP = "cal_stop"
