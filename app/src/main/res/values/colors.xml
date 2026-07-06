@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bg">#0A0A0A</color>
+    <color name="surface">#16161A</color>
+    <color name="surface2">#1F1F26</color>
+    <color name="accent_red">#E23636</color>
+    <color name="accent_red_bright">#FF3B3B</color>
+    <color name="accent_blue">#3D7EFF</color>
+    <color name="text_main">#F5F5F5</color>
+    <color name="text_dim">#9A9A9A</color>
+    <!-- уровни активности: красный(мало) -> зелёный(много) -->
+    <color name="hm_empty">#161616</color>
+    <color name="hm1">#C0392B</color>
+    <color name="hm2">#E67E22</color>
+    <color name="hm3">#F1C40F</color>
+    <color name="hm4">#5FB84E</color>
+    <color name="hm5">#2ECC71</color>
+</resources>

@@ -81,6 +81,10 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(this, ProfileActivity::class.java))
         }
 
+        findViewById<Button>(R.id.statsButton).setOnClickListener {
+            startActivity(Intent(this, StatsActivity::class.java))
+        }
+
         lifecycleScope.launch {
             val y = java.time.LocalDate.now().minusDays(1).toString()
             val d = AppDb.get(this@MainActivity).dao().day(y)
