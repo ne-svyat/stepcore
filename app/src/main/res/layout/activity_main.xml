@@ -1,123 +1,199 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:gravity="center"
-    android:padding="32dp">
+    android:layout_height="match_parent">
 
-    <TextView
-        android:id="@+id/stepsText"
-        android:layout_width="wrap_content"
+    <LinearLayout
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="0"
-        android:textSize="72sp"
-        android:textStyle="bold" />
+        android:orientation="vertical"
+        android:gravity="center_horizontal"
+        android:padding="24dp">
 
-    <TextView
-        android:id="@+id/modeText"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Покой"
-        android:textSize="20sp"
-        android:layout_marginTop="4dp" />
+        <TextView
+            android:id="@+id/modeText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Покой"
+            android:textColor="@color/text_main"
+            android:fontFamily="sans-serif-condensed"
+            android:textSize="14sp"
+            android:letterSpacing="0.08"
+            android:paddingLeft="16dp"
+            android:paddingRight="16dp"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp"
+            android:layout_marginTop="8dp" />
 
-    <TextView
-        android:id="@+id/statsText"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text=""
-        android:textSize="15sp"
-        android:layout_marginTop="4dp" />
+        <FrameLayout
+            android:layout_width="240dp"
+            android:layout_height="240dp"
+            android:layout_marginTop="20dp">
 
-    <TextView
-        android:id="@+id/statusText"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Остановлено"
-        android:textSize="16sp"
-        android:layout_marginTop="4dp" />
+            <com.vasil.stepcore.ProgressRingView
+                android:id="@+id/progressRing"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent" />
 
-    <Button
-        android:id="@+id/toggleButton"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Старт"
-        android:layout_marginTop="24dp" />
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:orientation="vertical"
+                android:gravity="center">
 
-    <Button
-        android:id="@+id/historyButton"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="История"
-        android:layout_marginTop="8dp" />
+                <TextView
+                    android:id="@+id/stepsText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="0"
+                    android:textColor="@color/text_main"
+                    android:fontFamily="sans-serif-black"
+                    android:textSize="54sp" />
 
-    <Button
-        android:id="@+id/statsButton"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Статистика"
-        android:layout_marginTop="8dp" />
+                <TextView
+                    android:id="@+id/goalText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="0% · цель 10 000"
+                    android:textColor="@color/text_dim"
+                    android:textSize="13sp"
+                    android:layout_marginTop="2dp" />
+            </LinearLayout>
+        </FrameLayout>
 
-    <Button
-        android:id="@+id/profileButton"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Профиль"
-        android:layout_marginTop="8dp" />
+        <LinearLayout
+            android:id="@+id/statsCard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:background="@drawable/card_asym"
+            android:layout_marginTop="24dp">
 
-    <androidx.appcompat.widget.SwitchCompat
-        android:id="@+id/hapticSwitch"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Вибрация на шаг  "
-        android:textSize="16sp"
-        android:layout_marginTop="16dp" />
+            <View
+                android:layout_width="4dp"
+                android:layout_height="match_parent"
+                android:background="@color/accent_red" />
 
-    <Button
-        android:id="@+id/calWalkButton"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Калибровка: шаг"
-        android:layout_marginTop="16dp" />
+            <TextView
+                android:id="@+id/statsText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text=""
+                android:textColor="@color/text_main"
+                android:textSize="14sp"
+                android:padding="16dp" />
+        </LinearLayout>
 
-    <Button
-        android:id="@+id/calRunButton"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Калибровка: бег"
-        android:layout_marginTop="8dp" />
+        <TextView
+            android:id="@+id/statusText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Остановлено"
+            android:textColor="@color/text_dim"
+            android:textSize="13sp"
+            android:layout_marginTop="12dp" />
 
-    <TextView
-        android:id="@+id/diagText"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text=""
-        android:textSize="12sp"
-        android:fontFamily="monospace"
-        android:layout_marginTop="12dp" />
+        <Button
+            android:id="@+id/toggleButton"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:text="Старт"
+            android:textSize="17sp"
+            android:layout_marginTop="12dp" />
 
-    <androidx.appcompat.widget.SwitchCompat
-        android:id="@+id/detailLogSwitch"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Детальный лог (диагностика)  "
-        android:textSize="15sp"
-        android:layout_marginTop="12dp" />
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="8dp">
 
-    <Button
-        android:id="@+id/diagButton"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Диагностика: старт"
-        android:layout_marginTop="8dp" />
+            <Button android:id="@+id/historyButton" style="?android:attr/buttonBarButtonStyle"
+                android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content" android:text="История" />
+            <Button android:id="@+id/statsButton" style="?android:attr/buttonBarButtonStyle"
+                android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content" android:text="Статистика" />
+            <Button android:id="@+id/profileButton" style="?android:attr/buttonBarButtonStyle"
+                android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content" android:text="Профиль" />
+        </LinearLayout>
 
-    <TextView
-        android:id="@+id/calText"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text=""
-        android:textSize="14sp"
-        android:layout_marginTop="8dp" />
+        <androidx.appcompat.widget.SwitchCompat
+            android:id="@+id/hapticSwitch"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Вибрация на шаг"
+            android:textColor="@color/text_main"
+            android:textSize="15sp"
+            android:layout_marginTop="16dp" />
 
-</LinearLayout>
+        <TextView
+            android:id="@+id/toolsToggle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="⚙  Инструменты  ▾"
+            android:textColor="@color/text_dim"
+            android:fontFamily="sans-serif-condensed"
+            android:textSize="14sp"
+            android:letterSpacing="0.05"
+            android:paddingTop="18dp"
+            android:paddingBottom="10dp" />
+
+        <LinearLayout
+            android:id="@+id/toolsContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <Button
+                android:id="@+id/calWalkButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Калибровка: шаг" />
+
+            <Button
+                android:id="@+id/calRunButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Калибровка: бег"
+                android:layout_marginTop="8dp" />
+
+            <TextView
+                android:id="@+id/calText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text=""
+                android:textColor="@color/text_dim"
+                android:textSize="13sp"
+                android:layout_marginTop="8dp" />
+
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/detailLogSwitch"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Детальный лог (диагностика)"
+                android:textColor="@color/text_main"
+                android:textSize="14sp"
+                android:layout_marginTop="12dp" />
+
+            <Button
+                android:id="@+id/diagButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Диагностика: старт"
+                android:layout_marginTop="8dp" />
+
+            <TextView
+                android:id="@+id/diagText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text=""
+                android:textColor="@color/text_dim"
+                android:fontFamily="monospace"
+                android:textSize="11sp"
+                android:layout_marginTop="12dp" />
+        </LinearLayout>
+
+    </LinearLayout>
+</ScrollView>

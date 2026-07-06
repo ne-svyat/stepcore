@@ -3,17 +3,20 @@ package com.vasil.stepcore
 import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.VibratorManager
 import android.provider.Settings
+import android.view.View
 import android.widget.Button
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -28,7 +31,11 @@ class MainActivity : AppCompatActivity() {
 
     private var calibrating = false
     private lateinit var statsView: TextView
+    private lateinit var ring: ProgressRingView
+    private lateinit var goalView: TextView
     private var yesterdayTotal = -1
+
+    private val goal = 10000
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -39,12 +46,16 @@ class MainActivity : AppCompatActivity() {
         val modeView = findViewById<TextView>(R.id.modeText)
         val calView = findViewById<TextView>(R.id.calText)
         statsView = findViewById(R.id.statsText)
+        ring = findViewById(R.id.progressRing)
+        goalView = findViewById(R.id.goalText)
         val toggleBtn = findViewById<Button>(R.id.toggleButton)
         val historyBtn = findViewById<Button>(R.id.historyButton)
         val calWalkBtn = findViewById<Button>(R.id.calWalkButton)
         val calRunBtn = findViewById<Button>(R.id.calRunButton)
         val hapticSwitch = findViewById<SwitchCompat>(R.id.hapticSwitch)
         val detailLogSwitch = findViewById<SwitchCompat>(R.id.detailLogSwitch)
+        val toolsToggle = findViewById<TextView>(R.id.toolsToggle)
+        val toolsContainer = findViewById<View>(R.id.toolsContainer)
 
         val prefs = getSharedPreferences(StepService.PREFS, MODE_PRIVATE)
         if (prefs.getString(StepService.KEY_DAY, "") == java.time.LocalDate.now().toString()) {
@@ -76,13 +87,17 @@ class MainActivity : AppCompatActivity() {
         historyBtn.setOnClickListener {
             startActivity(Intent(this, HistoryActivity::class.java))
         }
-
         findViewById<Button>(R.id.profileButton).setOnClickListener {
             startActivity(Intent(this, ProfileActivity::class.java))
         }
-
         findViewById<Button>(R.id.statsButton).setOnClickListener {
             startActivity(Intent(this, StatsActivity::class.java))
+        }
+
+        toolsToggle.setOnClickListener {
+            val open = toolsContainer.visibility == View.VISIBLE
+            toolsContainer.visibility = if (open) View.GONE else View.VISIBLE
+            toolsToggle.text = if (open) "⚙  Инструменты  ▾" else "⚙  Инструменты  ▴"
         }
 
         lifecycleScope.launch {
@@ -118,7 +133,14 @@ class MainActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                launch { StepsState.steps.collect { stepsView.text = it.toString(); updateStats() } }
+                launch {
+                    StepsState.steps.collect { s ->
+                        stepsView.text = s.toString()
+                        ring.setProgress(s.toFloat() / goal)
+                        goalView.text = "${s * 100 / goal}% · цель ${"%,d".format(goal).replace(',', ' ')}"
+                        updateStats()
+                    }
+                }
                 launch {
                     StepsState.serviceRunning.collect { running ->
                         statusView.text = if (running) "Считаю шаги" else "Остановлено"
@@ -126,19 +148,33 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
                 launch {
-                    StepsState.mode.collect { m ->
-                        modeView.text = when (m) {
-                            "WALK" -> "Ходьба"
-                            "RUN" -> "Бег"
-                            "TRANSPORT" -> "Транспорт"
-                            else -> "Покой"
-                        }
-                    }
+                    StepsState.mode.collect { m -> applyModeBadge(modeView, m) }
                 }
                 launch { StepsState.calibrationState.collect { calView.text = it } }
                 launch { StepsState.diag.collect { findViewById<TextView>(R.id.diagText).text = it } }
             }
         }
+    }
+
+    /** Бейдж режима: Покой серый, Ходьба синий, Бег красный. */
+    private fun applyModeBadge(view: TextView, m: String) {
+        val (label, colorRes) = when (m) {
+            "WALK" -> "ХОДЬБА" to R.color.accent_blue
+            "RUN" -> "БЕГ" to R.color.accent_red
+            "TRANSPORT" -> "ТРАНСПОРТ" to R.color.text_dim
+            else -> "ПОКОЙ" to R.color.text_dim
+        }
+        view.text = label
+        val bg = GradientDrawable().apply {
+            cornerRadius = 18f * resources.displayMetrics.density
+            setColor(ContextCompat.getColor(this@MainActivity, R.color.surface2))
+            setStroke(
+                (1.5f * resources.displayMetrics.density).toInt(),
+                ContextCompat.getColor(this@MainActivity, colorRes)
+            )
+        }
+        view.background = bg
+        view.setTextColor(ContextCompat.getColor(this, colorRes))
     }
 
     private fun toggleCalibration(kind: String, self: Button, other: Button) {
@@ -172,11 +208,11 @@ class MainActivity : AppCompatActivity() {
         val km = Stats.distanceKm(this, walk, run)
         val kcal = Stats.kcal(this, walk, run)
         val sb = StringBuilder()
-        if (km > 0) sb.append("%.2f км · %d ккал".format(km, kcal))
+        if (km > 0) sb.append("%.2f км  ·  %d ккал".format(km, kcal))
         else sb.append("Заполни профиль для км и ккал")
         if (yesterdayTotal >= 0) {
             val diff = (walk + run) - yesterdayTotal
-            sb.append("  ·  вчера $yesterdayTotal (")
+            sb.append("\nвчера $yesterdayTotal (")
             sb.append(if (diff >= 0) "+$diff" else "$diff").append(")")
         }
         statsView.text = sb.toString()
@@ -188,8 +224,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startTracking() {
-        // Без Doze-whitelist система игнорирует wakelock сервиса
-        // при выключенном экране - счёт останавливается.
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
         if (!pm.isIgnoringBatteryOptimizations(packageName)) {
             startActivity(
