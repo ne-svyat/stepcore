@@ -9,36 +9,55 @@ import android.view.View
 import androidx.core.content.ContextCompat
 
 /**
- * Кольцо прогресса к дневной цели. progress 0..1 (и выше).
- * Красное, при достижении цели (>=1) зелёное. Без внешних зависимостей.
+ * Кольцо: длина дуги = прогресс к цели, цвет делится на ходьбу (синяя)
+ * и бег (красный) пропорционально шагам. Цель взята -> фон-кольцо зелёное.
  */
 class ProgressRingView @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null, defStyle: Int = 0
 ) : View(context, attrs, defStyle) {
 
-    private var progress = 0f
+    private var walk = 0
+    private var run = 0
+    private var goal = 10000
     private val d = resources.displayMetrics.density
-    private val stroke = 14f * d
+    private val stroke = 16f * d
 
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeWidth = stroke; strokeCap = Paint.Cap.ROUND
-        color = ContextCompat.getColor(context, R.color.surface2)
     }
-    private val fgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val walkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeWidth = stroke; strokeCap = Paint.Cap.ROUND
+        color = ContextCompat.getColor(context, R.color.accent_blue)
+    }
+    private val runPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeWidth = stroke; strokeCap = Paint.Cap.ROUND
+        color = ContextCompat.getColor(context, R.color.accent_red)
     }
     private val rect = RectF()
 
-    fun setProgress(p: Float) { progress = p.coerceAtLeast(0f); invalidate() }
+    fun setData(walk: Int, run: Int, goal: Int) {
+        this.walk = walk; this.run = run; this.goal = if (goal > 0) goal else 10000
+        invalidate()
+    }
 
     override fun onDraw(canvas: Canvas) {
         val pad = stroke / 2f + 2f * d
         rect.set(pad, pad, width - pad, height - pad)
-        canvas.drawArc(rect, 0f, 360f, false, bgPaint)
-        val reached = progress >= 1f
-        fgPaint.color = ContextCompat.getColor(
-            context, if (reached) R.color.hm5 else R.color.accent_red
+
+        val total = walk + run
+        val reached = total >= goal
+        bgPaint.color = ContextCompat.getColor(
+            this@ProgressRingView.context,
+            if (reached) R.color.hm5 else R.color.surface2
         )
-        canvas.drawArc(rect, -90f, progress.coerceAtMost(1f) * 360f, false, fgPaint)
+        canvas.drawArc(rect, 0f, 360f, false, bgPaint)
+
+        if (total <= 0) return
+        val frac = (total.toFloat() / goal).coerceAtMost(1f)
+        val walkSweep = frac * 360f * (walk.toFloat() / total)
+        val runSweep = frac * 360f * (run.toFloat() / total)
+        // ходьба от верха по часовой, бег — продолжением
+        canvas.drawArc(rect, -90f, walkSweep, false, walkPaint)
+        canvas.drawArc(rect, -90f + walkSweep, runSweep, false, runPaint)
     }
 }

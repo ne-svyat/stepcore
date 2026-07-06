@@ -33,6 +33,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var statsView: TextView
     private lateinit var ring: ProgressRingView
     private lateinit var goalView: TextView
+    private lateinit var todayKmKcal: TextView
+    private var yWalk = 0
+    private var yRun = 0
     private var yesterdayTotal = -1
 
     private var goal = 10000
@@ -48,6 +51,7 @@ class MainActivity : AppCompatActivity() {
         statsView = findViewById(R.id.statsText)
         ring = findViewById(R.id.progressRing)
         goalView = findViewById(R.id.goalText)
+        todayKmKcal = findViewById(R.id.todayKmKcal)
         val toggleBtn = findViewById<Button>(R.id.toggleButton)
         val historyBtn = findViewById<Button>(R.id.historyButton)
         val calWalkBtn = findViewById<Button>(R.id.calWalkButton)
@@ -104,7 +108,7 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             val y = java.time.LocalDate.now().minusDays(1).toString()
             val d = AppDb.get(this@MainActivity).dao().day(y)
-            yesterdayTotal = if (d == null) -1 else d.walkSteps + d.runSteps
+            if (d != null) { yWalk = d.walkSteps; yRun = d.runSteps; yesterdayTotal = d.walkSteps + d.runSteps }
             updateStats()
         }
 
@@ -137,8 +141,7 @@ class MainActivity : AppCompatActivity() {
                 launch {
                     StepsState.steps.collect { s ->
                         stepsView.text = s.toString()
-                        ring.setProgress(s.toFloat() / goal)
-                        goalView.text = "${s * 100 / goal}% · цель ${"%,d".format(goal).replace(',', ' ')}"
+                        refreshRing(s)
                         updateStats()
                     }
                 }
@@ -197,24 +200,39 @@ class MainActivity : AppCompatActivity() {
         startForegroundService(Intent(this, StepService::class.java).setAction(action))
     }
 
-    /** км · ккал · сравнение со вчера. Оценки до калибровки V9. */
-    private fun updateStats() {
-        val prefs = getSharedPreferences(StepService.PREFS, MODE_PRIVATE)
-        val today = java.time.LocalDate.now().toString()
-        val walk: Int; val run: Int
-        if (prefs.getString(StepService.KEY_DAY, "") == today) {
-            walk = prefs.getInt(StepService.KEY_WALK, 0)
-            run = prefs.getInt(StepService.KEY_RUN, 0)
-        } else { walk = 0; run = 0 }
+    /** Кольцо ходьба/бег + число% + км/ккал внутри круга. */
+    private fun refreshRing(steps: Int) {
+        val (walk, run) = todayWalkRun()
+        ring.setData(walk, run, goal)
+        goalView.text = "${steps * 100 / goal}% · цель ${"%,d".format(goal).replace(',', ' ')}"
         val km = Stats.distanceKm(this, walk, run)
         val kcal = Stats.kcal(this, walk, run)
+        todayKmKcal.text = if (km > 0) "%.2f км · %d ккал".format(km, kcal) else ""
+    }
+
+    private fun todayWalkRun(): Pair<Int, Int> {
+        val prefs = getSharedPreferences(StepService.PREFS, MODE_PRIVATE)
+        val today = java.time.LocalDate.now().toString()
+        return if (prefs.getString(StepService.KEY_DAY, "") == today)
+            prefs.getInt(StepService.KEY_WALK, 0) to prefs.getInt(StepService.KEY_RUN, 0)
+        else 0 to 0
+    }
+
+    /** Нижняя карточка: вчерашний день — шаги · км · ккал + разница. */
+    private fun updateStats() {
+        val (walk, run) = todayWalkRun()
         val sb = StringBuilder()
-        if (km > 0) sb.append("%.2f км  ·  %d ккал".format(km, kcal))
-        else sb.append("Заполни профиль для км и ккал")
         if (yesterdayTotal >= 0) {
+            val yKm = Stats.distanceKm(this, yWalk, yRun)
+            val yKcal = Stats.kcal(this, yWalk, yRun)
+            sb.append("ВЧЕРА · $yesterdayTotal шагов")
+            if (yKm > 0) sb.append("\n%.2f км · %d ккал".format(yKm, yKcal))
             val diff = (walk + run) - yesterdayTotal
-            sb.append("\nвчера $yesterdayTotal (")
-            sb.append(if (diff >= 0) "+$diff" else "$diff").append(")")
+            sb.append("\n")
+            sb.append(if (diff >= 0) "сегодня уже +$diff к вчера"
+                      else "до вчера ещё ${-diff} шагов")
+        } else {
+            sb.append("Вчера нет данных")
         }
         statsView.text = sb.toString()
     }
@@ -222,11 +240,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         goal = getSharedPreferences(StepService.PREFS, MODE_PRIVATE).getInt("p_goal", 10000)
-        if (::ring.isInitialized) {
-            val s = StepsState.steps.value
-            ring.setProgress(s.toFloat() / goal)
-            goalView.text = "${s * 100 / goal}% · цель ${"%,d".format(goal).replace(',', ' ')}"
-        }
+        if (::ring.isInitialized) refreshRing(StepsState.steps.value)
         if (::statsView.isInitialized) updateStats()
     }
 

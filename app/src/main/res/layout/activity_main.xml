@@ -26,8 +26,8 @@
             android:layout_marginTop="8dp" />
 
         <FrameLayout
-            android:layout_width="240dp"
-            android:layout_height="240dp"
+            android:layout_width="250dp"
+            android:layout_height="250dp"
             android:layout_marginTop="20dp">
 
             <com.vasil.stepcore.ProgressRingView
@@ -48,7 +48,7 @@
                     android:text="0"
                     android:textColor="@color/text_main"
                     android:fontFamily="sans-serif-black"
-                    android:textSize="54sp" />
+                    android:textSize="46sp" />
 
                 <TextView
                     android:id="@+id/goalText"
@@ -56,10 +56,39 @@
                     android:layout_height="wrap_content"
                     android:text="0% · цель 10 000"
                     android:textColor="@color/text_dim"
-                    android:textSize="13sp"
+                    android:textSize="12sp"
                     android:layout_marginTop="2dp" />
+
+                <TextView
+                    android:id="@+id/todayKmKcal"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text=""
+                    android:textColor="@color/text_main"
+                    android:textSize="13sp"
+                    android:layout_marginTop="6dp" />
             </LinearLayout>
         </FrameLayout>
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginTop="14dp">
+
+            <View android:layout_width="10dp" android:layout_height="10dp"
+                android:background="@color/accent_blue" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="ходьба" android:textColor="@color/text_dim"
+                android:textSize="12sp" android:layout_marginStart="4dp"
+                android:layout_marginEnd="14dp" />
+            <View android:layout_width="10dp" android:layout_height="10dp"
+                android:background="@color/accent_red" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="бег" android:textColor="@color/text_dim"
+                android:textSize="12sp" android:layout_marginStart="4dp" />
+        </LinearLayout>
 
         <LinearLayout
             android:id="@+id/statsCard"
@@ -67,12 +96,12 @@
             android:layout_height="wrap_content"
             android:orientation="horizontal"
             android:background="@drawable/card_asym"
-            android:layout_marginTop="24dp">
+            android:layout_marginTop="18dp">
 
             <View
                 android:layout_width="4dp"
                 android:layout_height="match_parent"
-                android:background="@color/accent_red" />
+                android:background="@color/accent_blue" />
 
             <TextView
                 android:id="@+id/statsText"
@@ -81,6 +110,7 @@
                 android:text=""
                 android:textColor="@color/text_main"
                 android:textSize="14sp"
+                android:lineSpacingExtra="3dp"
                 android:padding="16dp" />
         </LinearLayout>
 
@@ -109,13 +139,16 @@
 
             <Button android:id="@+id/historyButton" style="?android:attr/buttonBarButtonStyle"
                 android:layout_width="0dp" android:layout_weight="1"
-                android:layout_height="wrap_content" android:text="История" />
+                android:layout_height="wrap_content" android:text="История"
+                android:textColor="@color/text_main" />
             <Button android:id="@+id/statsButton" style="?android:attr/buttonBarButtonStyle"
                 android:layout_width="0dp" android:layout_weight="1"
-                android:layout_height="wrap_content" android:text="Статистика" />
+                android:layout_height="wrap_content" android:text="Статистика"
+                android:textColor="@color/text_main" />
             <Button android:id="@+id/profileButton" style="?android:attr/buttonBarButtonStyle"
                 android:layout_width="0dp" android:layout_weight="1"
-                android:layout_height="wrap_content" android:text="Профиль" />
+                android:layout_height="wrap_content" android:text="Профиль"
+                android:textColor="@color/text_main" />
         </LinearLayout>
 
         <androidx.appcompat.widget.SwitchCompat
