@@ -57,6 +57,10 @@ class StepDetector {
         private set
     var rejectedImpulse = 0
         private set
+    // Диагностическая запись: [ампл, фон, крест, гиро, принят(1/0)]
+    var diagRecording = false
+        set(value) { field = value; if (value) diagSamples.clear() }
+    val diagSamples = ArrayList<FloatArray>()
     var acceptedExempt = 0
         private set
     val gyroRms: Float get() = sqrt(gyroRmsSq)
@@ -192,16 +196,20 @@ class StepDetector {
         }
 
         lastCrest = vert / maxOf(recentMean, 0.05f)
-        val crestOk = lastCrest <= MAX_CREST
-        if (vert > threshold && widthOk && !crestOk) rejectedImpulse++
 
         val isPeak = vert > threshold &&
                 vert < peakCap &&
                 widthOk &&
-                crestOk &&
                 timeMs - lastPeakMs >= minInterval &&
                 crossedZero &&
                 wFilled >= 50
+
+        if (diagRecording && vert > threshold && crossedZero && wFilled >= 50 &&
+            diagSamples.size < 500
+        ) {
+            diagSamples.add(floatArrayOf(vert, recentMean, lastCrest, gyroRms,
+                if (isPeak) 1f else 0f))
+        }
 
         if (!isPeak) {
             val timeout = maxTimeout()

@@ -73,6 +73,20 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(this, HistoryActivity::class.java))
         }
 
+        val diagBtn = findViewById<Button>(R.id.diagButton)
+        var diagOn = false
+        diagBtn.setOnClickListener {
+            if (!StepsState.serviceRunning.value) {
+                StepsState.calibrationState.value = "Сначала нажми Старт"
+                return@setOnClickListener
+            }
+            diagOn = !diagOn
+            diagBtn.text = if (diagOn) "Диагностика: СТОП" else "Диагностика: старт"
+            startForegroundService(Intent(this, StepService::class.java)
+                .setAction(if (diagOn) StepService.ACTION_DIAG_START
+                    else StepService.ACTION_DIAG_STOP))
+        }
+
         calWalkBtn.setOnClickListener { toggleCalibration("walk", calWalkBtn, calRunBtn) }
         calRunBtn.setOnClickListener { toggleCalibration("run", calRunBtn, calWalkBtn) }
 

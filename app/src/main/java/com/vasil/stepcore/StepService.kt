@@ -187,8 +187,33 @@ class StepService : Service(), SensorEventListener {
             ACTION_CAL_WALK -> startCalibration("walk")
             ACTION_CAL_RUN -> startCalibration("run")
             ACTION_CAL_STOP -> finishCalibration()
+            ACTION_DIAG_START -> {
+                detector.diagRecording = true
+                StepsState.calibrationState.value = "Диагностика пишется — делай тест"
+            }
+            ACTION_DIAG_STOP -> finishDiag()
         }
         return START_STICKY
+    }
+
+    private fun finishDiag() {
+        val samples = ArrayList(detector.diagSamples)
+        detector.diagRecording = false
+        if (samples.isEmpty()) {
+            StepsState.calibrationState.value = "Диагностика: пиков не было"
+            logEvent("Диагностика: пиков не было")
+            return
+        }
+        fun col(i: Int): String {
+            val v = samples.map { it[i] }.sorted()
+            return "%.2f/%.2f/%.2f".format(v.first(), v[v.size / 2], v.last())
+        }
+        val ok = samples.count { it[4] > 0f }
+        val line = "Диагностика: пиков ${samples.size}, принято $ok | " +
+                "ампл ${col(0)} | фон ${col(1)} | крест ${col(2)} | гиро ${col(3)} " +
+                "(мин/мед/макс)"
+        logEvent(line)
+        StepsState.calibrationState.value = "Диагностика записана в журнал"
     }
 
     private fun startCalibration(kind: String) {
@@ -453,6 +478,8 @@ class StepService : Service(), SensorEventListener {
         const val ACTION_CAL_WALK = "cal_walk"
         const val ACTION_CAL_RUN = "cal_run"
         const val ACTION_CAL_STOP = "cal_stop"
+        const val ACTION_DIAG_START = "diag_start"
+        const val ACTION_DIAG_STOP = "diag_stop"
         private const val IDLE_LOG_DELAY_MS = 4000L
         private const val HEARTBEAT_MS = 30_000L
     }
