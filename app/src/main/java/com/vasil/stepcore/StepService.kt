@@ -51,6 +51,7 @@ class StepService : Service(), SensorEventListener {
     // не должны маскировать дыру (баг V7.4)
     @Volatile private var lastAccelEventMs = 0L
     private var forceBackfill = false
+    private var adoptBaselineOnce = false
     // Экран выключен: MIUI деградирует поток акселерометра (рваные пачки),
     // детектор на нём ложно уходит в TRANSPORT. Поэтому при выключенном
     // экране детектор отключается, считает аппаратный чип.
@@ -133,8 +134,14 @@ class StepService : Service(), SensorEventListener {
             logEvent("⚠ Падение сервиса: $it")
             prefs.edit().remove(KEY_CRASH).apply()
         }
+        // Ручной Стоп = осознанная пауза: не «смерть» и без досчёта чипа
+        val cleanStop = prefs.getBoolean(KEY_CLEAN_STOP, false)
+        if (cleanStop) {
+            prefs.edit().remove(KEY_CLEAN_STOP).apply()
+            adoptBaselineOnce = true
+        }
         val lastAlive = prefs.getLong(KEY_ALIVE, 0L)
-        if (lastAlive > 0) {
+        if (lastAlive > 0 && !cleanStop) {
             val deadSec = (System.currentTimeMillis() - lastAlive) / 1000
             if (deadSec > 60) {
                 forceBackfill = true
@@ -173,9 +180,9 @@ class StepService : Service(), SensorEventListener {
             while (true) {
                 delay(1000)
                 StepsState.diag.value =
-                    "чистота %.0f%% | срезано грязью %d | гиро %.2f"
+                    "чистота %.0f%% | грязь %d | каденс %d | гиро %.2f"
                         .format(detector.cleanliness * 100, detector.rejectedNoisy,
-                            detector.gyroRms)
+                            detector.cadenceLockedSteps, detector.gyroRms)
             }
         }
 
@@ -288,6 +295,13 @@ class StepService : Service(), SensorEventListener {
                 if (hwBaseline < 0 || hwTotal < hwBaseline) {
                     hwBaseline = hwTotal
                     persistHwBase()
+                    return
+                }
+                if (adoptBaselineOnce) {
+                    // после ручного Стопа: шаги чипа за паузу не добавляем
+                    hwBaseline = hwTotal
+                    persistHwBase()
+                    adoptBaselineOnce = false
                     return
                 }
                 if (screenOff) {
@@ -454,7 +468,8 @@ class StepService : Service(), SensorEventListener {
         sensorManager.unregisterListener(this)
         runCatching { unregisterReceiver(screenReceiver) }
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-            .putLong(KEY_ALIVE, System.currentTimeMillis()).apply()
+            .putLong(KEY_ALIVE, System.currentTimeMillis())
+            .putBoolean(KEY_CLEAN_STOP, true).apply()
         wakeLock?.release(); wakeLock = null
         persistPrefs()
         persistDb()
@@ -497,6 +512,7 @@ class StepService : Service(), SensorEventListener {
         const val KEY_HW_BASE = "hw_baseline"
         const val KEY_ALIVE = "last_alive_ms"
         const val KEY_CRASH = "last_crash"
+        const val KEY_CLEAN_STOP = "clean_stop"
         const val ACTION_CAL_WALK = "cal_walk"
         const val ACTION_CAL_RUN = "cal_run"
         const val ACTION_CAL_STOP = "cal_stop"
