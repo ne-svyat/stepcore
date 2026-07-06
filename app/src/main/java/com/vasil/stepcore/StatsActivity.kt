@@ -24,7 +24,9 @@ class StatsActivity : AppCompatActivity() {
 
     private val density get() = resources.displayMetrics.density
     private fun dp(v: Int) = (v * density).toInt()
-    private val goal = 10000            // дневная цель (потом в профиль)
+    private val goal by lazy {
+        getSharedPreferences(StepService.PREFS, MODE_PRIVATE).getInt("p_goal", 10000)
+    }
     private val activeMin = 1000        // порог "активного дня" для серии
 
     override fun onCreate(savedInstanceState: Bundle?) {

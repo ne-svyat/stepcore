@@ -2,45 +2,98 @@
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent">
+
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="24dp">
+        android:padding="20dp">
 
-        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:text="Профиль" android:textSize="22sp" android:textStyle="bold" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="ПРОФИЛЬ"
+            android:textColor="@color/accent_red"
+            android:fontFamily="sans-serif-black"
+            android:textSize="26sp"
+            android:letterSpacing="0.05" />
 
-        <EditText android:id="@+id/weightInput" android:layout_width="match_parent"
-            android:layout_height="wrap_content" android:hint="Вес, кг"
-            android:inputType="numberDecimal" android:layout_marginTop="12dp" />
-        <EditText android:id="@+id/heightInput" android:layout_width="match_parent"
-            android:layout_height="wrap_content" android:hint="Рост, см"
-            android:inputType="number" />
-        <EditText android:id="@+id/ageInput" android:layout_width="match_parent"
-            android:layout_height="wrap_content" android:hint="Возраст"
-            android:inputType="number" />
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/card_asym"
+            android:padding="16dp"
+            android:layout_marginTop="16dp">
 
-        <RadioGroup android:id="@+id/sexGroup" android:layout_width="wrap_content"
-            android:layout_height="wrap_content" android:orientation="horizontal"
-            android:layout_marginTop="8dp">
-            <RadioButton android:id="@+id/sexM" android:layout_width="wrap_content"
-                android:layout_height="wrap_content" android:text="М" />
-            <RadioButton android:id="@+id/sexF" android:layout_width="wrap_content"
-                android:layout_height="wrap_content" android:text="Ж"
-                android:layout_marginStart="16dp" />
-        </RadioGroup>
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="ВЕС, КГ" android:textColor="@color/text_dim"
+                android:fontFamily="sans-serif-condensed" android:textSize="12sp"
+                android:letterSpacing="0.05" />
+            <EditText android:id="@+id/weightInput" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:inputType="numberDecimal"
+                android:textColor="@color/text_main" />
 
-        <Button android:id="@+id/saveButton" android:layout_width="wrap_content"
-            android:layout_height="wrap_content" android:text="Сохранить"
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="РОСТ, СМ" android:textColor="@color/text_dim"
+                android:fontFamily="sans-serif-condensed" android:textSize="12sp"
+                android:letterSpacing="0.05" android:layout_marginTop="8dp" />
+            <EditText android:id="@+id/heightInput" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:inputType="number"
+                android:textColor="@color/text_main" />
+
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="ВОЗРАСT" android:textColor="@color/text_dim"
+                android:fontFamily="sans-serif-condensed" android:textSize="12sp"
+                android:letterSpacing="0.05" android:layout_marginTop="8dp" />
+            <EditText android:id="@+id/ageInput" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:inputType="number"
+                android:textColor="@color/text_main" />
+
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="ЦЕЛЬ ШАГОВ В ДЕНЬ" android:textColor="@color/text_dim"
+                android:fontFamily="sans-serif-condensed" android:textSize="12sp"
+                android:letterSpacing="0.05" android:layout_marginTop="8dp" />
+            <EditText android:id="@+id/goalInput" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:inputType="number"
+                android:textColor="@color/text_main" />
+
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="ПОЛ" android:textColor="@color/text_dim"
+                android:fontFamily="sans-serif-condensed" android:textSize="12sp"
+                android:letterSpacing="0.05" android:layout_marginTop="12dp" />
+            <RadioGroup android:id="@+id/sexGroup" android:layout_width="wrap_content"
+                android:layout_height="wrap_content" android:orientation="horizontal"
+                android:layout_marginTop="4dp">
+                <RadioButton android:id="@+id/sexM" android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" android:text="Мужской"
+                    android:textColor="@color/text_main" />
+                <RadioButton android:id="@+id/sexF" android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" android:text="Женский"
+                    android:textColor="@color/text_main" android:layout_marginStart="20dp" />
+            </RadioGroup>
+        </LinearLayout>
+
+        <Button android:id="@+id/saveButton" android:layout_width="match_parent"
+            android:layout_height="52dp" android:text="Сохранить"
             android:layout_marginTop="12dp" />
 
-        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:text="Паспорт" android:textSize="22sp" android:textStyle="bold"
-            android:layout_marginTop="28dp" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="ПАСПОРТ"
+            android:textColor="@color/accent_red"
+            android:fontFamily="sans-serif-black"
+            android:textSize="15sp"
+            android:letterSpacing="0.08"
+            android:layout_marginTop="28dp"
+            android:layout_marginBottom="8dp" />
 
-        <TextView android:id="@+id/passportText" android:layout_width="match_parent"
-            android:layout_height="wrap_content" android:textSize="15sp"
-            android:fontFamily="monospace" android:layout_marginTop="8dp" />
+        <LinearLayout
+            android:id="@+id/passportContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+
     </LinearLayout>
 </ScrollView>

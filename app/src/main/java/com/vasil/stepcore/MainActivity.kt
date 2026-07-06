@@ -35,7 +35,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var goalView: TextView
     private var yesterdayTotal = -1
 
-    private val goal = 10000
+    private var goal = 10000
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -61,6 +61,7 @@ class MainActivity : AppCompatActivity() {
         if (prefs.getString(StepService.KEY_DAY, "") == java.time.LocalDate.now().toString()) {
             StepsState.steps.value = prefs.getInt(StepService.KEY_STEPS, 0)
         }
+        goal = prefs.getInt("p_goal", 10000)
 
         hapticSwitch.isChecked = prefs.getBoolean("haptic", false)
         StepsState.hapticEnabled.value = hapticSwitch.isChecked
@@ -220,6 +221,12 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        goal = getSharedPreferences(StepService.PREFS, MODE_PRIVATE).getInt("p_goal", 10000)
+        if (::ring.isInitialized) {
+            val s = StepsState.steps.value
+            ring.setProgress(s.toFloat() / goal)
+            goalView.text = "${s * 100 / goal}% · цель ${"%,d".format(goal).replace(',', ' ')}"
+        }
         if (::statsView.isInitialized) updateStats()
     }
 
