@@ -27,6 +27,8 @@ class MainActivity : AppCompatActivity() {
         }
 
     private var calibrating = false
+    private lateinit var statsView: TextView
+    private var yesterdayTotal = -1
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -36,6 +38,7 @@ class MainActivity : AppCompatActivity() {
         val statusView = findViewById<TextView>(R.id.statusText)
         val modeView = findViewById<TextView>(R.id.modeText)
         val calView = findViewById<TextView>(R.id.calText)
+        statsView = findViewById(R.id.statsText)
         val toggleBtn = findViewById<Button>(R.id.toggleButton)
         val historyBtn = findViewById<Button>(R.id.historyButton)
         val calWalkBtn = findViewById<Button>(R.id.calWalkButton)
@@ -73,6 +76,17 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(this, HistoryActivity::class.java))
         }
 
+        findViewById<Button>(R.id.profileButton).setOnClickListener {
+            startActivity(Intent(this, ProfileActivity::class.java))
+        }
+
+        lifecycleScope.launch {
+            val y = java.time.LocalDate.now().minusDays(1).toString()
+            val d = AppDb.get(this@MainActivity).dao().day(y)
+            yesterdayTotal = if (d == null) -1 else d.walkSteps + d.runSteps
+            updateStats()
+        }
+
         val diagBtn = findViewById<Button>(R.id.diagButton)
         var diagOn = false
         diagBtn.setOnClickListener {
@@ -92,7 +106,7 @@ class MainActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                launch { StepsState.steps.collect { stepsView.text = it.toString() } }
+                launch { StepsState.steps.collect { stepsView.text = it.toString(); updateStats() } }
                 launch {
                     StepsState.serviceRunning.collect { running ->
                         statusView.text = if (running) "Считаю шаги" else "Остановлено"
@@ -132,6 +146,33 @@ class MainActivity : AppCompatActivity() {
             StepService.ACTION_CAL_STOP
         }
         startForegroundService(Intent(this, StepService::class.java).setAction(action))
+    }
+
+    /** км · ккал · сравнение со вчера. Оценки до калибровки V9. */
+    private fun updateStats() {
+        val prefs = getSharedPreferences(StepService.PREFS, MODE_PRIVATE)
+        val today = java.time.LocalDate.now().toString()
+        val walk: Int; val run: Int
+        if (prefs.getString(StepService.KEY_DAY, "") == today) {
+            walk = prefs.getInt(StepService.KEY_WALK, 0)
+            run = prefs.getInt(StepService.KEY_RUN, 0)
+        } else { walk = 0; run = 0 }
+        val km = Stats.distanceKm(this, walk, run)
+        val kcal = Stats.kcal(this, walk, run)
+        val sb = StringBuilder()
+        if (km > 0) sb.append("%.2f км · %d ккал".format(km, kcal))
+        else sb.append("Заполни профиль для км и ккал")
+        if (yesterdayTotal >= 0) {
+            val diff = (walk + run) - yesterdayTotal
+            sb.append("  ·  вчера $yesterdayTotal (")
+            sb.append(if (diff >= 0) "+$diff" else "$diff").append(")")
+        }
+        statsView.text = sb.toString()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::statsView.isInitialized) updateStats()
     }
 
     private fun startTracking() {

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="24dp">
+
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="Профиль" android:textSize="22sp" android:textStyle="bold" />
+
+        <EditText android:id="@+id/weightInput" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:hint="Вес, кг"
+            android:inputType="numberDecimal" android:layout_marginTop="12dp" />
+        <EditText android:id="@+id/heightInput" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:hint="Рост, см"
+            android:inputType="number" />
+        <EditText android:id="@+id/ageInput" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:hint="Возраст"
+            android:inputType="number" />
+
+        <RadioGroup android:id="@+id/sexGroup" android:layout_width="wrap_content"
+            android:layout_height="wrap_content" android:orientation="horizontal"
+            android:layout_marginTop="8dp">
+            <RadioButton android:id="@+id/sexM" android:layout_width="wrap_content"
+                android:layout_height="wrap_content" android:text="М" />
+            <RadioButton android:id="@+id/sexF" android:layout_width="wrap_content"
+                android:layout_height="wrap_content" android:text="Ж"
+                android:layout_marginStart="16dp" />
+        </RadioGroup>
+
+        <Button android:id="@+id/saveButton" android:layout_width="wrap_content"
+            android:layout_height="wrap_content" android:text="Сохранить"
+            android:layout_marginTop="12dp" />
+
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="Паспорт" android:textSize="22sp" android:textStyle="bold"
+            android:layout_marginTop="28dp" />
+
+        <TextView android:id="@+id/passportText" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:textSize="15sp"
+            android:fontFamily="monospace" android:layout_marginTop="8dp" />
+    </LinearLayout>
+</ScrollView>
