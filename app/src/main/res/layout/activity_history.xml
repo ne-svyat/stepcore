@@ -36,6 +36,13 @@
             android:textStyle="bold"
             android:layout_marginTop="8dp" />
 
+        <Button
+            android:id="@+id/copySelectedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Копировать выбранные (0)"
+            android:layout_marginTop="8dp" />
+
         <LinearLayout
             android:id="@+id/daysContainer"
             android:layout_width="match_parent"

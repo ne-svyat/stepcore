@@ -6,6 +6,7 @@ import android.content.Context
 import android.os.Bundle
 import android.view.View
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -20,6 +21,8 @@ import java.util.Locale
 
 class HistoryActivity : AppCompatActivity() {
 
+    private val selectedLines = LinkedHashSet<String>()
+    private var copySelBtn: Button? = null
     private var currentFilterDays = 7
     private var visibleDays: List<DayRecord> = emptyList()
     private val timeFmt = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
@@ -70,6 +73,12 @@ class HistoryActivity : AppCompatActivity() {
         findViewById<Button>(R.id.filter365).setOnClickListener { setFilter(365) }
         findViewById<Button>(R.id.filterAll).setOnClickListener { setFilter(Int.MAX_VALUE) }
 
+        copySelBtn = findViewById(R.id.copySelectedButton)
+        updateSelLabel()
+        copySelBtn!!.setOnClickListener {
+            if (selectedLines.isEmpty()) { toast("Ничего не выбрано"); return@setOnClickListener }
+            copyLine(selectedLines.joinToString("\n"))
+        }
         findViewById<Button>(R.id.copyButton).setOnClickListener { copyVisible() }
         findViewById<Button>(R.id.exportCsvButton).setOnClickListener {
             csvSaver.launch("stepcore_days.csv")
@@ -156,14 +165,28 @@ class HistoryActivity : AppCompatActivity() {
                         })
                     }
                     events.forEach { e ->
-                        val line = "${timeFmt.format(Date(e.timeMs))}  ${e.text}"
-                        details.addView(TextView(this@HistoryActivity).apply {
-                            text = line
+                        val shown = "${timeFmt.format(Date(e.timeMs))}  ${e.text}"
+                        val full = "${day.date} $shown"
+                        val row = LinearLayout(this@HistoryActivity).apply {
+                            orientation = LinearLayout.HORIZONTAL
+                        }
+                        val cb = CheckBox(this@HistoryActivity).apply {
+                            isChecked = selectedLines.contains(full)
+                            setOnCheckedChangeListener { _, c ->
+                                if (c) selectedLines.add(full) else selectedLines.remove(full)
+                                updateSelLabel()
+                            }
+                        }
+                        val tv = TextView(this@HistoryActivity).apply {
+                            text = shown
                             textSize = 14f
                             typeface = android.graphics.Typeface.MONOSPACE
-                            setPadding(0, 6, 0, 6)
-                            setOnClickListener { copyLine(line) }
-                        })
+                            setPadding(4, 12, 0, 12)
+                            setOnClickListener { copyLine(full) }
+                        }
+                        row.addView(cb)
+                        row.addView(tv)
+                        details.addView(row)
                     }
                 }
             } else {
@@ -174,6 +197,10 @@ class HistoryActivity : AppCompatActivity() {
         col.addView(header)
         col.addView(details)
         return col
+    }
+
+    private fun updateSelLabel() {
+        copySelBtn?.text = "Копировать выбранные (${selectedLines.size})"
     }
 
     /** Тап по строке журнала кладёт её одну в буфер обмена. */

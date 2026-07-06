@@ -235,9 +235,10 @@ class StepDetector {
             ) candAccepted--
             if (candVerdicts.size >= CLEAN_MIN_SAMPLES) {
                 cleanliness = candAccepted.toFloat() / candVerdicts.size
-                if (noisyBlocked) {
-                    if (cleanliness > CLEAN_EXIT) noisyBlocked = false
-                } else if (cleanliness < CLEAN_ENTER) noisyBlocked = true
+                // ФАКТ (лог 06.07): у реальной ходьбы чистота в окне прыгает
+                // 25-75%, не держится высоко. Жёсткий блок рвал ходьбу
+                // (deadlock повторного входа). Чистота теперь только
+                // измеряется -> фактор Confidence в V10, не блок.
             }
         }
         if (diagRecording && isCandidate && diagSamples.size < 500) {
@@ -262,31 +263,6 @@ class StepDetector {
 
         lastPeakMs = timeMs
         crossedZero = false
-
-        if (noisyBlocked) {
-            // Грязно, но сессия жива (идёт И тапает, чистота 35-60%):
-            // счёт по захваченному каденсу - один шаг на EMA-интервал,
-            // лишние пики внутри периода игнорируются. Так работают
-            // промышленные шагомеры (ADI AN-2554; Kang et al. 2018).
-            // Надуть счёт нельзя: больше одного шага на период не бывает.
-            if ((mode == Mode.WALK || mode == Mode.RUN) &&
-                cleanliness >= CLEAN_SESSION_FLOOR && emaIntervalMs > 0f
-            ) {
-                val interval = timeMs - lastConfirmedMs
-                if (interval >= emaIntervalMs * 0.75f) {
-                    lastConfirmedMs = timeMs
-                    lastConfirmInWindowMs = timeMs
-                    cadenceLockedSteps++
-                    stepCount++
-                    return 1
-                }
-                return 0
-            }
-            rejectedNoisy++
-            pendingTimesMs.clear(); pendingAmps.clear()
-            if (mode == Mode.WALK || mode == Mode.RUN) dropMode(warm = false, timeMs = timeMs, reason = "грязь")
-            return 0
-        }
 
         candidatePeaksMs.addLast(timeMs)
         while (candidatePeaksMs.isNotEmpty() &&
