@@ -121,6 +121,19 @@ class StepDetector {
     private var lastConfirmInWindowMs = 0L
     private var transportBlockUntilMs = 0L
 
+    // --- диагностика транспорта (V8.10, не влияет на детекцию) ---
+    // Гипотеза бага 2000-3000 шагов: ложный вход при реальной ходьбе
+    // (телефон у уха) + самоподдерживающееся продление sticky.
+    // Проверка: у локомоции CV интервалов < 0.25 и интервал 400-700 мс.
+    var transportEntries = 0
+        private set
+    var transportRenewals = 0
+        private set
+    var lastTransportMeanMs = 0f
+        private set
+    var lastTransportCv = 0f
+        private set
+
     var stepCount = 0
         private set
 
@@ -273,6 +286,22 @@ class StepDetector {
                 timeMs - lastConfirmInWindowMs > TRANSPORT_WINDOW_MS
         if (transportSignature || mode == Mode.TRANSPORT) {
             if (transportSignature) {
+                // Замер ритма пиков окна в момент срабатывания сигнатуры
+                var s = 0.0; var s2 = 0.0; var n = 0
+                var prev = -1L
+                for (t in candidatePeaksMs) {
+                    if (prev > 0) { val d = (t - prev).toDouble(); s += d; s2 += d * d; n++ }
+                    prev = t
+                }
+                if (n > 1) {
+                    val meanI = s / n
+                    val varI = (s2 / n - meanI * meanI).coerceAtLeast(0.0)
+                    if (mode != Mode.TRANSPORT) {
+                        transportEntries++
+                        lastTransportMeanMs = meanI.toFloat()
+                        lastTransportCv = (sqrt(varI) / meanI).toFloat()
+                    } else transportRenewals++
+                }
                 mode = Mode.TRANSPORT
                 transportBlockUntilMs = timeMs + TRANSPORT_STICKY_MS
                 motionLostAtMs = 0L

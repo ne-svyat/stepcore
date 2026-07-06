@@ -57,6 +57,11 @@ class StepService : Service(), SensorEventListener {
     // экране детектор отключается, считает аппаратный чип.
     @Volatile private var screenOff = false
     private var hwSessionAdded = 0
+    // Диагностика транспорта (V8.10): что насчитал чип за эпизод блокировки
+    @Volatile private var hwLastTotal = -1L
+    private var hwAtTransportEnter = -1L
+    private var renewalsAtEnter = 0
+    private var transportEnterWallMs = 0L
 
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context?, intent: Intent?) {
@@ -315,6 +320,7 @@ class StepService : Service(), SensorEventListener {
         when (event.sensor.type) {
             Sensor.TYPE_STEP_COUNTER -> {
                 val hwTotal = event.values[0].toLong()
+                hwLastTotal = hwTotal
                 // сброс после перезагрузки телефона (чип стартует с нуля)
                 if (hwBaseline < 0 || hwTotal < hwBaseline) {
                     hwBaseline = hwTotal
@@ -421,6 +427,15 @@ class StepService : Service(), SensorEventListener {
         val m = detector.mode.name
         val now = System.currentTimeMillis()
 
+        // V8.10: итог транспорт-эпизода — длительность, продления, счёт чипа
+        if (lastLoggedMode == "TRANSPORT" && m != "TRANSPORT" && hwAtTransportEnter >= 0) {
+            val chipDelta = if (hwLastTotal >= 0) hwLastTotal - hwAtTransportEnter else -1L
+            val renews = detector.transportRenewals - renewalsAtEnter
+            val durSec = (now - transportEnterWallMs) / 1000
+            logEvent("Транспорт закончился: ${durSec} с, продлений $renews, чип за эпизод: $chipDelta шагов")
+            hwAtTransportEnter = -1
+        }
+
         if (m == "IDLE") {
             if (lastLoggedMode == "IDLE") { idleSinceMs = 0L; return }
             if (idleSinceMs == 0L) { idleSinceMs = now; return }
@@ -441,7 +456,15 @@ class StepService : Service(), SensorEventListener {
                 when (m) {
                     "RUN" -> "Бег"
                     "WALK" -> "Ходьба"
-                    "TRANSPORT" -> "Транспорт — шаги остановлены"
+                    "TRANSPORT" -> {
+                        hwAtTransportEnter = hwLastTotal
+                        renewalsAtEnter = detector.transportRenewals
+                        transportEnterWallMs = now
+                        "Транспорт — шаги остановлены [вход №${detector.transportEntries}, " +
+                            "инт ${detector.lastTransportMeanMs.toInt()} мс, " +
+                            "CV ${"%.2f".format(detector.lastTransportCv)}, " +
+                            "чистота ${(detector.cleanliness * 100).toInt()}%]"
+                    }
                     else -> m
                 }
             )
