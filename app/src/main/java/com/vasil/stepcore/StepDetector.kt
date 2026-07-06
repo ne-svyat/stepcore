@@ -58,6 +58,17 @@ class StepDetector {
     var rejectedImpulse = 0
         private set
     // Диагностическая запись: [ампл, фон, крест, гиро, принят(1/0)]
+    // Чистота потока: доля принятых среди кандидатов (окно 20).
+    // Данные 2026-07-06: ходьба 75%, бег 78%, тапы 27-28%.
+    // Грязный поток (дребезг таппинга) -> блок подтверждений.
+    private val candVerdicts = ArrayDeque<Boolean>()
+    private var candAccepted = 0
+    var cleanliness = 1f
+        private set
+    private var noisyBlocked = false
+    var rejectedNoisy = 0
+        private set
+
     var diagRecording = false
         set(value) { field = value; if (value) diagSamples.clear() }
     val diagSamples = ArrayList<FloatArray>()
@@ -127,6 +138,8 @@ class StepDetector {
         prevAboveHalf = false
         emaIntervalMs = 0f; emaAmp = 0f
         rIdx = 0; rFilled = 0; rSum = 0f; recentMean = 0f
+        candVerdicts.clear(); candAccepted = 0
+        cleanliness = 1f; noisyBlocked = false
     }
 
     fun onGyro(x: Float, y: Float, z: Float, timeMs: Long) {
@@ -204,9 +217,21 @@ class StepDetector {
                 crossedZero &&
                 wFilled >= 50
 
-        if (diagRecording && vert > threshold && crossedZero && wFilled >= 50 &&
-            diagSamples.size < 500
-        ) {
+        val isCandidate = vert > threshold && crossedZero && wFilled >= 50
+        if (isCandidate) {
+            candVerdicts.addLast(isPeak)
+            if (isPeak) candAccepted++
+            if (candVerdicts.size > CLEAN_WINDOW &&
+                candVerdicts.removeFirst()
+            ) candAccepted--
+            if (candVerdicts.size >= CLEAN_MIN_SAMPLES) {
+                cleanliness = candAccepted.toFloat() / candVerdicts.size
+                if (noisyBlocked) {
+                    if (cleanliness > CLEAN_EXIT) noisyBlocked = false
+                } else if (cleanliness < CLEAN_ENTER) noisyBlocked = true
+            }
+        }
+        if (diagRecording && isCandidate && diagSamples.size < 500) {
             diagSamples.add(floatArrayOf(vert, recentMean, lastCrest, gyroRms,
                 if (isPeak) 1f else 0f))
         }
@@ -228,6 +253,13 @@ class StepDetector {
 
         lastPeakMs = timeMs
         crossedZero = false
+
+        if (noisyBlocked) {
+            rejectedNoisy++
+            pendingTimesMs.clear(); pendingAmps.clear()
+            if (mode == Mode.WALK || mode == Mode.RUN) dropMode(warm = false, timeMs = timeMs)
+            return 0
+        }
 
         candidatePeaksMs.addLast(timeMs)
         while (candidatePeaksMs.isNotEmpty() &&
@@ -351,6 +383,12 @@ class StepDetector {
         // Потолок крест-фактора пик/фон. Ходьба ~1.5-4, бег ~3-7,
         // тапы ~20-70. Предварительное значение, уточнять по диагностике.
         private const val MAX_CREST = 8f
+        // Окно чистоты: вход в блок <45%, выход >60% (данные: тапы 27-28%,
+        // ходьба 75%, бег 78%). Оценка только при >=10 кандидатах.
+        private const val CLEAN_WINDOW = 20
+        private const val CLEAN_MIN_SAMPLES = 10
+        private const val CLEAN_ENTER = 0.45f
+        private const val CLEAN_EXIT = 0.60f
         // Пол вращения для освобождённых пиков. Бег: RMS в разы выше.
         // Таппинг по неподвижному телефону: около нуля. При провале бега
         // крутить ТОЛЬКО эту константу вниз (0.5), один раз.
