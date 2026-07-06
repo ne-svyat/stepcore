@@ -76,8 +76,7 @@ class HistoryActivity : AppCompatActivity() {
         copySelBtn = findViewById(R.id.copySelectedButton)
         updateSelLabel()
         copySelBtn!!.setOnClickListener {
-            if (selectedLines.isEmpty()) { toast("Ничего не выбрано"); return@setOnClickListener }
-            copyLine(selectedLines.joinToString("\n"))
+            copyLine(selectedLines.sorted().joinToString("\n"))
         }
         findViewById<Button>(R.id.copyButton).setOnClickListener { copyVisible() }
         findViewById<Button>(R.id.exportCsvButton).setOnClickListener {
@@ -164,7 +163,7 @@ class HistoryActivity : AppCompatActivity() {
                             setOnClickListener { copyLine(allLines) }
                         })
                     }
-                    events.forEach { e ->
+                    events.reversed().forEach { e ->
                         val shown = "${timeFmt.format(Date(e.timeMs))}  ${e.text}"
                         val full = "${day.date} $shown"
                         val row = LinearLayout(this@HistoryActivity).apply {
@@ -200,7 +199,11 @@ class HistoryActivity : AppCompatActivity() {
     }
 
     private fun updateSelLabel() {
-        copySelBtn?.text = "Копировать выбранные (${selectedLines.size})"
+        val n = selectedLines.size
+        copySelBtn?.apply {
+            text = "Копировать выбранные ($n)"
+            visibility = if (n > 0) View.VISIBLE else View.GONE
+        }
     }
 
     /** Тап по строке журнала кладёт её одну в буфер обмена. */
