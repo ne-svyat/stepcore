@@ -44,6 +44,19 @@ class StepDetector {
     var hasGyro = false
 
     // диагностика отбраковок (пока без UI; выводить при разборе провалов)
+    // Анти-импульс: фон |верт| за последние 0.5 с. У походки между
+    // ударами тело продолжает колебаться (фон высокий), у тапа - тишина.
+    // Пик, торчащий над фоном больше чем в MAX_CREST раз, - импульс, не шаг.
+    private val recentAbs = FloatArray(25)
+    private var rIdx = 0
+    private var rFilled = 0
+    private var rSum = 0f
+    var recentMean = 0f
+        private set
+    var lastCrest = 0f
+        private set
+    var rejectedImpulse = 0
+        private set
     var acceptedExempt = 0
         private set
     val gyroRms: Float get() = sqrt(gyroRmsSq)
@@ -109,6 +122,7 @@ class StepDetector {
         crossedZero = true
         prevAboveHalf = false
         emaIntervalMs = 0f; emaAmp = 0f
+        rIdx = 0; rFilled = 0; rSum = 0f; recentMean = 0f
     }
 
     fun onGyro(x: Float, y: Float, z: Float, timeMs: Long) {
@@ -141,6 +155,14 @@ class StepDetector {
 
         val vert = (lx * gx + ly * gy + lz * gz) / gn
 
+        val av = abs(vert)
+        rSum -= recentAbs[rIdx]
+        recentAbs[rIdx] = av
+        rSum += av
+        rIdx = (rIdx + 1) % recentAbs.size
+        if (rFilled < recentAbs.size) rFilled++
+        recentMean = if (rFilled > 0) rSum / rFilled else 0f
+
         window[wIdx] = abs(vert)
         wIdx = (wIdx + 1) % window.size
         if (wFilled < window.size) wFilled++
@@ -169,9 +191,14 @@ class StepDetector {
             if (rotationOk) acceptedExempt++ else rejectedNoRotation++
         }
 
+        lastCrest = vert / maxOf(recentMean, 0.05f)
+        val crestOk = lastCrest <= MAX_CREST
+        if (vert > threshold && widthOk && !crestOk) rejectedImpulse++
+
         val isPeak = vert > threshold &&
                 vert < peakCap &&
                 widthOk &&
+                crestOk &&
                 timeMs - lastPeakMs >= minInterval &&
                 crossedZero &&
                 wFilled >= 50
@@ -313,6 +340,9 @@ class StepDetector {
         private const val PENDING_TIMEOUT_MS = 2000L
         private const val SHAKE_STICKY_MS = 3000L
         private const val WIDTH_EXEMPT_AMP = 3.5f
+        // Потолок крест-фактора пик/фон. Ходьба ~1.5-4, бег ~3-7,
+        // тапы ~20-70. Предварительное значение, уточнять по диагностике.
+        private const val MAX_CREST = 8f
         // Пол вращения для освобождённых пиков. Бег: RMS в разы выше.
         // Таппинг по неподвижному телефону: около нуля. При провале бега
         // крутить ТОЛЬКО эту константу вниз (0.5), один раз.

@@ -154,9 +154,9 @@ class StepService : Service(), SensorEventListener {
             while (true) {
                 delay(1000)
                 StepsState.diag.value =
-                    "гиро %.2f | узких принято %d / срезано %d | тёплых срезано %d"
-                        .format(detector.gyroRms, detector.acceptedExempt,
-                            detector.rejectedNoRotation, detector.rejectedWarmAmp)
+                    "гиро %.2f | фон %.2f крест %.1f | имп. срезано %d"
+                        .format(detector.gyroRms, detector.recentMean,
+                            detector.lastCrest, detector.rejectedImpulse)
             }
         }
 
