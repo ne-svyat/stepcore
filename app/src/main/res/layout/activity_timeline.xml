@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="20dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="TIMELINE"
+            android:textColor="@color/accent_red"
+            android:fontFamily="sans-serif-black"
+            android:textSize="26sp"
+            android:letterSpacing="0.05" />
+
+        <HorizontalScrollView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:scrollbars="none"
+            android:layout_marginTop="16dp">
+
+            <LinearLayout
+                android:id="@+id/scaleRow"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal" />
+        </HorizontalScrollView>
+
+        <TextView
+            android:id="@+id/timelineSummary"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text=""
+            android:textColor="@color/text_main"
+            android:textSize="14sp"
+            android:layout_marginTop="16dp" />
+
+        <HorizontalScrollView
+            android:layout_width="match_parent"
+            android:layout_height="220dp"
+            android:scrollbars="none"
+            android:layout_marginTop="12dp">
+
+            <com.vasil.stepcore.TimelineView
+                android:id="@+id/timeline"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent" />
+        </HorizontalScrollView>
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginTop="12dp">
+
+            <View android:layout_width="10dp" android:layout_height="10dp"
+                android:background="@color/accent_blue" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="ходьба" android:textColor="@color/text_dim"
+                android:textSize="12sp" android:layout_marginStart="4dp"
+                android:layout_marginEnd="14dp" />
+            <View android:layout_width="10dp" android:layout_height="10dp"
+                android:background="@color/accent_red" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="бег" android:textColor="@color/text_dim"
+                android:textSize="12sp" android:layout_marginStart="4dp" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/timelineHint"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text=""
+            android:textColor="@color/text_dim"
+            android:textSize="12sp"
+            android:layout_marginTop="12dp" />
+
+    </LinearLayout>
+</ScrollView>

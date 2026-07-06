@@ -98,6 +98,9 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.statsButton).setOnClickListener {
             startActivity(Intent(this, StatsActivity::class.java))
         }
+        findViewById<Button>(R.id.timelineButton).setOnClickListener {
+            startActivity(Intent(this, TimelineActivity::class.java))
+        }
 
         toolsToggle.setOnClickListener {
             val open = toolsContainer.visibility == View.VISIBLE

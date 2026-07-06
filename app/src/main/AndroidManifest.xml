@@ -36,6 +36,11 @@
             android:foregroundServiceType="health" />
 
         <activity
+            android:name=".TimelineActivity"
+            android:screenOrientation="portrait"
+            android:exported="false" />
+
+        <activity
             android:name=".StatsActivity"
             android:screenOrientation="portrait"
             android:exported="false" />
