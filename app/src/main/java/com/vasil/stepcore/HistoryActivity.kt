@@ -129,74 +129,127 @@ class HistoryActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * День -> ленивый список ЧАСОВ (V9.4). Раскрытие дня рендерит только
+     * заголовки непустых часов (дёшево), раскрытие часа грузит и рендерит
+     * события ЭТОГО часа из БД (eventsInRange). Снимает фриз при 1000+
+     * логах: раньше раскрытие дня строило все строки разом.
+     */
     private fun makeDayRow(day: DayRecord): View {
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val total = day.walkSteps + day.runSteps
         val headerLine = "${day.date}   $total шагов (ходьба ${day.walkSteps}, бег ${day.runSteps})"
         val header = TextView(this).apply {
-            text = "$headerLine  ▸"
+            text = "$headerLine  \u25b8"
             textSize = 16f
             setPadding(0, 20, 0, 20)
             setOnLongClickListener { copyLine(headerLine); true }
         }
-        val details = LinearLayout(this).apply {
+        val hoursBox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
-            setPadding(24, 0, 0, 12)
+            setPadding(16, 0, 0, 12)
         }
         header.setOnClickListener {
-            if (details.visibility == View.GONE) {
-                details.visibility = View.VISIBLE
-                header.text = "$headerLine  ▾"
+            if (hoursBox.visibility == View.GONE) {
+                hoursBox.visibility = View.VISIBLE
+                header.text = "$headerLine  \u25be"
                 lifecycleScope.launch {
-                    details.removeAllViews()
-                    val events = AppDb.get(this@HistoryActivity).dao().eventsOfDay(day.date)
-                    if (events.isEmpty()) {
-                        details.addView(TextView(this@HistoryActivity).apply {
+                    hoursBox.removeAllViews()
+                    val counts = AppDb.get(this@HistoryActivity).dao().eventHourCounts(day.date)
+                    if (counts.isEmpty()) {
+                        hoursBox.addView(TextView(this@HistoryActivity).apply {
                             text = "Событий нет"; textSize = 14f
                         })
                     } else {
-                        val allLines = "$headerLine\n" + events.joinToString("\n") { e ->
-                            "${timeFmt.format(Date(e.timeMs))}  ${e.text}"
-                        }
-                        details.addView(Button(this@HistoryActivity).apply {
-                            text = "⧉ Копировать весь день (${events.size})"
-                            setOnClickListener { copyLine(allLines) }
+                        hoursBox.addView(Button(this@HistoryActivity).apply {
+                            text = "\u29c9 Копировать весь день"
+                            setOnClickListener { copyWholeDay(day, headerLine) }
                         })
-                    }
-                    events.reversed().forEach { e ->
-                        val shown = "${timeFmt.format(Date(e.timeMs))}  ${e.text}"
-                        val full = "${day.date} $shown"
-                        val row = LinearLayout(this@HistoryActivity).apply {
-                            orientation = LinearLayout.HORIZONTAL
-                        }
-                        val cb = CheckBox(this@HistoryActivity).apply {
-                            isChecked = selectedLines.contains(full)
-                            setOnCheckedChangeListener { _, c ->
-                                if (c) selectedLines.add(full) else selectedLines.remove(full)
-                                updateSelLabel()
-                            }
-                        }
-                        val tv = TextView(this@HistoryActivity).apply {
-                            text = shown
-                            textSize = 14f
-                            typeface = android.graphics.Typeface.MONOSPACE
-                            setPadding(4, 12, 0, 12)
-                            setOnClickListener { copyLine(full) }
-                        }
-                        row.addView(cb)
-                        row.addView(tv)
-                        details.addView(row)
+                        counts.forEach { hc -> hoursBox.addView(makeHourRow(day.date, hc)) }
                     }
                 }
             } else {
-                details.visibility = View.GONE
-                header.text = "$headerLine  ▸"
+                hoursBox.visibility = View.GONE
+                header.text = "$headerLine  \u25b8"
             }
         }
         col.addView(header)
-        col.addView(details)
+        col.addView(hoursBox)
         return col
+    }
+
+    /** Строка ЧАСА: заголовок "HH:00 (N)" + ленивая загрузка событий часа. */
+    private fun makeHourRow(date: String, hc: HourCount): View {
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val hourLabel = "%02d:00".format(hc.hour)
+        val header = TextView(this).apply {
+            text = "  $hourLabel  (${hc.cnt})  \u25b8"
+            textSize = 15f
+            setPadding(0, 14, 0, 14)
+        }
+        val evBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            setPadding(20, 0, 0, 8)
+        }
+        header.setOnClickListener {
+            if (evBox.visibility == View.GONE) {
+                evBox.visibility = View.VISIBLE
+                header.text = "  $hourLabel  (${hc.cnt})  \u25be"
+                lifecycleScope.launch {
+                    evBox.removeAllViews()
+                    val (from, to) = hourRangeMs(date, hc.hour)
+                    val events = AppDb.get(this@HistoryActivity).dao().eventsInRange(from, to)
+                    events.reversed().forEach { e -> evBox.addView(makeEventRow(date, e)) }
+                }
+            } else {
+                evBox.visibility = View.GONE
+                header.text = "  $hourLabel  (${hc.cnt})  \u25b8"
+            }
+        }
+        col.addView(header)
+        col.addView(evBox)
+        return col
+    }
+
+    /** Одна строка события: чекбокс выбора + текст (тап = копировать). */
+    private fun makeEventRow(date: String, e: EventRecord): View {
+        val shown = "${timeFmt.format(Date(e.timeMs))}  ${e.text}"
+        val full = "$date $shown"
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        row.addView(CheckBox(this).apply {
+            isChecked = selectedLines.contains(full)
+            setOnCheckedChangeListener { _, c ->
+                if (c) selectedLines.add(full) else selectedLines.remove(full)
+                updateSelLabel()
+            }
+        })
+        row.addView(TextView(this).apply {
+            text = shown
+            textSize = 14f
+            typeface = android.graphics.Typeface.MONOSPACE
+            setPadding(4, 12, 0, 12)
+            setOnClickListener { copyLine(full) }
+        })
+        return row
+    }
+
+    /** Границы часа [from, to) в мс локального времени. */
+    private fun hourRangeMs(date: String, hour: Int): Pair<Long, Long> {
+        val sdf = SimpleDateFormat("yyyy-MM-dd HH", Locale.getDefault())
+        val from = sdf.parse("$date %02d".format(hour))?.time ?: 0L
+        return from to (from + 3_600_000L)
+    }
+
+    private fun copyWholeDay(day: DayRecord, headerLine: String) {
+        lifecycleScope.launch {
+            val events = AppDb.get(this@HistoryActivity).dao().eventsOfDay(day.date)
+            val text = "$headerLine\n" + events.joinToString("\n") { e ->
+                "${timeFmt.format(Date(e.timeMs))}  ${e.text}"
+            }
+            copyLine(text)
+        }
     }
 
     private fun updateSelLabel() {

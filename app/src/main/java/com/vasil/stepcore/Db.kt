@@ -37,6 +37,9 @@ data class HourRecord(
     val runSteps: Int = 0,
 )
 
+/** Проекция: номер часа (0-23) и число событий в нём (V9.4). */
+data class HourCount(val hour: Int, val cnt: Int)
+
 @Dao
 interface StepDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -56,6 +59,15 @@ interface StepDao {
 
     @Query("SELECT * FROM events WHERE date = :date ORDER BY timeMs ASC")
     suspend fun eventsOfDay(date: String): List<EventRecord>
+
+    /** События за диапазон времени - для ленивой загрузки по часу (V9.4). */
+    @Query("SELECT * FROM events WHERE timeMs >= :fromMs AND timeMs < :toMs ORDER BY timeMs ASC")
+    suspend fun eventsInRange(fromMs: Long, toMs: Long): List<EventRecord>
+
+    /** Счётчики событий по часу дня - чтобы показать только непустые часы (V9.4). */
+    @Query("SELECT CAST(strftime('%H', timeMs/1000, 'unixepoch', 'localtime') AS INTEGER) AS hour, " +
+           "COUNT(*) AS cnt FROM events WHERE date = :date GROUP BY hour ORDER BY hour ASC")
+    suspend fun eventHourCounts(date: String): List<HourCount>
 
     @Query("SELECT * FROM events ORDER BY timeMs ASC")
     suspend fun allEvents(): List<EventRecord>
