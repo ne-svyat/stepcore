@@ -11,8 +11,12 @@ import androidx.core.content.ContextCompat
 /**
  * Полоса активности: столбик = отрезок времени. Высота ∝ шагам,
  * низ синий (ходьба), верх красный (бег). Значение над подписанными
- * столбцами (V9.7), тап по столбцу -> onBarTap (детали интервала).
+ * столбцами, тап по столбцу -> onBarTap (детали интервала).
  * Ось Y рисуется снаружи (TimelineActivity), тут только бары.
+ *
+ * V9.8: корректная обработка тача внутри HorizontalScrollView -
+ * requestDisallowInterceptTouchEvent на DOWN, различение тап/скролл
+ * по смещению (>12dp = скролл, отдаём жест родителю).
  */
 class TimelineView @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null, defStyle: Int = 0
@@ -27,12 +31,9 @@ class TimelineView @JvmOverloads constructor(
     private val barW = 22f * d
     private val gap = 6f * d
     private val labelH = 22f * d
-    private val topPad = 20f * d   // место под значение над столбцом
+    private val topPad = 20f * d
 
-    /** Максимум шагов среди столбцов - для внешней оси Y (V9.7). */
     val maxSegTotal: Int get() = maxTotal
-
-    /** Тап по столбцу -> индекс сегмента (V9.7, детали интервала). */
     var onBarTap: ((Int) -> Unit)? = null
 
     private val walkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -63,12 +64,34 @@ class TimelineView @JvmOverloads constructor(
         requestLayout(); invalidate()
     }
 
+    private var downX = 0f
+    private var downY = 0f
+
     override fun onTouchEvent(event: android.view.MotionEvent): Boolean {
-        if (event.action == android.view.MotionEvent.ACTION_UP && segs.isNotEmpty()) {
-            val idx = ((event.x - gap) / (barW + gap)).toInt()
-            if (idx in segs.indices) { onBarTap?.invoke(idx); performClick() }
+        when (event.action) {
+            android.view.MotionEvent.ACTION_DOWN -> {
+                downX = event.x; downY = event.y
+                parent?.requestDisallowInterceptTouchEvent(true)
+                return true
+            }
+            android.view.MotionEvent.ACTION_MOVE -> {
+                if (kotlin.math.abs(event.x - downX) > 12f * d) {
+                    parent?.requestDisallowInterceptTouchEvent(false)
+                }
+                return true
+            }
+            android.view.MotionEvent.ACTION_UP -> {
+                val moved = kotlin.math.abs(event.x - downX) > 12f * d ||
+                        kotlin.math.abs(event.y - downY) > 12f * d
+                if (!moved && segs.isNotEmpty()) {
+                    val idx = ((downX - gap) / (barW + gap)).toInt()
+                    if (idx in segs.indices) { onBarTap?.invoke(idx); performClick() }
+                }
+                parent?.requestDisallowInterceptTouchEvent(false)
+                return true
+            }
         }
-        return true
+        return super.onTouchEvent(event)
     }
 
     override fun performClick(): Boolean { super.performClick(); return true }
@@ -116,7 +139,6 @@ class TimelineView @JvmOverloads constructor(
         }
     }
 
-    /** 1234 -> "1.2k", <1000 как есть. */
     private fun compact(n: Int): String =
         if (n >= 1000) "%.1fk".format(n / 1000f) else n.toString()
 }

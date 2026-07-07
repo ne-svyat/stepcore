@@ -22,7 +22,11 @@ class TimelineActivity : AppCompatActivity() {
     private lateinit var timeline: TimelineView
     private lateinit var summary: TextView
     private lateinit var hint: TextView
+    private lateinit var detail: TextView
+    private lateinit var axisMax: TextView
+    private lateinit var axisMid: TextView
     private var current = Scale.TODAY
+    private var lastSegs: List<TimelineView.Seg> = emptyList()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -30,12 +34,29 @@ class TimelineActivity : AppCompatActivity() {
         timeline = findViewById(R.id.timeline)
         summary = findViewById(R.id.timelineSummary)
         hint = findViewById(R.id.timelineHint)
+        detail = findViewById(R.id.timelineDetail)
+        axisMax = findViewById(R.id.axisMax)
+        axisMid = findViewById(R.id.axisMid)
+
+        timeline.onBarTap = { idx -> showDetail(idx) }
 
         val row = findViewById<LinearLayout>(R.id.scaleRow)
         Scale.values().forEach { sc ->
             row.addView(scaleChip(sc))
         }
         render()
+    }
+
+    /** Детали столбца по тапу: период, шаги, дистанция, калории (V9.8). */
+    private fun showDetail(idx: Int) {
+        val seg = lastSegs.getOrNull(idx) ?: return
+        val total = seg.walk + seg.run
+        if (total == 0) { detail.text = "${seg.label}: нет активности"; return }
+        val km = Stats.distanceKm(this, seg.walk, seg.run)
+        val kcal = Stats.kcal(this, seg.walk, seg.run)
+        detail.text = ("\u25b8 ${seg.label}:  $total шагов " +
+                "(ходьба ${seg.walk}, бег ${seg.run})  \u00b7  " +
+                "%.2f км  \u00b7  $kcal ккал").format(km)
     }
 
     private val chips = HashMap<Scale, TextView>()
@@ -148,6 +169,12 @@ class TimelineActivity : AppCompatActivity() {
             }
 
             timeline.setSegments(segs, labelEvery)
+            lastSegs = segs
+            val maxV = timeline.maxSegTotal
+            axisMax.text = if (maxV >= 1000) "%.1fk".format(maxV / 1000f) else maxV.toString()
+            axisMid.text = if (maxV >= 2000) "%.1fk".format(maxV / 2000f)
+                else (maxV / 2).toString()
+            detail.text = "Нажми на столбец для деталей"
             val total = walkSum + runSum
             summary.text = if (total == 0) "Нет данных за период"
                 else "Всего $total шагов · ходьба $walkSum · бег $runSum"

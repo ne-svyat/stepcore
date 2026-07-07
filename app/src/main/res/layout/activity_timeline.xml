@@ -54,17 +54,17 @@
                 <TextView android:id="@+id/axisMax"
                     android:layout_width="match_parent" android:layout_height="0dp"
                     android:layout_weight="1" android:text=""
-                    android:textColor="@color/text_dim" android:textSize="10sp"
+                    android:textColor="@color/axis_dim" android:textSize="10sp"
                     android:gravity="end|top" android:paddingEnd="4dp" />
                 <TextView android:id="@+id/axisMid"
                     android:layout_width="match_parent" android:layout_height="0dp"
                     android:layout_weight="1" android:text=""
-                    android:textColor="@color/text_dim" android:textSize="10sp"
+                    android:textColor="@color/axis_dim" android:textSize="10sp"
                     android:gravity="end|top" android:paddingEnd="4dp" />
                 <TextView
                     android:layout_width="match_parent" android:layout_height="0dp"
                     android:layout_weight="1" android:text="0"
-                    android:textColor="@color/text_dim" android:textSize="10sp"
+                    android:textColor="@color/axis_dim" android:textSize="10sp"
                     android:gravity="end|bottom" android:paddingEnd="4dp" />
             </LinearLayout>
 
