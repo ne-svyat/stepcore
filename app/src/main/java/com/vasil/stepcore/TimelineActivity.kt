@@ -86,7 +86,13 @@ class TimelineActivity : AppCompatActivity() {
                         TimelineView.Seg(w, rn, "%02d".format(h))
                     }
                     labelEvery = 3
-                    hint.text = "Почасовые данные копятся с момента установки этой версии."
+                    // Если дневная сумма больше почасовой - детализация
+                    // покрывает не весь день (почасовка ведётся с V8.8).
+                    val rec = dao.day(day.toString())
+                    val dayTotal = (rec?.walkSteps ?: 0) + (rec?.runSteps ?: 0)
+                    hint.text = if (dayTotal > walkSum + runSum)
+                        "За день всего $dayTotal шагов · почасовая детализация есть не за весь день"
+                    else ""
                 }
                 Scale.D7, Scale.D30 -> {
                     val n = if (current == Scale.D7) 7 else 30

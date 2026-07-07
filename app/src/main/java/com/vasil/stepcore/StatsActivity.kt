@@ -175,6 +175,9 @@ class StatsActivity : AppCompatActivity() {
             weeks.addView(col)
         }
         scroll.addView(weeks)
+        // Текущая неделя - крайняя правая колонка; без прокрутки экран
+        // открывался на пустом прошлом годе и heatmap казался пустым.
+        scroll.post { scroll.fullScroll(View.FOCUS_RIGHT) }
         return scroll
     }
 

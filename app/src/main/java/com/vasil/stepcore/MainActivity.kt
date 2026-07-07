@@ -207,7 +207,9 @@ class MainActivity : AppCompatActivity() {
     private fun refreshRing(steps: Int) {
         val (walk, run) = todayWalkRun()
         ring.setData(walk, run, goal)
-        goalView.text = "${steps * 100 / goal}% · цель ${"%,d".format(goal).replace(',', ' ')}"
+        val pct = steps * 100 / goal
+        val lapBadge = if (pct >= 100) "×${(pct / 100 + 1).coerceAtMost(5)} · " else ""
+        goalView.text = "$lapBadge$pct% · цель ${"%,d".format(goal).replace(',', ' ')}"
         val km = Stats.distanceKm(this, walk, run)
         val kcal = Stats.kcal(this, walk, run)
         todayKmKcal.text = if (km > 0) "%.2f км · %d ккал".format(km, kcal) else ""
