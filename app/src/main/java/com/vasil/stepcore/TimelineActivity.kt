@@ -57,9 +57,29 @@ class TimelineActivity : AppCompatActivity() {
         // Basal масштабируется под период столбца (час=1/24 сут, день=1,
         // неделя=7, месяц=N дней) - seg.days несёт эту долю.
         val basal = (Stats.kcalBasalFullDay(this) * seg.days).toInt()
-        detail.text = ("\u25b8 ${seg.label}:  $total шагов " +
-                "(ходьба ${seg.walk}, бег ${seg.run})\n" +
-                "%.2f км  \u00b7  $active актив + $basal покой = ${active + basal} ккал").format(km)
+        val activeSec = Stats.activeSeconds(this, seg.walk, seg.run)
+        detail.text = ("\u25b8 ${seg.label}\n" +
+                "Шаги: ${fmtNum(total)}  (ходьба ${fmtNum(seg.walk)}, бег ${fmtNum(seg.run)})\n" +
+                "Дистанция: %.2f км\n".format(km) +
+                "Активное время: ${fmtDuration(activeSec)}\n" +
+                "\u2500\u2500\u2500\u2500\u2500\n" +
+                "Активные: $active ккал  (движение)\n" +
+                "Покой: $basal ккал  (базовый расход организма)\n" +
+                "Всего: ${active + basal} ккал\n\n" +
+                "Покой \u2014 калории, которые тело тратит просто на жизнь " +
+                "(сердце, дыхание, тепло), даже без движения.")
+    }
+
+    private fun fmtNum(n: Int) = "%,d".format(n).replace(',', ' ')
+
+    /** Секунды -> "1 ч 52 мин" / "34 мин" / "12 сек". */
+    private fun fmtDuration(sec: Long): String {
+        val h = sec / 3600; val m = (sec % 3600) / 60
+        return when {
+            h > 0 -> "$h ч $m мин"
+            m > 0 -> "$m мин"
+            else -> "$sec сек"
+        }
     }
 
     private val chips = HashMap<Scale, TextView>()
@@ -190,7 +210,9 @@ class TimelineActivity : AppCompatActivity() {
                 val active = Stats.kcalActive(this@TimelineActivity, walkSum, runSum)
                 val periodDays = segs.sumOf { it.days.toDouble() }.toFloat()
                 val basal = (Stats.kcalBasalFullDay(this@TimelineActivity) * periodDays).toInt()
+                val activeSec = Stats.activeSeconds(this@TimelineActivity, walkSum, runSum)
                 summary.text = "Всего $total шагов · ходьба $walkSum · бег $runSum\n" +
+                        "Активное время: ${fmtDuration(activeSec)}\n" +
                         "Калории: $active актив + $basal покой = ${active + basal} всего"
             }
         }
