@@ -235,7 +235,11 @@ class MainActivity : AppCompatActivity() {
     /** Секунды -> "1 ч 52 мин" / "34 мин". */
     private fun fmtDur(sec: Long): String {
         val h = sec / 3600; val m = (sec % 3600) / 60
-        return if (h > 0) "$h ч $m мин" else "$m мин"
+        return when {
+            h > 0 -> "$h ч $m мин"
+            m > 0 -> "$m мин"
+            else -> "$sec сек"
+        }
     }
 
     private fun refreshRing(steps: Int) {
@@ -245,7 +249,9 @@ class MainActivity : AppCompatActivity() {
         // Бейдж ×N убран: слои теперь показывают точки в кольце (V9.13).
         goalView.text = "$pct% · цель ${"%,d".format(goal).replace(',', ' ')}"
         val activeSec = Stats.activeSeconds(this, walk, run)
-        activeTimeText.text = if (activeSec >= 60) "\u23f1 ${fmtDur(activeSec)}" else ""
+        // Показываем при любой активности (>0), не только >=60 c - иначе
+        // вечером при малом числе шагов строка была пустой (V9.14).
+        activeTimeText.text = if (activeSec > 0) "\u23f1 ${fmtDur(activeSec)}" else ""
         val km = Stats.distanceKm(this, walk, run)
         val active = Stats.kcalActive(this, walk, run)
         val total = Stats.kcalGrossToday(this, walk, run)

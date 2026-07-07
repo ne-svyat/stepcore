@@ -94,7 +94,10 @@ class ProgressRingView @JvmOverloads constructor(
         val gap = 16f * d
         val totalW = 5 * gap - (gap - 2 * r)
         var x = width / 2f - totalW / 2f + r
-        val y = height / 2f + height * 0.20f
+        // Ниже центра примерно на сантиметр (V9.14): 0.33 высоты вместо
+        // 0.20, но не ниже нижней дуги кольца.
+        val maxY = height - stroke - 6f * d
+        val y = (height / 2f + height * 0.33f).coerceAtMost(maxY)
         for (i in 0 until 5) {
             when {
                 i < lap -> {
