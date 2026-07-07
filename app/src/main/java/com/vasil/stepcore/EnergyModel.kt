@@ -50,6 +50,14 @@ object EnergyModel {
         return walkNetWattsPerKg(speed) * movedMassKg * seconds / J_PER_KCAL
     }
 
+    /**
+     * Базовый обмен (покой) за время активности - разница брутто и нетто.
+     * Член покоя LCDA = 1.44 Вт/кг; брутто = нетто + это.
+     */
+    fun restKcal(movedMassKg: Float, seconds: Long): Float =
+        if (movedMassKg <= 0f || seconds <= 0) 0f
+        else 1.44f * movedMassKg * seconds / J_PER_KCAL
+
     /** Ккал за бег: стоимость дистанции, почти не зависит от темпа. */
     fun runKcal(runKm: Float, movedMassKg: Float): Float =
         if (runKm <= 0f || movedMassKg <= 0f) 0f

@@ -127,6 +127,10 @@ class StepService : Service(), SensorEventListener {
     private var calibrating: String? = null
     private val calIntervals = ArrayList<Long>()
     private var calLastStepMs = 0L
+    // Калибровка дистанции (V9.3): якорь чипа + метраж отрезка.
+    private var distCalActive = false
+    private var distCalChipStart = -1L
+    private var distCalMetres = 0f
 
     override fun onCreate() {
         super.onCreate()
@@ -278,6 +282,8 @@ class StepService : Service(), SensorEventListener {
             ACTION_CAL_WALK -> startCalibration("walk")
             ACTION_CAL_RUN -> startCalibration("run")
             ACTION_CAL_STOP -> finishCalibration()
+            ACTION_CAL_DIST_START -> startDistCal(intent.getFloatExtra(EXTRA_METRES, 0f))
+            ACTION_CAL_DIST_STOP -> finishDistCal()
             ACTION_DIAG_START -> {
                 detector.diagRecording = true
                 StepsState.calibrationState.value = "Диагностика пишется — делай тест"
@@ -331,6 +337,39 @@ class StepService : Service(), SensorEventListener {
         loadProfile()
         StepsState.calibrationState.value =
             "Готово: твой ${if (kind == "walk") "шаг" else "бег"} = ${median} мс/шаг (диапазон $lo-$hi)"
+    }
+
+    /**
+     * Старт калибровки дистанции: фиксируем показание чипа. Пользователь
+     * идёт известный отрезок metres, чип считает шаги - в голове считать
+     * не нужно. Финиш вычислит длину шага = metres / шаги.
+     */
+    private fun startDistCal(metres: Float) {
+        if (metres <= 0f) {
+            StepsState.calibrationState.value = "Укажи длину отрезка"
+            return
+        }
+        distCalActive = true
+        distCalMetres = metres
+        distCalChipStart = hwLastTotal
+        StepsState.calibrationState.value =
+            "Калибровка дистанции: пройди ${metres.toInt()} м и нажми Готово"
+    }
+
+    private fun finishDistCal() {
+        if (!distCalActive) return
+        distCalActive = false
+        val steps = if (distCalChipStart >= 0 && hwLastTotal >= 0)
+            (hwLastTotal - distCalChipStart).toInt() else 0
+        if (steps < 20) {
+            StepsState.calibrationState.value =
+                "Мало шагов ($steps) - калибровка не сохранена. Нужен отрезок подлиннее."
+            return
+        }
+        StrideModel.applyCalibration(this, distCalMetres, steps)
+        val slCm = StrideModel.measuredStrideCm(this) ?: 0
+        StepsState.calibrationState.value =
+            "Готово: ${distCalMetres.toInt()} м за $steps шагов = длина шага $slCm см"
     }
 
     private fun loadProfile() {
@@ -731,6 +770,9 @@ class StepService : Service(), SensorEventListener {
         const val ACTION_CAL_WALK = "cal_walk"
         const val ACTION_CAL_RUN = "cal_run"
         const val ACTION_CAL_STOP = "cal_stop"
+        const val ACTION_CAL_DIST_START = "cal_dist_start"
+        const val ACTION_CAL_DIST_STOP = "cal_dist_stop"
+        const val EXTRA_METRES = "metres"
         const val ACTION_DIAG_START = "diag_start"
         const val ACTION_DIAG_STOP = "diag_stop"
         private const val IDLE_LOG_DELAY_MS = 4000L

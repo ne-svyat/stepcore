@@ -3,35 +3,50 @@ package com.vasil.stepcore
 import android.content.Context
 
 /**
- * Адаптер профиля к EnergyModel: читает prefs, отдаёт дистанцию и ккал.
- * Длина шага от роста - ГРУБО до V9-калибровки дистанции
- * (ходьба ~0.414 роста, бег ~0.65 роста). Энергия - см. EnergyModel.
+ * Адаптер профиля к моделям: длина шага - из StrideModel (единый
+ * источник, V9.3), энергия - из EnergyModel. Одна ответственность:
+ * связать prefs с чистыми модулями.
  */
 object Stats {
     private fun prefs(c: Context) = c.getSharedPreferences(StepService.PREFS, Context.MODE_PRIVATE)
 
     fun distanceKm(c: Context, walkSteps: Int, runSteps: Int): Float {
-        val h = prefs(c).getInt("p_height", 0)
-        if (h <= 0) return 0f
-        return (walkSteps * strideWalkM(h) + runSteps * strideRunM(h)) / 1000f
+        val walkM = walkSteps * StrideModel.walkStrideAvgM(c)
+        val runM = runSteps * StrideModel.runStrideM(c)
+        return (walkM + runM) / 1000f
     }
 
-    fun kcal(c: Context, walkSteps: Int, runSteps: Int): Int {
+    /** Калории НЕТТО (сверх покоя). */
+    fun kcalNet(c: Context, walkSteps: Int, runSteps: Int): Int {
         val p = prefs(c)
         val w = p.getFloat("p_weight", 0f)
-        val h = p.getInt("p_height", 0)
-        if (w <= 0f || h <= 0) return 0
+        if (w <= 0f) return 0
         val mass = w + p.getFloat("p_load", 0f)
-        // Медиана калиброванного интервала восстанавливается точно:
-        // калибровка хранит lo = 0.65*med и hi = 1.35*med -> med = (lo+hi)/2.
-        val lo = p.getLong("walk_min_interval", 400L)
-        val hi = p.getLong("walk_max_interval", 1200L)
-        val intervalS = (lo + hi) / 2f / 1000f
-        val walk = EnergyModel.walkKcal(walkSteps, mass, strideWalkM(h), intervalS)
-        val run = EnergyModel.runKcal(runSteps * strideRunM(h) / 1000f, mass)
+        val stride = StrideModel.walkStrideAvgM(c)
+        val intervalS = 1f / StrideModel.avgWalkCadenceHz(c)
+        val walk = EnergyModel.walkKcal(walkSteps, mass, stride, intervalS)
+        val run = EnergyModel.runKcal(runSteps * StrideModel.runStrideM(c) / 1000f, mass)
         return (walk + run).toInt()
     }
 
-    private fun strideWalkM(heightCm: Int) = heightCm * 0.414f / 100f
-    private fun strideRunM(heightCm: Int) = heightCm * 0.65f / 100f
+    /** Калории БРУТТО = нетто + базовый обмен за время ходьбы/бега. */
+    fun kcalGross(c: Context, walkSteps: Int, runSteps: Int): Int {
+        val p = prefs(c)
+        val w = p.getFloat("p_weight", 0f)
+        if (w <= 0f) return 0
+        val mass = w + p.getFloat("p_load", 0f)
+        val activeSec = activeSeconds(c, walkSteps, runSteps)
+        val rest = EnergyModel.restKcal(mass, activeSec)
+        return kcalNet(c, walkSteps, runSteps) + rest.toInt()
+    }
+
+    /** Обратная совместимость: старые вызовы kcal -> нетто. */
+    fun kcal(c: Context, walkSteps: Int, runSteps: Int): Int = kcalNet(c, walkSteps, runSteps)
+
+    /** Время активности, сек: шаги * интервал по режимам. */
+    fun activeSeconds(c: Context, walkSteps: Int, runSteps: Int): Long {
+        val walkIv = 1f / StrideModel.avgWalkCadenceHz(c)
+        val runIv = 0.34f // средний беговой интервал (из логов 340мс)
+        return (walkSteps * walkIv + runSteps * runIv).toLong()
+    }
 }

@@ -30,6 +30,7 @@ class MainActivity : AppCompatActivity() {
         }
 
     private var calibrating = false
+    private var distCalibrating = false
     private lateinit var statsView: TextView
     private lateinit var ring: ProgressRingView
     private lateinit var goalView: TextView
@@ -56,6 +57,8 @@ class MainActivity : AppCompatActivity() {
         val historyBtn = findViewById<Button>(R.id.historyButton)
         val calWalkBtn = findViewById<Button>(R.id.calWalkButton)
         val calRunBtn = findViewById<Button>(R.id.calRunButton)
+        val calDistBtn = findViewById<Button>(R.id.calDistButton)
+        val distInput = findViewById<android.widget.EditText>(R.id.distMetresInput)
         val hapticSwitch = findViewById<SwitchCompat>(R.id.hapticSwitch)
         val detailLogSwitch = findViewById<SwitchCompat>(R.id.detailLogSwitch)
         val toolsToggle = findViewById<TextView>(R.id.toolsToggle)
@@ -138,6 +141,29 @@ class MainActivity : AppCompatActivity() {
 
         calWalkBtn.setOnClickListener { toggleCalibration("walk", calWalkBtn, calRunBtn) }
         calRunBtn.setOnClickListener { toggleCalibration("run", calRunBtn, calWalkBtn) }
+
+        calDistBtn.setOnClickListener {
+            if (!StepsState.serviceRunning.value) {
+                StepsState.calibrationState.value = "Сначала нажми Старт"; return@setOnClickListener
+            }
+            if (!distCalibrating) {
+                val m = distInput.text.toString().replace(',', '.').toFloatOrNull()
+                if (m == null || m < 50f) {
+                    StepsState.calibrationState.value = "Введи длину отрезка (минимум 50 м)"
+                    return@setOnClickListener
+                }
+                distCalibrating = true
+                calDistBtn.text = "Готово (дистанция)"
+                startForegroundService(Intent(this, StepService::class.java)
+                    .setAction(StepService.ACTION_CAL_DIST_START)
+                    .putExtra(StepService.EXTRA_METRES, m))
+            } else {
+                distCalibrating = false
+                calDistBtn.text = "Калибровка дистанции"
+                startForegroundService(Intent(this, StepService::class.java)
+                    .setAction(StepService.ACTION_CAL_DIST_STOP))
+            }
+        }
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
