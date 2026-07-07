@@ -142,8 +142,26 @@ class HistoryActivity : AppCompatActivity() {
         val header = TextView(this).apply {
             text = "$headerLine  \u25b8"
             textSize = 16f
-            setPadding(0, 20, 0, 20)
+            setPadding(8, 20, 0, 20)
             setOnLongClickListener { copyLine(headerLine); true }
+        }
+        // V9.5: чекбокс выделяет ВЕСЬ день (все события), не раскрывая его.
+        val dayCheck = CheckBox(this).apply {
+            setOnCheckedChangeListener { _, c ->
+                lifecycleScope.launch {
+                    val evs = AppDb.get(this@HistoryActivity).dao().eventsOfDay(day.date)
+                    evs.forEach { e ->
+                        val full = "${day.date} ${timeFmt.format(Date(e.timeMs))}  ${e.text}"
+                        if (c) selectedLines.add(full) else selectedLines.remove(full)
+                    }
+                    updateSelLabel()
+                }
+            }
+        }
+        val headerRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(dayCheck)
+            addView(header)
         }
         val hoursBox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -174,7 +192,7 @@ class HistoryActivity : AppCompatActivity() {
                 header.text = "$headerLine  \u25b8"
             }
         }
-        col.addView(header)
+        col.addView(headerRow)
         col.addView(hoursBox)
         return col
     }
@@ -183,10 +201,29 @@ class HistoryActivity : AppCompatActivity() {
     private fun makeHourRow(date: String, hc: HourCount): View {
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val hourLabel = "%02d:00".format(hc.hour)
+        val (hFrom, hTo) = hourRangeMs(date, hc.hour)
         val header = TextView(this).apply {
             text = "  $hourLabel  (${hc.cnt})  \u25b8"
             textSize = 15f
-            setPadding(0, 14, 0, 14)
+            setPadding(4, 14, 0, 14)
+        }
+        // V9.5: чекбокс выделяет весь ЧАС (все его события) без раскрытия.
+        val hourCheck = CheckBox(this).apply {
+            setOnCheckedChangeListener { _, c ->
+                lifecycleScope.launch {
+                    val evs = AppDb.get(this@HistoryActivity).dao().eventsInRange(hFrom, hTo)
+                    evs.forEach { e ->
+                        val full = "$date ${timeFmt.format(Date(e.timeMs))}  ${e.text}"
+                        if (c) selectedLines.add(full) else selectedLines.remove(full)
+                    }
+                    updateSelLabel()
+                }
+            }
+        }
+        val headerRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(hourCheck)
+            addView(header)
         }
         val evBox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -208,7 +245,7 @@ class HistoryActivity : AppCompatActivity() {
                 header.text = "  $hourLabel  (${hc.cnt})  \u25b8"
             }
         }
-        col.addView(header)
+        col.addView(headerRow)
         col.addView(evBox)
         return col
     }
