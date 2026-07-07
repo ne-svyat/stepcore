@@ -135,10 +135,10 @@ class StepService : Service(), SensorEventListener {
         StepsState.hapticEnabled.value = prefs.getBoolean("haptic", false)
         StepsState.detailLog.value = prefs.getBoolean("detail_log", false)
         loadProfile()
-        StepsState.steps.value = detector.stepCount
+        StepsState.steps.value = walkSteps + runSteps
 
         createChannel()
-        startForeground(NOTIF_ID, buildNotification(detector.stepCount))
+        startForeground(NOTIF_ID, buildNotification(walkSteps + runSteps))
 
         // CPU не должен засыпать при выключенном экране, иначе
         // non-wakeup сенсоры перестают доставлять события и счёт стоит.
@@ -362,48 +362,34 @@ class StepService : Service(), SensorEventListener {
                     adoptBaselineOnce = false
                     return
                 }
-                if (screenOff) {
-                    val delta = (hwTotal - hwBaseline).toInt()
-                    hwBaseline = hwTotal
-                    persistHwBase()
-                    if (delta > 0) {
-                        rolloverDayIfNeeded()
-                        walkSteps += delta
-                        bumpHour(delta, 0)
-                        hwSessionAdded += delta
-                        detector.restoreCount(detector.stepCount + delta)
-                        StepsState.steps.value = detector.stepCount
-                        persistPrefs()
-                        getSystemService(NotificationManager::class.java)
-                            .notify(NOTIF_ID, buildNotification(detector.stepCount))
-                    }
-                    return
-                }
-                val accelGapMs =
-                    if (lastAccelEventMs == 0L) Long.MAX_VALUE
-                    else SystemClock.elapsedRealtime() - lastAccelEventMs
-                if (!forceBackfill && accelGapMs < 60_000) {
-                    // наш детектор жив - аппаратный просто следит
-                    hwBaseline = hwTotal
-                    persistHwBase()
-                } else {
-                    // была дыра (экран выключен / сервис спал) - досчитываем
-                    val delta = (hwTotal - hwBaseline).toInt()
-                    hwBaseline = hwTotal
-                    persistHwBase()
-                    forceBackfill = false
-                    if (delta > 0) {
-                        rolloverDayIfNeeded()
-                        walkSteps += delta
-                        bumpHour(delta, 0)
-                        detector.restoreCount(detector.stepCount + delta)
-                        StepsState.steps.value = detector.stepCount
-                        persistPrefs()
-                        persistDb()
-                        logEvent("Досчитано аппаратно: $delta шагов (телефон спал ${accelGapMs / 1000} с)")
-                        getSystemService(NotificationManager::class.java)
-                            .notify(NOTIF_ID, buildNotification(detector.stepCount))
-                    }
+                // ============ V9: ЧИП - ЕДИНСТВЕННЫЙ ИСТОЧНИК СЧЁТА ============
+                // Данные 06-07.07: тапы по экрану надували детектор в 3-5 раз
+                // (330 против 100 у чипа), при этом чип за все тап- и
+                // транспорт-эпизоды дал 0 ложных шагов. Детектор больше не
+                // считает - он классифицирует: каждая дельта чипа помечается
+                // WALK/RUN по текущему режиму детектора. Счёт никогда не
+                // блокируется (TRANSPORT - метка в журнале, не стоп-кран):
+                // класс багов "ложный транспорт съел шаги" закрыт архитектурно.
+                // Известная цена: чип придерживает первые ~10 шагов серии и
+                // отдаёт пачкой; короткие проходки могут не засчитаться
+                // (конституция: лучше недосчитать один, чем добавить десять).
+                val delta = (hwTotal - hwBaseline).toInt()
+                hwBaseline = hwTotal
+                persistHwBase()
+                if (delta <= 0) return
+                rolloverDayIfNeeded()
+                val asRun = !screenOff && detector.mode == StepDetector.Mode.RUN
+                if (asRun) { runSteps += delta; bumpHour(0, delta) }
+                else { walkSteps += delta; bumpHour(delta, 0) }
+                if (screenOff) hwSessionAdded += delta
+                StepsState.steps.value = walkSteps + runSteps
+                persistPrefs()
+                stepsSinceDbWrite += delta
+                if (stepsSinceDbWrite >= 25) { stepsSinceDbWrite = 0; persistDb() }
+                if (walkSteps + runSteps - lastNotifiedSteps >= 10) {
+                    lastNotifiedSteps = walkSteps + runSteps
+                    getSystemService(NotificationManager::class.java)
+                        .notify(NOTIF_ID, buildNotification(walkSteps + runSteps))
                 }
                 return
             }
@@ -426,20 +412,13 @@ class StepService : Service(), SensorEventListener {
                         if (calLastStepMs > 0) calIntervals.add(timeMs - calLastStepMs)
                         calLastStepMs = timeMs
                     }
-                    rolloverDayIfNeeded()
-                    if (detector.mode == StepDetector.Mode.RUN) { runSteps += added; bumpHour(0, added) }
-                    else { walkSteps += added; bumpHour(added, 0) }
-                    StepsState.steps.value = detector.stepCount
-                    persistPrefs()
-                    stepsSinceDbWrite += added
-                    if (stepsSinceDbWrite >= 25) { stepsSinceDbWrite = 0; persistDb() }
+                    // V9: детектор НЕ считает - счёт ведёт чип (ветка
+                    // TYPE_STEP_COUNTER). Здесь остаётся обратная связь:
+                    // вибрация может тикнуть на ложный шаг (тап), но число
+                    // от этого не вырастет. trackDivergence теперь охраняет
+                    // обратный риск - недосчёт чипа при реальной ходьбе.
                     if (StepsState.hapticEnabled.value) {
                         vibrator.vibrate(VibrationEffect.createOneShot(50, 255))
-                    }
-                    if (detector.stepCount - lastNotifiedSteps >= 10) {
-                        lastNotifiedSteps = detector.stepCount
-                        getSystemService(NotificationManager::class.java)
-                            .notify(NOTIF_ID, buildNotification(detector.stepCount))
                     }
                 }
             }
@@ -603,7 +582,7 @@ class StepService : Service(), SensorEventListener {
     private fun persistPrefs() {
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
             .putString(KEY_DAY, currentDay)
-            .putInt(KEY_STEPS, detector.stepCount)
+            .putInt(KEY_STEPS, walkSteps + runSteps)
             .putInt(KEY_WALK, walkSteps)
             .putInt(KEY_RUN, runSteps)
             .apply()
