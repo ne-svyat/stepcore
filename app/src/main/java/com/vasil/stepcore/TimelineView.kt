@@ -10,8 +10,9 @@ import androidx.core.content.ContextCompat
 
 /**
  * Полоса активности: столбик = отрезок времени. Высота ∝ шагам,
- * низ синий (ходьба), верх красный (бег). Ширина под число столбцов,
- * оборачивается в HorizontalScrollView при необходимости.
+ * низ синий (ходьба), верх красный (бег). Значение над подписанными
+ * столбцами (V9.7), тап по столбцу -> onBarTap (детали интервала).
+ * Ось Y рисуется снаружи (TimelineActivity), тут только бары.
  */
 class TimelineView @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null, defStyle: Int = 0
@@ -26,7 +27,13 @@ class TimelineView @JvmOverloads constructor(
     private val barW = 22f * d
     private val gap = 6f * d
     private val labelH = 22f * d
-    private val topPad = 8f * d
+    private val topPad = 20f * d   // место под значение над столбцом
+
+    /** Максимум шагов среди столбцов - для внешней оси Y (V9.7). */
+    val maxSegTotal: Int get() = maxTotal
+
+    /** Тап по столбцу -> индекс сегмента (V9.7, детали интервала). */
+    var onBarTap: ((Int) -> Unit)? = null
 
     private val walkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = ContextCompat.getColor(context, R.color.accent_blue)
@@ -42,6 +49,11 @@ class TimelineView @JvmOverloads constructor(
         textSize = 10f * d
         textAlign = Paint.Align.CENTER
     }
+    private val valuePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = ContextCompat.getColor(context, R.color.text_main)
+        textSize = 9f * d
+        textAlign = Paint.Align.CENTER
+    }
     private val rect = RectF()
 
     fun setSegments(list: List<Seg>, labelEveryNth: Int = 1) {
@@ -50,6 +62,16 @@ class TimelineView @JvmOverloads constructor(
         labelEvery = labelEveryNth.coerceAtLeast(1)
         requestLayout(); invalidate()
     }
+
+    override fun onTouchEvent(event: android.view.MotionEvent): Boolean {
+        if (event.action == android.view.MotionEvent.ACTION_UP && segs.isNotEmpty()) {
+            val idx = ((event.x - gap) / (barW + gap)).toInt()
+            if (idx in segs.indices) { onBarTap?.invoke(idx); performClick() }
+        }
+        return true
+    }
+
+    override fun performClick(): Boolean { super.performClick(); return true }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val w = (segs.size * (barW + gap) + gap).toInt().coerceAtLeast(1)
@@ -74,12 +96,10 @@ class TimelineView @JvmOverloads constructor(
                 val bottom = height - labelH
                 val top = bottom - h
                 val runH = h * seg.run / total
-                // бег сверху
                 if (seg.run > 0) {
                     rect.set(left, top, right, top + runH)
                     canvas.drawRoundRect(rect, radius, radius, runPaint)
                 }
-                // ходьба снизу
                 if (seg.walk > 0) {
                     rect.set(left, top + runH, right, bottom)
                     canvas.drawRoundRect(rect, radius, radius, walkPaint)
@@ -87,7 +107,16 @@ class TimelineView @JvmOverloads constructor(
             }
             if (i % labelEvery == 0) {
                 canvas.drawText(seg.label, (left + right) / 2f, height - 6f * d, textPaint)
+                if (total > 0) {
+                    canvas.drawText(compact(total), (left + right) / 2f,
+                        (height - labelH - (total.toFloat() / maxTotal) * chartH) - 5f * d,
+                        valuePaint)
+                }
             }
         }
     }
+
+    /** 1234 -> "1.2k", <1000 как есть. */
+    private fun compact(n: Int): String =
+        if (n >= 1000) "%.1fk".format(n / 1000f) else n.toString()
 }

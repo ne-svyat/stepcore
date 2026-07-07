@@ -40,17 +40,56 @@
             android:textSize="14sp"
             android:layout_marginTop="16dp" />
 
-        <HorizontalScrollView
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="220dp"
-            android:scrollbars="none"
+            android:orientation="horizontal"
             android:layout_marginTop="12dp">
 
-            <com.vasil.stepcore.TimelineView
-                android:id="@+id/timeline"
-                android:layout_width="wrap_content"
-                android:layout_height="match_parent" />
-        </HorizontalScrollView>
+            <LinearLayout
+                android:layout_width="34dp"
+                android:layout_height="match_parent"
+                android:orientation="vertical"
+                android:paddingBottom="22dp">
+                <TextView android:id="@+id/axisMax"
+                    android:layout_width="match_parent" android:layout_height="0dp"
+                    android:layout_weight="1" android:text=""
+                    android:textColor="@color/text_dim" android:textSize="10sp"
+                    android:gravity="end|top" android:paddingEnd="4dp" />
+                <TextView android:id="@+id/axisMid"
+                    android:layout_width="match_parent" android:layout_height="0dp"
+                    android:layout_weight="1" android:text=""
+                    android:textColor="@color/text_dim" android:textSize="10sp"
+                    android:gravity="end|top" android:paddingEnd="4dp" />
+                <TextView
+                    android:layout_width="match_parent" android:layout_height="0dp"
+                    android:layout_weight="1" android:text="0"
+                    android:textColor="@color/text_dim" android:textSize="10sp"
+                    android:gravity="end|bottom" android:paddingEnd="4dp" />
+            </LinearLayout>
+
+            <HorizontalScrollView
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:scrollbars="none">
+
+                <com.vasil.stepcore.TimelineView
+                    android:id="@+id/timeline"
+                    android:layout_width="wrap_content"
+                    android:layout_height="match_parent" />
+            </HorizontalScrollView>
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/timelineDetail"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Нажми на столбец для деталей"
+            android:textColor="@color/text_main"
+            android:textSize="14sp"
+            android:background="@color/surface"
+            android:padding="12dp"
+            android:layout_marginTop="10dp" />
 
         <LinearLayout
             android:layout_width="wrap_content"
