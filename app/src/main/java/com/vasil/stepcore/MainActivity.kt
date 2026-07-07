@@ -237,8 +237,39 @@ class MainActivity : AppCompatActivity() {
         val lapBadge = if (pct >= 100) "×${(pct / 100 + 1).coerceAtMost(5)} · " else ""
         goalView.text = "$lapBadge$pct% · цель ${"%,d".format(goal).replace(',', ' ')}"
         val km = Stats.distanceKm(this, walk, run)
-        val kcal = Stats.kcal(this, walk, run)
-        todayKmKcal.text = if (km > 0) "%.2f км · %d ккал".format(km, kcal) else ""
+        val active = Stats.kcalActive(this, walk, run)
+        val total = Stats.kcalGrossToday(this, walk, run)
+        // Active = расход на движение; Total = Active + базовый обмен (BMR)
+        // за прошедшую часть суток. Тап по строке -> объяснение (V9.10).
+        todayKmKcal.text = if (km > 0 || active > 0)
+            "%.2f км · %d актив · %d всего ккал  \u24d8".format(km, active, total)
+        else ""
+        todayKmKcal.setOnClickListener { showCalorieInfo(active, total) }
+    }
+
+    /** Диалог-объяснение Active/Basal/Total (V9.10). */
+    private fun showCalorieInfo(active: Int, total: Int) {
+        val basal = total - active
+        val msg = """
+            StepCore считает калории честно и разделяет их на две части:
+
+            \u2022 АКТИВНЫЕ ($active ккал) — сожжено именно на движение, сверх покоя. Модель LCDA/Margaria учитывает скорость, каденс, вес и груз.
+
+            \u2022 БАЗОВЫЙ ОБМЕН ($basal ккал) — сколько тело тратит просто на жизнь (дыхание, сердце) за прошедшую часть суток. Формула Mifflin\u2013St Jeor по весу, росту, возрасту, полу.
+
+            \u2022 ВСЕГО ($total ккал) = активные + базовый обмен.
+
+            Почему цифры отличаются от других приложений:
+            — Xiaomi/Samsung показывают активные + покой только за время ходьбы.
+            — Google Fit показывает ВСЕГО за сутки (близко к нашему «всего»).
+
+            Для контроля дефицита ориентируйся на «всего»: это полный расход. Съедая меньше — теряешь вес.
+        """.trimIndent()
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Как считаются калории")
+            .setMessage(msg)
+            .setPositiveButton("Понятно", null)
+            .show()
     }
 
     private fun todayWalkRun(): Pair<Int, Int> {

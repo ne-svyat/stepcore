@@ -53,10 +53,11 @@ class TimelineActivity : AppCompatActivity() {
         val total = seg.walk + seg.run
         if (total == 0) { detail.text = "${seg.label}: нет активности"; return }
         val km = Stats.distanceKm(this, seg.walk, seg.run)
-        val kcal = Stats.kcal(this, seg.walk, seg.run)
+        val active = Stats.kcalActive(this, seg.walk, seg.run)
+        val basalHour = Stats.kcalBasalFullDay(this) / 24
         detail.text = ("\u25b8 ${seg.label}:  $total шагов " +
-                "(ходьба ${seg.walk}, бег ${seg.run})  \u00b7  " +
-                "%.2f км  \u00b7  $kcal ккал").format(km)
+                "(ходьба ${seg.walk}, бег ${seg.run})\n" +
+                "%.2f км  \u00b7  $active актив + $basalHour покой = ${active + basalHour} ккал").format(km)
     }
 
     private val chips = HashMap<Scale, TextView>()

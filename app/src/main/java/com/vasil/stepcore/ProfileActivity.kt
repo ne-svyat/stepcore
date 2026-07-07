@@ -46,15 +46,36 @@ class ProfileActivity : AppCompatActivity() {
                 Toast.makeText(this, "Проверь вес и рост", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
-            prefs.edit()
-                .putFloat("p_weight", w)
-                .putInt("p_height", h)
-                .putInt("p_age", a ?: 0)
-                .putInt("p_goal", (g ?: 10000).coerceIn(1000, 100000))
-                .putString("p_sex", if (sexF.isChecked) "f" else "m")
-                .putFloat("p_load", l)
-                .apply()
-            Toast.makeText(this, "Сохранено", Toast.LENGTH_SHORT).show()
+            // V9.10: защита от опечаток - подтверждать аномальные изменения.
+            // Порог не магический: вес взрослого редко меняется >5 кг за
+            // сессию правки; рост у взрослого не меняется. Большая дельта =
+            // вероятная опечатка (75 -> 7). Прошлые дни защищены снапшотами
+            // (V9.9), защищаем и будущие расчёты.
+            val oldW = prefs.getFloat("p_weight", w)
+            val oldH = prefs.getInt("p_height", h)
+            val bigChange = kotlin.math.abs(w - oldW) > 5f ||
+                    kotlin.math.abs(h - oldH) > 5
+            val save = {
+                prefs.edit()
+                    .putFloat("p_weight", w)
+                    .putInt("p_height", h)
+                    .putInt("p_age", a ?: 0)
+                    .putInt("p_goal", (g ?: 10000).coerceIn(1000, 100000))
+                    .putString("p_sex", if (sexF.isChecked) "f" else "m")
+                    .putFloat("p_load", l)
+                    .apply()
+                Toast.makeText(this, "Сохранено", Toast.LENGTH_SHORT).show()
+                loadPassport()
+            }
+            if (bigChange && prefs.contains("p_weight")) {
+                androidx.appcompat.app.AlertDialog.Builder(this)
+                    .setTitle("Подтверди изменение")
+                    .setMessage("Вес: ${oldW.toInt()} \u2192 ${w.toInt()} кг, " +
+                            "рост: $oldH \u2192 $h см.\nВсё верно?")
+                    .setPositiveButton("Да, сохранить") { _, _ -> save() }
+                    .setNegativeButton("Отмена", null)
+                    .show()
+            } else save()
         }
 
         val dataToggle = findViewById<android.widget.TextView>(R.id.dataToggle)
