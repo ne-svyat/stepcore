@@ -63,6 +63,17 @@ class StepService : Service(), SensorEventListener {
     private var hwAtTransportEnter = -1L
     private var renewalsAtEnter = 0
     private var transportEnterWallMs = 0L
+
+    // Окно расхождения детектор/чип (V8.15, диагностика перед V9).
+    // Живой факт 07.07: печать на экране дала детектору +200 при чипе +50.
+    // Критерий расхождения обоснован, не подобран: реальная ходьба за
+    // 2 мин = 150-250 шагов, чип отстаёт максимум на ~10 (придержка
+    // старта серии) - соотношение ~1; тапы дают детектору десятки при
+    // чипе ~0. Порог: детектор >= 20 И чип < половины детектора.
+    private var divWindowStartMs = 0L
+    private var divWindowDet = 0
+    private var divWindowChipStart = -1L
+    private var lastDivLogMs = 0L   // троттлинг: не чаще строки в 10 мин
     // Сверка с чипом (V8.11): якорь чипа на начало дня.
     // Ворота решения V9 "чип считает всегда": N дней автоматических
     // сравнений вместо ручных вечерних записей.
@@ -75,6 +86,7 @@ class StepService : Service(), SensorEventListener {
                 Intent.ACTION_SCREEN_OFF -> {
                     screenOff = true
                     hwSessionAdded = 0
+                    divWindowStartMs = 0L   // окно расхождения только при экране вкл
                 }
                 Intent.ACTION_SCREEN_ON -> {
                     screenOff = false
@@ -409,6 +421,7 @@ class StepService : Service(), SensorEventListener {
                 )
                 updateModeWithHysteresis()
                 if (added > 0) {
+                    trackDivergence(added)
                     if (calibrating != null) {
                         if (calLastStepMs > 0) calIntervals.add(timeMs - calLastStepMs)
                         calLastStepMs = timeMs
@@ -508,6 +521,35 @@ class StepService : Service(), SensorEventListener {
         persistHwAnchor()
         walkSteps = 0; runSteps = 0
         detector.restoreCount(0)
+    }
+
+    /**
+     * Диагностика V8.15: скользящее 2-минутное окно "прирост детектора
+     * против прироста чипа" при включённом экране. Значимое расхождение
+     * пишется в журнал - это поэпизодные данные для решения V9
+     * (чип - источник счёта, детектор - классификатор).
+     * Поведение счёта НЕ меняет: только наблюдение.
+     */
+    private fun trackDivergence(added: Int) {
+        if (screenOff || hwLastTotal < 0) return
+        val now = System.currentTimeMillis()
+        if (divWindowStartMs == 0L || now - divWindowStartMs > DIV_WINDOW_MS * 3) {
+            // старт нового окна (или окно протухло после паузы активности)
+            divWindowStartMs = now
+            divWindowDet = 0
+            divWindowChipStart = hwLastTotal
+        }
+        divWindowDet += added
+        if (now - divWindowStartMs < DIV_WINDOW_MS) return
+        val chipDelta = (hwLastTotal - divWindowChipStart).toInt()
+        if (divWindowDet >= DIV_MIN_DET && chipDelta * 2 < divWindowDet &&
+            now - lastDivLogMs > DIV_LOG_THROTTLE_MS
+        ) {
+            lastDivLogMs = now
+            logEvent("Расхождение за ${DIV_WINDOW_MS / 60000} мин: " +
+                    "детектор +$divWindowDet, чип +$chipDelta (подозрение на ложные шаги)")
+        }
+        divWindowStartMs = 0L   // окно закрыто, следующее начнётся с нового шага
     }
 
     /**
@@ -669,6 +711,9 @@ class StepService : Service(), SensorEventListener {
         const val KEY_HW_DAY_ANCHOR = "hw_day_anchor"
         const val KEY_HW_ANCHOR_DAY = "hw_anchor_day"
         const val KEY_HW_DAY_PAUSED = "hw_day_paused"
+        const val DIV_WINDOW_MS = 120_000L  // окно сравнения детектор/чип
+        const val DIV_MIN_DET = 20          // минимум шагов детектора для вывода
+        const val DIV_LOG_THROTTLE_MS = 600_000L // журнал не чаще 1 строки / 10 мин
         const val ACTION_CAL_WALK = "cal_walk"
         const val ACTION_CAL_RUN = "cal_run"
         const val ACTION_CAL_STOP = "cal_stop"
