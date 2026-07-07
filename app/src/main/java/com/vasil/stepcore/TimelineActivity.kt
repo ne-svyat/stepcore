@@ -187,9 +187,9 @@ class TimelineActivity : AppCompatActivity() {
                 // Суммы за весь видимый период. Active - по агрегированным
                 // шагам; Basal - BMR * суммарные дни всех сегментов (для
                 // "Сегодня/Вчера" сумма долей часов = 1 день).
-                val active = Stats.kcalActive(this, walkSum, runSum)
+                val active = Stats.kcalActive(this@TimelineActivity, walkSum, runSum)
                 val periodDays = segs.sumOf { it.days.toDouble() }.toFloat()
-                val basal = (Stats.kcalBasalFullDay(this) * periodDays).toInt()
+                val basal = (Stats.kcalBasalFullDay(this@TimelineActivity) * periodDays).toInt()
                 summary.text = "Всего $total шагов · ходьба $walkSum · бег $runSum\n" +
                         "Калории: $active актив + $basal покой = ${active + basal} всего"
             }
