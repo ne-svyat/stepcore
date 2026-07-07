@@ -62,4 +62,29 @@ object EnergyModel {
     fun runKcal(runKm: Float, movedMassKg: Float): Float =
         if (runKm <= 0f || movedMassKg <= 0f) 0f
         else RUN_KCAL_PER_KG_KM * movedMassKg * runKm
+
+    // ==================== BASAL (V9.9) ====================
+    /**
+     * Базовый обмен (BMR) по Mifflin-St Jeor (1990) - клинический стандарт,
+     * точнее члена покоя LCDA (учитывает возраст и пол, не только массу):
+     *   муж:  10*вес + 6.25*рост - 5*возраст + 5    [ккал/сутки]
+     *   жен:  10*вес + 6.25*рост - 5*возраст - 161
+     * BMR тела считается по СОБСТВЕННОЙ массе (без груза): базовый обмен
+     * не зависит от рюкзака, груз влияет только на Active.
+     */
+    fun bmrPerDay(weightKg: Float, heightCm: Int, age: Int, male: Boolean): Float {
+        if (weightKg <= 0f || heightCm <= 0) return 0f
+        val base = 10f * weightKg + 6.25f * heightCm - 5f * age
+        return (base + if (male) 5f else -161f).coerceAtLeast(0f)
+    }
+
+    /**
+     * Basal-калории за прошедшую долю суток. BMR идёт непрерывно 24/7,
+     * поэтому считается от КАЛЕНДАРНОГО времени (доля суток), а не от
+     * аптайма сервиса - иначе цифра зависела бы от момента включения.
+     */
+    fun basalKcalForElapsed(bmrPerDay: Float, secondsOfDay: Long): Float {
+        if (bmrPerDay <= 0f || secondsOfDay <= 0) return 0f
+        return bmrPerDay * secondsOfDay.coerceAtMost(86_400L) / 86_400f
+    }
 }

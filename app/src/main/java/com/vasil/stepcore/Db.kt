@@ -18,6 +18,12 @@ data class DayRecord(
     @PrimaryKey val date: String,
     val walkSteps: Int = 0,
     val runSteps: Int = 0,
+    // Снапшот энергии/дистанции (V9.9): замораживается при ЗАКРЫТИИ дня
+    // с параметрами того дня, чтобы смена веса не пересчитывала прошлое.
+    // -1 = снапшота нет (день ещё открыт или создан до V9.9).
+    val kcalActive: Int = -1,
+    val kcalBasal: Int = -1,
+    val distanceM: Int = -1,
 )
 
 @Entity(tableName = "events")
@@ -120,8 +126,16 @@ val MIGRATION_1_2 = object : Migration(1, 2) {
     }
 }
 
+val MIGRATION_2_3 = object : Migration(2, 3) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE days ADD COLUMN kcalActive INTEGER NOT NULL DEFAULT -1")
+        db.execSQL("ALTER TABLE days ADD COLUMN kcalBasal INTEGER NOT NULL DEFAULT -1")
+        db.execSQL("ALTER TABLE days ADD COLUMN distanceM INTEGER NOT NULL DEFAULT -1")
+    }
+}
+
 @Database(entities = [DayRecord::class, EventRecord::class, HourRecord::class],
-    version = 2, exportSchema = false)
+    version = 3, exportSchema = false)
 abstract class AppDb : RoomDatabase() {
     abstract fun dao(): StepDao
 
@@ -131,7 +145,7 @@ abstract class AppDb : RoomDatabase() {
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
                     context.applicationContext, AppDb::class.java, "stepcore.db"
-                ).addMigrations(MIGRATION_1_2).build().also { instance = it }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { instance = it }
             }
     }
 }

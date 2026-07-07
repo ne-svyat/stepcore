@@ -569,6 +569,7 @@ class StepService : Service(), SensorEventListener {
         val today = LocalDate.now().toString()
         if (today == currentDay) return
         persistDb()
+        freezeDaySnapshot(currentDay, walkSteps, runSteps)  // V9.9
         logHwComparison("итог дня")
         hwDayAnchor = hwLastTotal
         hwDayPaused = false
@@ -682,6 +683,18 @@ class StepService : Service(), SensorEventListener {
         scope.launch {
             val dao = AppDb.get(this@StepService).dao()
             dao.ensureHour(k); dao.addHour(k, w, r)
+        }
+    }
+
+    /**
+     * V9.9: замораживает энергию/дистанцию закрываемого дня в DayRecord
+     * с текущими параметрами. После этого смена веса не пересчитает день.
+     */
+    private fun freezeDaySnapshot(date: String, w: Int, r: Int) {
+        val (active, basal, distM) = Stats.snapshotForDay(this, w, r)
+        scope.launch {
+            AppDb.get(this@StepService).dao()
+                .upsertDay(DayRecord(date, w, r, active, basal, distM))
         }
     }
 
