@@ -51,6 +51,15 @@
                     android:textSize="46sp" />
 
                 <TextView
+                    android:id="@+id/activeTimeText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text=""
+                    android:textColor="@color/accent_blue"
+                    android:textSize="14sp"
+                    android:layout_marginTop="1dp" />
+
+                <TextView
                     android:id="@+id/goalText"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"

@@ -34,6 +34,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var statsView: TextView
     private lateinit var ring: ProgressRingView
     private lateinit var goalView: TextView
+    private lateinit var activeTimeText: TextView
     private lateinit var todayKmKcal: TextView
     private var yWalk = 0
     private var yRun = 0
@@ -52,6 +53,7 @@ class MainActivity : AppCompatActivity() {
         statsView = findViewById(R.id.statsText)
         ring = findViewById(R.id.progressRing)
         goalView = findViewById(R.id.goalText)
+        activeTimeText = findViewById(R.id.activeTimeText)
         todayKmKcal = findViewById(R.id.todayKmKcal)
         val toggleBtn = findViewById<Button>(R.id.toggleButton)
         val historyBtn = findViewById<Button>(R.id.historyButton)
@@ -230,12 +232,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** Кольцо ходьба/бег + число% + км/ккал внутри круга. */
+    /** Секунды -> "1 ч 52 мин" / "34 мин". */
+    private fun fmtDur(sec: Long): String {
+        val h = sec / 3600; val m = (sec % 3600) / 60
+        return if (h > 0) "$h ч $m мин" else "$m мин"
+    }
+
     private fun refreshRing(steps: Int) {
         val (walk, run) = todayWalkRun()
         ring.setData(walk, run, goal)
         val pct = steps * 100 / goal
-        val lapBadge = if (pct >= 100) "×${(pct / 100 + 1).coerceAtMost(5)} · " else ""
-        goalView.text = "$lapBadge$pct% · цель ${"%,d".format(goal).replace(',', ' ')}"
+        // Бейдж ×N убран: слои теперь показывают точки в кольце (V9.13).
+        goalView.text = "$pct% · цель ${"%,d".format(goal).replace(',', ' ')}"
+        val activeSec = Stats.activeSeconds(this, walk, run)
+        activeTimeText.text = if (activeSec >= 60) "\u23f1 ${fmtDur(activeSec)}" else ""
         val km = Stats.distanceKm(this, walk, run)
         val active = Stats.kcalActive(this, walk, run)
         val total = Stats.kcalGrossToday(this, walk, run)
