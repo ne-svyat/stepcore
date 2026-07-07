@@ -54,10 +54,12 @@ class TimelineActivity : AppCompatActivity() {
         if (total == 0) { detail.text = "${seg.label}: нет активности"; return }
         val km = Stats.distanceKm(this, seg.walk, seg.run)
         val active = Stats.kcalActive(this, seg.walk, seg.run)
-        val basalHour = Stats.kcalBasalFullDay(this) / 24
+        // Basal масштабируется под период столбца (час=1/24 сут, день=1,
+        // неделя=7, месяц=N дней) - seg.days несёт эту долю.
+        val basal = (Stats.kcalBasalFullDay(this) * seg.days).toInt()
         detail.text = ("\u25b8 ${seg.label}:  $total шагов " +
                 "(ходьба ${seg.walk}, бег ${seg.run})\n" +
-                "%.2f км  \u00b7  $active актив + $basalHour покой = ${active + basalHour} ккал").format(km)
+                "%.2f км  \u00b7  $active актив + $basal покой = ${active + basal} ккал").format(km)
     }
 
     private val chips = HashMap<Scale, TextView>()
@@ -105,7 +107,7 @@ class TimelineActivity : AppCompatActivity() {
                         val r = hours[h]
                         val w = r?.walkSteps ?: 0; val rn = r?.runSteps ?: 0
                         walkSum += w; runSum += rn
-                        TimelineView.Seg(w, rn, "%02d".format(h))
+                        TimelineView.Seg(w, rn, "%02d".format(h), 1f / 24f)
                     }
                     labelEvery = 3
                     // Если дневная сумма больше почасовой - детализация
@@ -125,7 +127,7 @@ class TimelineActivity : AppCompatActivity() {
                         val r = days[date.toString()]
                         val w = r?.walkSteps ?: 0; val rn = r?.runSteps ?: 0
                         walkSum += w; runSum += rn
-                        TimelineView.Seg(w, rn, "%d.%d".format(date.dayOfMonth, date.monthValue))
+                        TimelineView.Seg(w, rn, "%d.%d".format(date.dayOfMonth, date.monthValue), 1f)
                     }
                     labelEvery = if (n == 7) 1 else 4
                     hint.text = ""
@@ -144,7 +146,7 @@ class TimelineActivity : AppCompatActivity() {
                         }
                         walkSum += w; runSum += rn
                         val wkStart = start.plusWeeks(wk.toLong())
-                        TimelineView.Seg(w, rn, "%d.%d".format(wkStart.dayOfMonth, wkStart.monthValue))
+                        TimelineView.Seg(w, rn, "%d.%d".format(wkStart.dayOfMonth, wkStart.monthValue), 7f)
                     }
                     labelEvery = 4
                     hint.text = "Каждый столбец — неделя."
@@ -156,12 +158,14 @@ class TimelineActivity : AppCompatActivity() {
                         val byMonth = LinkedHashMap<String, IntArray>()
                         all.sortedBy { it.date }.forEach { d ->
                             val ym = d.date.substring(0, 7) // yyyy-MM
-                            val acc = byMonth.getOrPut(ym) { IntArray(2) }
+                            val acc = byMonth.getOrPut(ym) { IntArray(3) }
                             acc[0] += d.walkSteps; acc[1] += d.runSteps
+                            acc[2] += 1  // число дней с данными в месяце
                         }
                         segs = byMonth.map { (ym, acc) ->
                             walkSum += acc[0]; runSum += acc[1]
-                            TimelineView.Seg(acc[0], acc[1], ym.substring(5) + "." + ym.substring(2, 4))
+                            TimelineView.Seg(acc[0], acc[1],
+                                ym.substring(5) + "." + ym.substring(2, 4), acc[2].toFloat())
                         }
                     }
                     labelEvery = 1
@@ -177,8 +181,18 @@ class TimelineActivity : AppCompatActivity() {
                 else (maxV / 2).toString()
             detail.text = "Нажми на столбец для деталей"
             val total = walkSum + runSum
-            summary.text = if (total == 0) "Нет данных за период"
-                else "Всего $total шагов · ходьба $walkSum · бег $runSum"
+            if (total == 0) {
+                summary.text = "Нет данных за период"
+            } else {
+                // Суммы за весь видимый период. Active - по агрегированным
+                // шагам; Basal - BMR * суммарные дни всех сегментов (для
+                // "Сегодня/Вчера" сумма долей часов = 1 день).
+                val active = Stats.kcalActive(this, walkSum, runSum)
+                val periodDays = segs.sumOf { it.days.toDouble() }.toFloat()
+                val basal = (Stats.kcalBasalFullDay(this) * periodDays).toInt()
+                summary.text = "Всего $total шагов · ходьба $walkSum · бег $runSum\n" +
+                        "Калории: $active актив + $basal покой = ${active + basal} всего"
+            }
         }
     }
 }

@@ -22,7 +22,11 @@ class TimelineView @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null, defStyle: Int = 0
 ) : View(context, attrs, defStyle) {
 
-    data class Seg(val walk: Int, val run: Int, val label: String)
+    /**
+     * Сегмент столбца. days - доля суток, покрытая столбцом, для масштаба
+     * базового обмена (час = 1/24, день = 1, неделя = 7, месяц = N дней).
+     */
+    data class Seg(val walk: Int, val run: Int, val label: String, val days: Float = 1f)
 
     private var segs: List<Seg> = emptyList()
     private var maxTotal = 1
