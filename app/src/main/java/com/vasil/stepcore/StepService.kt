@@ -596,6 +596,23 @@ class StepService : Service(), SensorEventListener {
         }
     }
 
+    /**
+     * Синхронная запись для onDestroy: гарантирует, что почасовой хвост
+     * (pendW/pendR, до 25 шагов) и дневная строка не потеряются от
+     * scope.cancel(). Две вставки Room - миллисекунды, для завершения
+     * сервиса допустимо.
+     */
+    private fun persistDbBlocking() {
+        val k = pendKey; val w = pendW; val r = pendR
+        pendW = 0; pendR = 0
+        val d = currentDay; val dw = walkSteps; val dr = runSteps
+        runBlocking {
+            val dao = AppDb.get(this@StepService).dao()
+            if (k.isNotEmpty() && (w > 0 || r > 0)) { dao.ensureHour(k); dao.addHour(k, w, r) }
+            dao.upsertDay(DayRecord(d, dw, dr))
+        }
+    }
+
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
 
     override fun onDestroy() {
@@ -608,8 +625,7 @@ class StepService : Service(), SensorEventListener {
             .putBoolean(KEY_CLEAN_STOP, true).apply()
         wakeLock?.release(); wakeLock = null
         persistPrefs()
-        persistDb()
-        flushHour()
+        persistDbBlocking()   // V8.12: scope.cancel() ниже убивает launch-записи
         StepsState.serviceRunning.value = false
         scope.cancel()
         super.onDestroy()
