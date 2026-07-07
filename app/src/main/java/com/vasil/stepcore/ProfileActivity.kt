@@ -23,6 +23,7 @@ class ProfileActivity : AppCompatActivity() {
         val heightIn = findViewById<EditText>(R.id.heightInput)
         val ageIn = findViewById<EditText>(R.id.ageInput)
         val goalIn = findViewById<EditText>(R.id.goalInput)
+        val loadIn = findViewById<EditText>(R.id.loadInput)
         val sexM = findViewById<RadioButton>(R.id.sexM)
         val sexF = findViewById<RadioButton>(R.id.sexF)
 
@@ -30,6 +31,8 @@ class ProfileActivity : AppCompatActivity() {
         if (prefs.contains("p_height")) heightIn.setText(prefs.getInt("p_height", 0).toString())
         if (prefs.contains("p_age")) ageIn.setText(prefs.getInt("p_age", 0).toString())
         goalIn.setText(prefs.getInt("p_goal", 10000).toString())
+        val savedLoad = prefs.getFloat("p_load", 0f)
+        if (savedLoad > 0f) loadIn.setText(savedLoad.toString())
         if (prefs.getString("p_sex", "m") == "f") sexF.isChecked = true else sexM.isChecked = true
 
         findViewById<Button>(R.id.saveButton).setOnClickListener {
@@ -37,6 +40,8 @@ class ProfileActivity : AppCompatActivity() {
             val h = heightIn.text.toString().toIntOrNull()
             val a = ageIn.text.toString().toIntOrNull()
             val g = goalIn.text.toString().toIntOrNull()
+            val l = (loadIn.text.toString().replace(',', '.').toFloatOrNull() ?: 0f)
+                .coerceIn(0f, 100f)
             if (w == null || h == null || w !in 20f..400f || h !in 80..250) {
                 Toast.makeText(this, "Проверь вес и рост", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
@@ -47,6 +52,7 @@ class ProfileActivity : AppCompatActivity() {
                 .putInt("p_age", a ?: 0)
                 .putInt("p_goal", (g ?: 10000).coerceIn(1000, 100000))
                 .putString("p_sex", if (sexF.isChecked) "f" else "m")
+                .putFloat("p_load", l)
                 .apply()
             Toast.makeText(this, "Сохранено", Toast.LENGTH_SHORT).show()
         }

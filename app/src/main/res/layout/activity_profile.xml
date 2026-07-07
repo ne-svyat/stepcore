@@ -48,6 +48,14 @@
                 android:textColor="@color/text_main" />
 
             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:text="ГРУЗ, КГ (рюкзак и т.п., 0 = нет)" android:textColor="@color/text_dim"
+                android:fontFamily="sans-serif-condensed" android:textSize="12sp"
+                android:letterSpacing="0.05" android:layout_marginTop="8dp" />
+            <EditText android:id="@+id/loadInput" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:inputType="numberDecimal"
+                android:textColor="@color/text_main" />
+
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
                 android:text="РОСТ, СМ" android:textColor="@color/text_dim"
                 android:fontFamily="sans-serif-condensed" android:textSize="12sp"
                 android:letterSpacing="0.05" android:layout_marginTop="8dp" />
