@@ -224,7 +224,11 @@ class StepService : Service(), SensorEventListener {
             var dropsAtSnap = detector.dropCount
             while (true) {
                 delay(5000)
-                if (!StepsState.detailLog.value) { stepsAtSnap = detector.stepCount; continue }
+                if (!StepsState.detailLog.value || screenOff) {
+                    // V9.1: при экране выкл детектор молчит - строка была бы
+                    // копией протухшего снимка (12 одинаковых строк в логе 07.07)
+                    stepsAtSnap = detector.stepCount; continue
+                }
                 val d = detector
                 val dSteps = d.stepCount - stepsAtSnap
                 val dDrops = d.dropCount - dropsAtSnap
@@ -468,7 +472,7 @@ class StepService : Service(), SensorEventListener {
                         hwAtTransportEnter = hwLastTotal
                         renewalsAtEnter = detector.transportRenewals
                         transportEnterWallMs = now
-                        "Транспорт — шаги остановлены [вход №${detector.transportEntries}, " +
+                        "Транспорт (метка, счёт ведёт чип) [вход №${detector.transportEntries}, " +
                             "инт ${detector.lastTransportMeanMs.toInt()} мс, " +
                             "CV ${"%.2f".format(detector.lastTransportCv)}, " +
                             "чистота ${(detector.cleanliness * 100).toInt()}%]"
