@@ -221,6 +221,10 @@ class StepService : Service(), SensorEventListener {
         screenOff = !pm.isInteractive
 
         StepsState.serviceRunning.value = true
+        scope.launch {   // V9.6: автоочистка диаг-логов старше 14 дней
+            val cutoff = System.currentTimeMillis() - 14L * 24 * 3600 * 1000
+            runCatching { AppDb.get(this@StepService).dao().purgeOldDiagLogs(cutoff) }
+        }
 
         scope.launch {
             while (true) {

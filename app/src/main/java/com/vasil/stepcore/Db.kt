@@ -40,6 +40,9 @@ data class HourRecord(
 /** Проекция: номер часа (0-23) и число событий в нём (V9.4). */
 data class HourCount(val hour: Int, val cnt: Int)
 
+/** Проекция месяца для верхнего уровня Истории (V9.6). */
+data class MonthAgg(val ym: String, val walk: Int, val run: Int, val days: Int)
+
 @Dao
 interface StepDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -53,6 +56,20 @@ interface StepDao {
 
     @Query("SELECT * FROM days ORDER BY date DESC")
     suspend fun allDays(): List<DayRecord>
+
+    /** Месяцы с суммами - верхний уровень Истории (V9.6). "yyyy-MM". */
+    @Query("SELECT substr(date,1,7) AS ym, SUM(walkSteps) AS walk, " +
+           "SUM(runSteps) AS run, COUNT(*) AS days FROM days " +
+           "GROUP BY ym ORDER BY ym DESC")
+    suspend fun months(): List<MonthAgg>
+
+    /** Дни одного месяца (префикс "yyyy-MM"). */
+    @Query("SELECT * FROM days WHERE date LIKE :ym || '%' ORDER BY date DESC")
+    suspend fun daysOfMonth(ym: String): List<DayRecord>
+
+    /** Автоочистка диаг-логов старше cutoffMs (V9.6). Суммы не трогаются. */
+    @Query("DELETE FROM events WHERE text LIKE '[диаг]%' AND timeMs < :cutoffMs")
+    suspend fun purgeOldDiagLogs(cutoffMs: Long): Int
 
     @Insert
     suspend fun addEvent(e: EventRecord)

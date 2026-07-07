@@ -114,20 +114,89 @@ class HistoryActivity : AppCompatActivity() {
     private fun reload() {
         lifecycleScope.launch {
             val dao = AppDb.get(this@HistoryActivity).dao()
-            visibleDays = if (currentFilterDays == Int.MAX_VALUE) dao.allDays()
-            else dao.recentDays(currentFilterDays)
-
-            val summary = findViewById<TextView>(R.id.summaryText)
-            val totalWalk = visibleDays.sumOf { it.walkSteps }
-            val totalRun = visibleDays.sumOf { it.runSteps }
-            summary.text = "Дней: ${visibleDays.size}   " +
-                    "Всего: ${totalWalk + totalRun}   Ходьба: $totalWalk   Бег: $totalRun"
-
             val container = findViewById<LinearLayout>(R.id.daysContainer)
             container.removeAllViews()
-            visibleDays.forEach { day -> container.addView(makeDayRow(day)) }
+            val summary = findViewById<TextView>(R.id.summaryText)
+
+            // 7д/30д - плоский список дней (частый сценарий: недавнее).
+            // Год/Всё - иерархия МЕСЯЦЕВ (V9.6): масштаб на годы вперёд.
+            if (currentFilterDays == Int.MAX_VALUE || currentFilterDays >= 365) {
+                val months = dao.months()
+                visibleDays = dao.allDays()
+                val w = visibleDays.sumOf { it.walkSteps }
+                val r = visibleDays.sumOf { it.runSteps }
+                summary.text = "Месяцев: ${months.size}   " +
+                        "Всего: ${w + r}   Ходьба: $w   Бег: $r"
+                months.forEach { container.addView(makeMonthRow(it)) }
+            } else {
+                visibleDays = dao.recentDays(currentFilterDays)
+                val w = visibleDays.sumOf { it.walkSteps }
+                val r = visibleDays.sumOf { it.runSteps }
+                summary.text = "Дней: ${visibleDays.size}   " +
+                        "Всего: ${w + r}   Ходьба: $w   Бег: $r"
+                visibleDays.forEach { day -> container.addView(makeDayRow(day)) }
+            }
         }
     }
+
+    /**
+     * Верхний уровень МЕСЯЦА (V9.6): карточка с суммой, тап -> ленивая
+     * загрузка дней месяца (переиспользует makeDayRow -> часы -> события).
+     * Через год это ~12 карточек вместо 365 строк.
+     */
+    private fun makeMonthRow(m: MonthAgg): View {
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, 6, 0, 6)
+        }
+        val total = m.walk + m.run
+        val title = monthTitle(m.ym)
+        val header = TextView(this).apply {
+            text = "$title    ${fmtNum(total)} шагов · ${m.days} дн  \u25b8"
+            textSize = 17f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(androidx.core.content.ContextCompat.getColor(
+                this@HistoryActivity, R.color.text_main))
+            setPadding(20, 22, 16, 22)
+            setBackgroundColor(androidx.core.content.ContextCompat.getColor(
+                this@HistoryActivity, R.color.surface))
+        }
+        val daysBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            setPadding(8, 0, 0, 8)
+        }
+        header.setOnClickListener {
+            if (daysBox.visibility == View.GONE) {
+                daysBox.visibility = View.VISIBLE
+                header.text = "$title    ${fmtNum(total)} шагов · ${m.days} дн  \u25be"
+                lifecycleScope.launch {
+                    daysBox.removeAllViews()
+                    val days = AppDb.get(this@HistoryActivity).dao().daysOfMonth(m.ym)
+                    days.forEach { daysBox.addView(makeDayRow(it)) }
+                }
+            } else {
+                daysBox.visibility = View.GONE
+                header.text = "$title    ${fmtNum(total)} шагов · ${m.days} дн  \u25b8"
+            }
+        }
+        col.addView(header)
+        col.addView(daysBox)
+        return col
+    }
+
+    /** "2026-07" -> "Июль 2026". */
+    private fun monthTitle(ym: String): String {
+        val names = arrayOf("Январь","Февраль","Март","Апрель","Май","Июнь",
+            "Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь")
+        return try {
+            val y = ym.substring(0, 4)
+            val mo = ym.substring(5, 7).toInt()
+            "${names[mo - 1]} $y"
+        } catch (e: Exception) { ym }
+    }
+
+    private fun fmtNum(n: Int) = "%,d".format(n).replace(',', ' ')
 
     /**
      * День -> ленивый список ЧАСОВ (V9.4). Раскрытие дня рендерит только
