@@ -74,6 +74,15 @@ class StepService : Service(), SensorEventListener {
     private var divWindowDet = 0
     private var divWindowChipStart = -1L
     private var lastDivLogMs = 0L   // троттлинг: не чаще строки в 10 мин
+
+    // V9.2: взаимная коррекция источников (данные 07.07):
+    // тапы: детектор врёт / чип честен (0) -> чип считает (V9.0);
+    // тряска: чип врёт (считает) / детектор честен (тряска x3 = 0 ложных)
+    //   -> Guard 1: shake-вето детектора отбрасывает дельты чипа;
+    // залипшая метка TRANSPORT при реальной ходьбе (вход N18: чип 21 шаг
+    //   под меткой) -> Guard 2: чип >= 5 шагов под меткой снимает её.
+    private var shakeGuardUntilElapsed = 0L
+    private var transportChipAccum = 0
     // Сверка с чипом (V8.11): якорь чипа на начало дня.
     // Ворота решения V9 "чип считает всегда": N дней автоматических
     // сравнений вместо ручных вечерних записей.
@@ -381,6 +390,21 @@ class StepService : Service(), SensorEventListener {
                 hwBaseline = hwTotal
                 persistHwBase()
                 if (delta <= 0) return
+                if (!screenOff && SystemClock.elapsedRealtime() < shakeGuardUntilElapsed) {
+                    // Guard 1: тряска - дельта чипа отбрасывается навсегда
+                    logEvent("Тряска: отброшено $delta шагов чипа")
+                    return
+                }
+                if (!screenOff && detector.mode == StepDetector.Mode.TRANSPORT) {
+                    // Guard 2: чип идёт под меткой транспорта = человек идёт
+                    transportChipAccum += delta
+                    if (transportChipAccum >= TRANSPORT_DESTICK_STEPS) {
+                        logEvent("Метка транспорта снята: чип насчитал " +
+                                "$transportChipAccum шагов - человек идёт")
+                        detector.resetTransient()
+                        transportChipAccum = 0
+                    }
+                } else transportChipAccum = 0
                 rolloverDayIfNeeded()
                 val asRun = !screenOff && detector.mode == StepDetector.Mode.RUN
                 if (asRun) { runSteps += delta; bumpHour(0, delta) }
@@ -410,6 +434,11 @@ class StepService : Service(), SensorEventListener {
                     event.values[0], event.values[1], event.values[2], timeMs
                 )
                 updateModeWithHysteresis()
+                if (detector.isShakeBlocked(timeMs)) {
+                    // тряска активна: вето на дельты чипа + 4 c на лаг пачек
+                    shakeGuardUntilElapsed =
+                        SystemClock.elapsedRealtime() + SHAKE_CHIP_GRACE_MS
+                }
                 if (added > 0) {
                     trackDivergence(added)
                     if (calibrating != null) {
@@ -697,6 +726,8 @@ class StepService : Service(), SensorEventListener {
         const val DIV_WINDOW_MS = 120_000L  // окно сравнения детектор/чип
         const val DIV_MIN_DET = 20          // минимум шагов детектора для вывода
         const val DIV_LOG_THROTTLE_MS = 600_000L // журнал не чаще 1 строки / 10 мин
+        const val SHAKE_CHIP_GRACE_MS = 4000L   // лаг пачек чипа после тряски
+        const val TRANSPORT_DESTICK_STEPS = 5   // > придержки старта чипа (2-4)
         const val ACTION_CAL_WALK = "cal_walk"
         const val ACTION_CAL_RUN = "cal_run"
         const val ACTION_CAL_STOP = "cal_stop"

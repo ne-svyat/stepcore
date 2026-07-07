@@ -140,6 +140,13 @@ class StepDetector {
     fun restoreCount(saved: Int) { stepCount = saved }
 
     /**
+     * V9.2: read-only доступ к shake-состоянию для сервиса (вето дельт
+     * чипа при тряске). Алгоритм детектора НЕ изменён - только чтение.
+     * timeMs - в таймбазе сенсора (event.timestamp / 1e6), как в onAccel.
+     */
+    fun isShakeBlocked(timeMs: Long) = timeMs < shakeBlockUntilMs
+
+    /**
      * Полный сброс транзитного состояния (режим, карантин, блокировки,
      * окно порога). Вызывается при включении экрана: за время блокировки
      * детектор получал рваный поток и мог залипнуть в TRANSPORT.
