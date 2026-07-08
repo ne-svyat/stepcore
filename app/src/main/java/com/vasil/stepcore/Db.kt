@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
@@ -41,6 +42,29 @@ data class HourRecord(
     @PrimaryKey val dateHour: String,
     val walkSteps: Int = 0,
     val runSteps: Int = 0,
+)
+
+/**
+ * Точка истории профиля (V11): какие параметры действовали НАЧИНАЯ с
+ * timestampMs. Пишется при сохранении Профиля и при каждой калибровке.
+ */
+@Entity(tableName = "profile_history", indices = [Index(value = ["timestampMs"])])
+data class ProfileSnapshotRecord(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val timestampMs: Long,
+    val weightKg: Float,
+    val loadKg: Float,
+    val heightCm: Int,
+    val age: Int,
+    val male: Boolean,
+    val walkMinIntervalMs: Long,
+    val walkMaxIntervalMs: Long,
+    val runMinIntervalMs: Long,
+    val runMaxIntervalMs: Long,
+    val strideA: Float,
+    val strideB: Float,
+    val strideManual: Boolean,
+    val strideByGps: Boolean,
 )
 
 /** Проекция: номер часа (0-23) и число событий в нём (V9.4). */
@@ -117,6 +141,13 @@ interface StepDao {
 
     @Query("DELETE FROM hours")
     suspend fun deleteAllHours()
+
+    // --- история профиля (V11) ---
+    @Insert
+    suspend fun insertProfileSnapshot(p: ProfileSnapshotRecord)
+
+    @Query("SELECT * FROM profile_history WHERE timestampMs <= :atMs ORDER BY timestampMs DESC LIMIT 1")
+    suspend fun profileAt(atMs: Long): ProfileSnapshotRecord?
 }
 
 val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -138,8 +169,32 @@ val MIGRATION_2_3 = object : Migration(2, 3) {
     }
 }
 
-@Database(entities = [DayRecord::class, EventRecord::class, HourRecord::class],
-    version = 3, exportSchema = false)
+val MIGRATION_3_4 = object : Migration(3, 4) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS profile_history (" +
+                "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                "timestampMs INTEGER NOT NULL, " +
+                "weightKg REAL NOT NULL, " +
+                "loadKg REAL NOT NULL, " +
+                "heightCm INTEGER NOT NULL, " +
+                "age INTEGER NOT NULL, " +
+                "male INTEGER NOT NULL, " +
+                "walkMinIntervalMs INTEGER NOT NULL, " +
+                "walkMaxIntervalMs INTEGER NOT NULL, " +
+                "runMinIntervalMs INTEGER NOT NULL, " +
+                "runMaxIntervalMs INTEGER NOT NULL, " +
+                "strideA REAL NOT NULL, " +
+                "strideB REAL NOT NULL, " +
+                "strideManual INTEGER NOT NULL, " +
+                "strideByGps INTEGER NOT NULL)"
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_profile_history_timestampMs ON profile_history(timestampMs)")
+    }
+}
+
+@Database(entities = [DayRecord::class, EventRecord::class, HourRecord::class, ProfileSnapshotRecord::class],
+    version = 4, exportSchema = false)
 abstract class AppDb : RoomDatabase() {
     abstract fun dao(): StepDao
 
@@ -149,7 +204,7 @@ abstract class AppDb : RoomDatabase() {
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
                     context.applicationContext, AppDb::class.java, "stepcore.db"
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { instance = it }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build().also { instance = it }
             }
     }
 }

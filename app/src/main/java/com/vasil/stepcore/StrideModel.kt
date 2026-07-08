@@ -23,7 +23,7 @@ object StrideModel {
 
     enum class Source { ESTIMATE, MANUAL, GPS }
 
-    private const val A_DEFAULT = 0.37f          // популяционный наклон, м/Гц
+    const val A_DEFAULT = 0.37f          // популяционный наклон, м/Гц
     private const val HEIGHT_FACTOR_WALK = 0.414f
     private const val HEIGHT_FACTOR_RUN = 0.65f
 

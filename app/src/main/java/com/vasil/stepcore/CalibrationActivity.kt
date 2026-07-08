@@ -287,6 +287,7 @@ class CalibrationActivity : AppCompatActivity() {
             return
         }
         StrideModel.applyCalibration(this, metres, steps, byGps = true)
+        lifecycleScope.launch { ProfileHistory.record(this@CalibrationActivity) }   // V11
         CalibrationRegistry.markDone(this, CalibrationRegistry.Kind.STRIDE)
         val cm = StrideModel.measuredStrideCm(this) ?: 0
         toastState("Готово (GPS): %.0f м за %d шагов = длина шага %d см".format(metres, steps, cm))

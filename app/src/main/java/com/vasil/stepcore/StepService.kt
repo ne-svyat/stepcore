@@ -359,6 +359,7 @@ class StepService : Service(), SensorEventListener {
             .putLong("${kind}_max_interval", hi)
             .apply()
         loadProfile()
+        scope.launch { ProfileHistory.record(this@StepService) }   // V11
         CalibrationRegistry.markDone(this,
             if (kind == "walk") CalibrationRegistry.Kind.WALK_TEMPO
             else CalibrationRegistry.Kind.RUN_TEMPO)
@@ -394,6 +395,7 @@ class StepService : Service(), SensorEventListener {
             return
         }
         StrideModel.applyCalibration(this, distCalMetres, steps)
+        scope.launch { ProfileHistory.record(this@StepService) }   // V11
         CalibrationRegistry.markDone(this, CalibrationRegistry.Kind.STRIDE)
         val slCm = StrideModel.measuredStrideCm(this) ?: 0
         StepsState.calibrationState.value =

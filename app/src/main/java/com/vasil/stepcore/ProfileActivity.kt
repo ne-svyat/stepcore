@@ -64,6 +64,8 @@ class ProfileActivity : AppCompatActivity() {
                     .putString("p_sex", if (sexF.isChecked) "f" else "m")
                     .putFloat("p_load", l)
                     .apply()
+                // V11: точка истории ПОСЛЕ записи в prefs, иначе снимок старый
+                lifecycleScope.launch { ProfileHistory.record(this@ProfileActivity) }
                 Toast.makeText(this, "Сохранено", Toast.LENGTH_SHORT).show()
                 loadPassport()
             }
