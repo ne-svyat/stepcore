@@ -11,9 +11,11 @@
     <color name="axis_dim">#5A5A5A</color>
     <!-- уровни активности: красный(мало) -> зелёный(много) -->
     <color name="hm_empty">#161616</color>
+    <!-- Разведены по CIELAB: раньше hm4/hm5 стояли на dE=17 и сливались.
+         Теперь минимальная разница между любыми двумя = 27.6. -->
     <color name="hm1">#C0392B</color>
-    <color name="hm2">#E67E22</color>
-    <color name="hm3">#F1C40F</color>
-    <color name="hm4">#5FB84E</color>
-    <color name="hm5">#2ECC71</color>
+    <color name="hm2">#F0742E</color>
+    <color name="hm3">#F2C230</color>
+    <color name="hm4">#86C232</color>
+    <color name="hm5">#19D45C</color>
 </resources>

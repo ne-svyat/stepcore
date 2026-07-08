@@ -24,9 +24,27 @@ class StatsActivity : AppCompatActivity() {
 
     private val density get() = resources.displayMetrics.density
     private fun dp(v: Int) = (v * density).toInt()
-    private val goal by lazy {
-        getSharedPreferences(StepService.PREFS, MODE_PRIVATE).getInt("p_goal", 10000)
-    }
+    // Пороги heatmap - АБСОЛЮТНЫЕ шаги за день (V11.3).
+    //
+    // Раньше цвет считался от дневной цели: смена цели перекрашивала весь год
+    // задним числом. Статистика обязана опираться на измерение, а не на
+    // настройку, иначе прошлое переписывается - тот же класс бага, что чинили
+    // в V11.0-11.2.
+    //
+    // Почему только шаги: км = шаги * длина шага, активное время = шаги *
+    // интервал. Это не независимые величины, а шаги, умноженные на константы
+    // калибровки. Композит из них не добавил бы информации, зато heatmap
+    // перекрашивался бы при каждой перекалибровке.
+    //
+    // Откуда числа. 10 000 - маркетинг японских шагомеров 1960-х, не медицина.
+    // 7 000 - порог, на котором доказательная база фиксирует набранную пользу
+    // для здоровья. ~12 500 - начало категории "высокая активность" в работах
+    // по смертности, дальше кривая выполаживается. Верхние две ступени
+    // подобраны под реальный уровень владельца: обычный день ~20к.
+    private val HM_T1 = 7000    // ниже - красный
+    private val HM_T2 = 12000   // оранжевый: доказанный достаточный уровень
+    private val HM_T3 = 20000   // жёлтый: высокая активность
+    private val HM_T4 = 30000   // зелёный: сильный день; выше - ярко-зелёный
     private val activeMin = 1000        // порог "активного дня" для серии
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -120,10 +138,10 @@ class StatsActivity : AppCompatActivity() {
 
     private fun levelColorRes(total: Int): Int = when {
         total <= 0 -> R.color.hm_empty
-        total < goal * 0.3 -> R.color.hm1
-        total < goal * 0.6 -> R.color.hm2
-        total < goal * 0.9 -> R.color.hm3
-        total <= goal * 1.2 -> R.color.hm4
+        total < HM_T1 -> R.color.hm1
+        total < HM_T2 -> R.color.hm2
+        total < HM_T3 -> R.color.hm3
+        total < HM_T4 -> R.color.hm4
         else -> R.color.hm5
     }
 
@@ -190,15 +208,40 @@ class StatsActivity : AppCompatActivity() {
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { topMargin = dp(10) }
         }
-        row.addView(dimText("меньше").apply {
-            (layoutParams as? LinearLayout.LayoutParams)?.rightMargin = dp(6)
-        })
-        intArrayOf(R.color.hm1, R.color.hm2, R.color.hm3, R.color.hm4, R.color.hm5)
-            .forEach { row.addView(cell(it)) }
-        row.addView(dimText("больше").apply {
-            (layoutParams as? LinearLayout.LayoutParams)?.leftMargin = dp(6)
-        })
-        return row
+        // Границы стоят МЕЖДУ квадратами: там, где реально меняется цвет.
+        val bounds = arrayOf(fmtK(HM_T1), fmtK(HM_T2), fmtK(HM_T3), fmtK(HM_T4))
+        val cells = intArrayOf(R.color.hm1, R.color.hm2, R.color.hm3, R.color.hm4, R.color.hm5)
+        cells.forEachIndexed { i, c ->
+            row.addView(cell(c))
+            if (i < bounds.size) row.addView(boundLabel(bounds[i]))
+        }
+        row.addView(boundLabel("+"))
+
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        box.addView(row)
+        box.addView(dimText("Цвет — по шагам за день. Пороги постоянные, от дневной цели не зависят.")
+            .apply { textSize = 12f })
+        return box
+    }
+
+    /** Число на границе цветов: 7000 -> "7к". */
+    private fun fmtK(n: Int): String =
+        if (n % 1000 == 0) "${n / 1000}к" else "%.1fк".format(n / 1000f)
+
+    private fun boundLabel(t: String): TextView = TextView(this).apply {
+        text = t
+        setTextColor(ContextCompat.getColor(this@StatsActivity, R.color.text_dim))
+        textSize = 11f
+        layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { leftMargin = dp(2); rightMargin = dp(2) }
     }
 
     // ---------- карточки ----------
