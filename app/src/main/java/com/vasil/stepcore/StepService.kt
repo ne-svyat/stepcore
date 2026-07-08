@@ -127,6 +127,7 @@ class StepService : Service(), SensorEventListener {
     private var calibrating: String? = null
     private val calIntervals = ArrayList<Long>()
     private var calLastStepMs = 0L
+    private var calUiTick = 0   // троттлинг живого прогресса, V11.4
     // Калибровка дистанции (V9.3): якорь чипа + метраж отрезка.
     private var distCalActive = false
     private var distCalChipStart = -1L
@@ -341,17 +342,60 @@ class StepService : Service(), SensorEventListener {
         calibrating = kind
         calIntervals.clear()
         calLastStepMs = 0L
-        StepsState.calibrationState.value = if (kind == "walk") "Калибровка: иди обычным шагом" else "Калибровка: беги"
+        calUiTick = 0
+        StepsState.calibrationState.value = if (kind == "walk")
+            "Калибровка ходьбы: иди обычным шагом, ровно"
+        else
+            "Калибровка бега: беги в своём обычном темпе"
+    }
+
+    /**
+     * Живая обратная связь при калибровке темпа, V11.4. Раньше экран молчал
+     * до нажатия "Готово" - в отличие от GPS-калибровки длины шага, которая
+     * пишет прогресс прямо на ходу.
+     *
+     * Показываем медиану и межквартильный разброс - ровно те числа, по которым
+     * потом строится профиль. Пользователь видит то, что получит, а не догадку.
+     * Разброс важнее счётчика: медиана из рваного ритма бесполезна, а по одному
+     * лишь числу шагов этого не понять.
+     *
+     * Сортировка идёт раз в CAL_UI_EVERY шагов, не на каждом: onSensorChanged -
+     * горячий путь, лишней работы на нём быть не должно.
+     */
+    private fun publishCalProgress(kind: String) {
+        val n = calIntervals.size
+        val label = if (kind == "walk") "Ходьба" else "Бег"
+        if (n < MIN_CAL_INTERVALS) {
+            StepsState.calibrationState.value =
+                "$label: ${n + 1} шагов · нужно ещё ${MIN_CAL_INTERVALS - n}"
+            return
+        }
+        val sorted = calIntervals.sorted()
+        val median = sorted[n / 2]
+        val spreadPct =
+            if (median > 0) (100L * (sorted[n * 3 / 4] - sorted[n / 4]) / median).toInt() else 0
+        val rhythm = when {
+            spreadPct <= CAL_SPREAD_GOOD_PCT -> "ритм ровный"
+            spreadPct <= CAL_SPREAD_OK_PCT -> "ритм неровный"
+            else -> "ритм рваный, иди спокойнее"
+        }
+        StepsState.calibrationState.value =
+            "$label: ${n + 1} шагов · темп $median мс · $rhythm · можно завершать"
     }
 
     private fun finishCalibration() {
         val kind = calibrating ?: return
         calibrating = null
-        if (calIntervals.size < 10) {
-            StepsState.calibrationState.value = "Мало данных (${calIntervals.size} шагов), профиль не изменён"
+        if (calIntervals.size < MIN_CAL_INTERVALS) {
+            StepsState.calibrationState.value =
+                "Мало данных (${calIntervals.size + 1} шагов), профиль не изменён"
             return
         }
-        val median = calIntervals.sorted()[calIntervals.size / 2]
+        val sorted = calIntervals.sorted()
+        val n = sorted.size
+        val median = sorted[n / 2]
+        val spreadPct =
+            if (median > 0) (100L * (sorted[n * 3 / 4] - sorted[n / 4]) / median).toInt() else 0
         val lo = (median * 0.65).toLong()
         val hi = (median * 1.35).toLong()
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
@@ -364,7 +408,8 @@ class StepService : Service(), SensorEventListener {
             if (kind == "walk") CalibrationRegistry.Kind.WALK_TEMPO
             else CalibrationRegistry.Kind.RUN_TEMPO)
         StepsState.calibrationState.value =
-            "Готово: твой ${if (kind == "walk") "шаг" else "бег"} = ${median} мс/шаг (диапазон $lo-$hi)"
+            "Готово: твой ${if (kind == "walk") "шаг" else "бег"} = $median мс/шаг " +
+            "по ${n + 1} шагам · разброс $spreadPct% · диапазон $lo-$hi"
     }
 
     /**
@@ -510,9 +555,14 @@ class StepService : Service(), SensorEventListener {
                 }
                 if (added > 0) {
                     trackDivergence(added)
-                    if (calibrating != null) {
+                    val calKind = calibrating
+                    if (calKind != null) {
                         if (calLastStepMs > 0) calIntervals.add(timeMs - calLastStepMs)
                         calLastStepMs = timeMs
+                        calUiTick++
+                        if (calUiTick == 1 || calUiTick % CAL_UI_EVERY == 0) {
+                            publishCalProgress(calKind)
+                        }
                     }
                     // V9: детектор НЕ считает - счёт ведёт чип (ветка
                     // TYPE_STEP_COUNTER). Здесь остаётся обратная связь:
@@ -823,6 +873,17 @@ class StepService : Service(), SensorEventListener {
         const val EXTRA_METRES = "metres"
         const val ACTION_DIAG_START = "diag_start"
         const val ACTION_DIAG_STOP = "diag_stop"
+        // Калибровка темпа. MIN_CAL_INTERVALS оставлен прежним, 10: менять
+        // порог выборки надо по собранным данным, а не по ощущению.
+        private const val MIN_CAL_INTERVALS = 10
+        // Живой прогресс печатаем не на каждый шаг: onSensorChanged горячий,
+        // sorted на нём - лишняя работа. Раз в 4 шага глазу достаточно.
+        private const val CAL_UI_EVERY = 4
+        // Межквартильный разброс к медиане, проценты. Ориентир от детектора:
+        // он считает ритм стабильным при отклонении интервалов до 25% от
+        // среднего. IQR теснее размаха, поэтому пороги ниже.
+        private const val CAL_SPREAD_GOOD_PCT = 12
+        private const val CAL_SPREAD_OK_PCT = 25
         private const val IDLE_LOG_DELAY_MS = 4000L
         private const val HEARTBEAT_MS = 30_000L
     }
