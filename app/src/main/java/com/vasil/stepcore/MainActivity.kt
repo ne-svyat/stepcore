@@ -48,6 +48,10 @@ class MainActivity : AppCompatActivity() {
     private var yWalk = 0
     private var yRun = 0
     private var yesterdayTotal = -1
+    // Полная запись вчера: нужна для СНАПШОТА калорий/дистанции (V9.9).
+    // Вчерашний день закрыт -> его цифры заморожены и не должны
+    // пересчитываться по текущему профилю при смене веса (V9.18).
+    private var yRec: DayRecord? = null
 
     private var goal = 10000
 
@@ -125,7 +129,11 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             val y = java.time.LocalDate.now().minusDays(1).toString()
             val d = AppDb.get(this@MainActivity).dao().day(y)
-            if (d != null) { yWalk = d.walkSteps; yRun = d.runSteps; yesterdayTotal = d.walkSteps + d.runSteps }
+            if (d != null) {
+                yRec = d
+                yWalk = d.walkSteps; yRun = d.runSteps
+                yesterdayTotal = d.walkSteps + d.runSteps
+            }
             updateStats()
         }
 
@@ -281,23 +289,25 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** Диалог-объяснение Active/Basal/Total (V9.10). */
+    /** Диалог-объяснение Active/Basal/Total. */
     private fun showCalorieInfo(active: Int, total: Int) {
         val basal = total - active
-        val msg = """
-            StepCore считает калории честно и разделяет их на две части:
-
-            \u2022 АКТИВНЫЕ ($active ккал) — сожжено именно на движение, сверх покоя. Модель LCDA/Margaria учитывает скорость, каденс, вес и груз.
-
-            \u2022 БАЗОВЫЙ ОБМЕН ($basal ккал) — сколько тело тратит просто на жизнь (дыхание, сердце) за прошедшую часть суток. Формула Mifflin\u2013St Jeor по весу, росту, возрасту, полу.
-
-            \u2022 ВСЕГО ($total ккал) = активные + базовый обмен.
-
-            Почему цифры отличаются от других приложений:
-            — Xiaomi/Samsung показывают активные + покой только за время ходьбы.
-            — Google Fit показывает ВСЕГО за сутки (близко к нашему «всего»).
-
-            Для контроля дефицита ориентируйся на «всего»: это полный расход. Съедая меньше — теряешь вес.
-        """.trimIndent()
+        // ВАЖНО: обычные строки, не raw (тройные кавычки) - в raw-строках
+        // Kotlin не обрабатывает escape-последовательности, и \u-коды
+        // печатались бы буквально (баг до V9.18). Символы вставлены
+        // напрямую в UTF-8.
+        val msg = "StepCore считает калории честно и разделяет их на две части:\n\n" +
+            "• АКТИВНЫЕ ($active ккал) — сожжено именно на движение, сверх покоя. " +
+            "Модель LCDA/Margaria учитывает скорость, каденс, вес и груз.\n\n" +
+            "• ПОКОЙ ($basal ккал) — базовый расход организма: сердце, дыхание, тепло. " +
+            "Тратится всегда, даже в полном покое. Формула Mifflin–St Jeor " +
+            "по весу, росту, возрасту, полу.\n\n" +
+            "• ВСЕГО ($total ккал) = активные + покой.\n\n" +
+            "Почему цифры отличаются от других приложений:\n" +
+            "— Xiaomi/Samsung показывают активные + покой только за время ходьбы.\n" +
+            "— Google Fit показывает ВСЕГО за сутки (близко к нашему «всего»).\n\n" +
+            "Для контроля дефицита ориентируйся на «всего»: это полный расход. " +
+            "Съедая меньше — теряешь вес."
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("Как считаются калории")
             .setMessage(msg)
@@ -313,24 +323,38 @@ class MainActivity : AppCompatActivity() {
         else 0 to 0
     }
 
-    /** Нижняя карточка: вчерашний день — шаги · км · ккал + разница. */
+    /**
+     * Нижняя карточка: вчерашний день. Калории и дистанция читаются из
+     * СНАПШОТА закрытого дня (заморожены с параметрами того дня), а не
+     * пересчитываются по текущему профилю - иначе смена веса переписала
+     * бы вчерашнюю статистику (V9.18).
+     */
     private fun updateStats() {
         val (walk, run) = todayWalkRun()
-        val sb = StringBuilder()
-        if (yesterdayTotal >= 0) {
-            val yKm = Stats.distanceKm(this, yWalk, yRun)
-            val yKcal = Stats.kcal(this, yWalk, yRun)
-            sb.append("ВЧЕРА · $yesterdayTotal шагов")
-            if (yKm > 0) sb.append("\n%.2f км · %d ккал".format(yKm, yKcal))
-            val diff = (walk + run) - yesterdayTotal
-            sb.append("\n")
-            sb.append(if (diff >= 0) "сегодня уже +$diff к вчера"
-                      else "до вчера ещё ${-diff} шагов")
-        } else {
-            sb.append("Вчера нет данных")
+        val rec = yRec
+        if (yesterdayTotal < 0 || rec == null) {
+            statsView.text = "Вчера нет данных"
+            statsView.setOnClickListener(null)
+            return
         }
+        val (yActive, yBasal) = Stats.kcalOfDay(this, rec)
+        val yKm = Stats.distanceOfDayKm(this, rec)
+        val ySec = Stats.activeSeconds(this, yWalk, yRun)
+        val sb = StringBuilder()
+        sb.append("ВЧЕРА · ${fmtNumM(yesterdayTotal)} шагов")
+        sb.append("\n")
+        sb.append("%.2f км · ⏱ ${fmtDur(ySec)}".format(yKm))
+        sb.append("\n")
+        sb.append("Активные $yActive · Покой $yBasal · Всего ${yActive + yBasal} ккал")
+        val diff = (walk + run) - yesterdayTotal
+        sb.append("\n")
+        sb.append(if (diff >= 0) "сегодня уже +${fmtNumM(diff)} к вчера"
+                  else "до вчера ещё ${fmtNumM(-diff)} шагов")
         statsView.text = sb.toString()
+        statsView.setOnClickListener { showCalorieInfo(yActive, yActive + yBasal) }
     }
+
+    private fun fmtNumM(n: Int) = "%,d".format(n).replace(',', ' ')
 
     override fun onResume() {
         super.onResume()
