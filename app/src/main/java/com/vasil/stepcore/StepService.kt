@@ -225,6 +225,26 @@ class StepService : Service(), SensorEventListener {
             val cutoff = System.currentTimeMillis() - 14L * 24 * 3600 * 1000
             runCatching { AppDb.get(this@StepService).dao().purgeOldDiagLogs(cutoff) }
         }
+        scope.launch {
+            // V9.19: одноразовый бэкфилл снапшотов для закрытых дней,
+            // созданных до V9.9. Без снапшота их калории/дистанция
+            // пересчитывались по текущему профилю - смена веса или
+            // калибровки переписывала прошлое. Замораживаем как есть
+            // сейчас; дальше эти дни неизменны. Идемпотентно: после
+            // записи kcalActive >= 0, повторно не подхватятся.
+            runCatching {
+                val dao = AppDb.get(this@StepService).dao()
+                val today = LocalDate.now().toString()
+                val pending = dao.daysWithoutSnapshot(today)
+                pending.forEach { d ->
+                    val (a2, b2, dist) = Stats.snapshotForDay(
+                        this@StepService, d.walkSteps, d.runSteps)
+                    dao.upsertDay(d.copy(kcalActive = a2, kcalBasal = b2, distanceM = dist))
+                }
+                if (pending.isNotEmpty())
+                    logEvent("Заморожена статистика прошлых дней: ${pending.size}")
+            }
+        }
 
         scope.launch {
             while (true) {

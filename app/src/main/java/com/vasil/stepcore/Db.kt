@@ -73,6 +73,10 @@ interface StepDao {
     @Query("SELECT * FROM days WHERE date LIKE :ym || '%' ORDER BY date DESC")
     suspend fun daysOfMonth(ym: String): List<DayRecord>
 
+    /** Закрытые дни без снапшота энергии - для одноразового бэкфилла (V9.19). */
+    @Query("SELECT * FROM days WHERE kcalActive < 0 AND date < :today")
+    suspend fun daysWithoutSnapshot(today: String): List<DayRecord>
+
     /** Автоочистка диаг-логов старше cutoffMs (V9.6). Суммы не трогаются. */
     @Query("DELETE FROM events WHERE text LIKE '[диаг]%' AND timeMs < :cutoffMs")
     suspend fun purgeOldDiagLogs(cutoffMs: Long): Int

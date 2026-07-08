@@ -33,7 +33,11 @@ class TimelineView @JvmOverloads constructor(
      * Покой (BMR) считается по activeDays, а не по календарным слотам -
      * чтобы не начислять базовый расход за пустые/будущие дни (V9.17).
      */
-    data class Seg(val walk: Int, val run: Int, val label: String, val activeDays: Float = 1f)
+    data class Seg(
+        val walk: Int, val run: Int, val label: String,
+        val activeDays: Float = 1f,
+        val kcalA: Int = -1, val kcalB: Int = -1, val distM: Int = -1,
+    )
 
     private var segs: List<Seg> = emptyList()
     private var maxTotal = 1
