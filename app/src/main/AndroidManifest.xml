@@ -54,5 +54,10 @@
             android:screenOrientation="portrait"
             android:exported="false" />
 
+        <activity
+            android:name=".CalibrationActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
     </application>
 </manifest>

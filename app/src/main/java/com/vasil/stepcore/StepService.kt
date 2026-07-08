@@ -359,6 +359,9 @@ class StepService : Service(), SensorEventListener {
             .putLong("${kind}_max_interval", hi)
             .apply()
         loadProfile()
+        CalibrationRegistry.markDone(this,
+            if (kind == "walk") CalibrationRegistry.Kind.WALK_TEMPO
+            else CalibrationRegistry.Kind.RUN_TEMPO)
         StepsState.calibrationState.value =
             "Готово: твой ${if (kind == "walk") "шаг" else "бег"} = ${median} мс/шаг (диапазон $lo-$hi)"
     }
@@ -391,6 +394,7 @@ class StepService : Service(), SensorEventListener {
             return
         }
         StrideModel.applyCalibration(this, distCalMetres, steps)
+        CalibrationRegistry.markDone(this, CalibrationRegistry.Kind.STRIDE)
         val slCm = StrideModel.measuredStrideCm(this) ?: 0
         StepsState.calibrationState.value =
             "Готово: ${distCalMetres.toInt()} м за $steps шагов = длина шага $slCm см"

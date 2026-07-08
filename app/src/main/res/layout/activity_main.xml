@@ -99,6 +99,17 @@
                 android:textSize="12sp" android:layout_marginStart="4dp" />
         </LinearLayout>
 
+        <TextView
+            android:id="@+id/accuracyBadge"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:text=""
+            android:textColor="@color/text_dim"
+            android:textSize="12sp"
+            android:padding="6dp"
+            android:layout_marginTop="4dp" />
+
         <LinearLayout
             android:id="@+id/statsCard"
             android:layout_width="match_parent"
@@ -158,9 +169,20 @@
                 android:layout_width="0dp" android:layout_weight="1"
                 android:layout_height="wrap_content" android:text="Timeline"
                 android:textColor="@color/text_main" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
             <Button android:id="@+id/profileButton" style="?android:attr/buttonBarButtonStyle"
                 android:layout_width="0dp" android:layout_weight="1"
                 android:layout_height="wrap_content" android:text="Профиль"
+                android:textColor="@color/text_main" />
+            <Button android:id="@+id/calibrationButton" style="?android:attr/buttonBarButtonStyle"
+                android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content" android:text="Калибровка"
                 android:textColor="@color/text_main" />
         </LinearLayout>
 
@@ -192,51 +214,13 @@
             android:orientation="vertical"
             android:visibility="gone">
 
-            <Button
-                android:id="@+id/calWalkButton"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Калибровка: шаг" />
-
-            <Button
-                android:id="@+id/calRunButton"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Калибровка: бег"
-                android:layout_marginTop="8dp" />
-
-            <EditText
-                android:id="@+id/distMetresInput"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:inputType="numberDecimal"
-                android:hint="Длина отрезка, м (напр. 500)"
-                android:textColorHint="@color/text_dim"
-                android:textColor="@color/text_main"
-                android:layout_marginTop="16dp" />
-
-            <Button
-                android:id="@+id/calDistButton"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Калибровка дистанции (по метражу)"
-                android:layout_marginTop="4dp" />
-
-            <Button
-                android:id="@+id/calGpsButton"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Калибровка по GPS"
-                android:layout_marginTop="4dp" />
-
             <TextView
-                android:id="@+id/calText"
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text=""
+                android:text="Калибровки перенесены на отдельный экран — кнопка «Калибровка» выше."
                 android:textColor="@color/text_dim"
-                android:textSize="13sp"
-                android:layout_marginTop="8dp" />
+                android:textSize="12sp"
+                android:layout_marginBottom="10dp" />
 
             <androidx.appcompat.widget.SwitchCompat
                 android:id="@+id/detailLogSwitch"

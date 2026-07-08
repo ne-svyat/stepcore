@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="20dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="КАЛИБРОВКА"
+            android:textColor="@color/text_main"
+            android:fontFamily="sans-serif-black"
+            android:textSize="24sp"
+            android:letterSpacing="0.05" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:background="@drawable/card_period"
+            android:layout_marginTop="16dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingStart="16dp"
+                android:paddingEnd="14dp"
+                android:paddingTop="14dp"
+                android:paddingBottom="14dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="ТОЧНОСТЬ ДАННЫХ"
+                    android:textColor="@color/text_dim"
+                    android:fontFamily="sans-serif-condensed"
+                    android:textSize="12sp"
+                    android:letterSpacing="0.05" />
+
+                <TextView
+                    android:id="@+id/accuracyValue"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="—"
+                    android:textColor="@color/text_main"
+                    android:fontFamily="sans-serif-black"
+                    android:textSize="34sp" />
+
+                <TextView
+                    android:id="@+id/accuracyHint"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text=""
+                    android:textColor="@color/text_dim"
+                    android:textSize="13sp"
+                    android:lineSpacingExtra="2dp"
+                    android:layout_marginTop="4dp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/calStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text=""
+            android:textColor="@color/accent_red_bright"
+            android:textSize="14sp"
+            android:lineSpacingExtra="2dp"
+            android:visibility="gone"
+            android:layout_marginTop="14dp" />
+
+        <Button
+            android:id="@+id/finishButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Готово"
+            android:visibility="gone"
+            android:layout_marginTop="8dp" />
+
+        <LinearLayout
+            android:id="@+id/calContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:layout_marginTop="18dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Калибровка постепенно устаревает: меняется обувь, вес, техника ходьбы. Раз в месяц имеет смысл перепройти — точность вернётся к 100%."
+            android:textColor="@color/text_dim"
+            android:textSize="13sp"
+            android:lineSpacingExtra="2dp"
+            android:layout_marginTop="20dp" />
+
+    </LinearLayout>
+</ScrollView>

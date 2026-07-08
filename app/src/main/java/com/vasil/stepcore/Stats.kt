@@ -64,9 +64,13 @@ object Stats {
         if (rec.distanceM >= 0) rec.distanceM / 1000f
         else distanceKm(c, rec.walkSteps, rec.runSteps)
 
+    /**
+     * Время активности, сек. Интервал бега берётся из КАЛИБРОВКИ, а не
+     * из хардкода 0.34 c (до V10 калибровка бега на время не влияла).
+     */
     fun activeSeconds(c: Context, walkSteps: Int, runSteps: Int): Long {
         val walkIv = 1f / StrideModel.avgWalkCadenceHz(c)
-        val runIv = 0.34f
+        val runIv = CalibrationRegistry.runIntervalSec(c)
         return (walkSteps * walkIv + runSteps * runIv).toLong()
     }
 

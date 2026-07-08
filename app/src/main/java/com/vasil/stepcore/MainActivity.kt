@@ -29,21 +29,11 @@ class MainActivity : AppCompatActivity() {
             if (result.values.all { it }) startTracking()
         }
 
-    private var calibrating = false
-    private var distCalibrating = false
-    private var gpsCalibrating = false
-    private var gpsCalibrator: LocationCalibrator? = null
-    private var gpsStepsAtStart = 0
-    private lateinit var calGpsBtn: Button
-    private val gpsPermLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            if (granted) startGpsCalibration()
-            else StepsState.calibrationState.value = "Без доступа к GPS калибровка невозможна"
-        }
     private lateinit var statsView: TextView
     private lateinit var ring: ProgressRingView
     private lateinit var goalView: TextView
     private lateinit var activeTimeText: TextView
+    private lateinit var accuracyBadge: TextView
     private lateinit var todayKmKcal: TextView
     private var yWalk = 0
     private var yRun = 0
@@ -62,18 +52,20 @@ class MainActivity : AppCompatActivity() {
         val stepsView = findViewById<TextView>(R.id.stepsText)
         val statusView = findViewById<TextView>(R.id.statusText)
         val modeView = findViewById<TextView>(R.id.modeText)
-        val calView = findViewById<TextView>(R.id.calText)
         statsView = findViewById(R.id.statsText)
         ring = findViewById(R.id.progressRing)
         goalView = findViewById(R.id.goalText)
         activeTimeText = findViewById(R.id.activeTimeText)
+        accuracyBadge = findViewById(R.id.accuracyBadge)
+        accuracyBadge.setOnClickListener {
+            startActivity(Intent(this, CalibrationActivity::class.java))
+        }
+        findViewById<Button>(R.id.calibrationButton).setOnClickListener {
+            startActivity(Intent(this, CalibrationActivity::class.java))
+        }
         todayKmKcal = findViewById(R.id.todayKmKcal)
         val toggleBtn = findViewById<Button>(R.id.toggleButton)
         val historyBtn = findViewById<Button>(R.id.historyButton)
-        val calWalkBtn = findViewById<Button>(R.id.calWalkButton)
-        val calRunBtn = findViewById<Button>(R.id.calRunButton)
-        val calDistBtn = findViewById<Button>(R.id.calDistButton)
-        val distInput = findViewById<android.widget.EditText>(R.id.distMetresInput)
         val hapticSwitch = findViewById<SwitchCompat>(R.id.hapticSwitch)
         val detailLogSwitch = findViewById<SwitchCompat>(R.id.detailLogSwitch)
         val toolsToggle = findViewById<TextView>(R.id.toolsToggle)
@@ -158,40 +150,6 @@ class MainActivity : AppCompatActivity() {
                     else StepService.ACTION_DIAG_STOP))
         }
 
-        calWalkBtn.setOnClickListener { toggleCalibration("walk", calWalkBtn, calRunBtn) }
-        calRunBtn.setOnClickListener { toggleCalibration("run", calRunBtn, calWalkBtn) }
-
-        calDistBtn.setOnClickListener {
-            if (!StepsState.serviceRunning.value) {
-                StepsState.calibrationState.value = "Сначала нажми Старт"; return@setOnClickListener
-            }
-            if (!distCalibrating) {
-                val m = distInput.text.toString().replace(',', '.').toFloatOrNull()
-                if (m == null || m < 50f) {
-                    StepsState.calibrationState.value = "Введи длину отрезка (минимум 50 м)"
-                    return@setOnClickListener
-                }
-                distCalibrating = true
-                calDistBtn.text = "Готово (дистанция)"
-                startForegroundService(Intent(this, StepService::class.java)
-                    .setAction(StepService.ACTION_CAL_DIST_START)
-                    .putExtra(StepService.EXTRA_METRES, m))
-            } else {
-                distCalibrating = false
-                calDistBtn.text = "Калибровка дистанции"
-                startForegroundService(Intent(this, StepService::class.java)
-                    .setAction(StepService.ACTION_CAL_DIST_STOP))
-            }
-        }
-
-        calGpsBtn = findViewById(R.id.calGpsButton)
-        calGpsBtn.setOnClickListener {
-            if (!StepsState.serviceRunning.value) {
-                StepsState.calibrationState.value = "Сначала нажми Старт"; return@setOnClickListener
-            }
-            if (!gpsCalibrating) confirmAndStartGps() else finishGpsCalibration()
-        }
-
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch {
@@ -210,7 +168,6 @@ class MainActivity : AppCompatActivity() {
                 launch {
                     StepsState.mode.collect { m -> applyModeBadge(modeView, m) }
                 }
-                launch { StepsState.calibrationState.collect { calView.text = it } }
                 launch { StepsState.diag.collect { findViewById<TextView>(R.id.diagText).text = it } }
             }
         }
@@ -237,25 +194,6 @@ class MainActivity : AppCompatActivity() {
         view.setTextColor(ContextCompat.getColor(this, colorRes))
     }
 
-    private fun toggleCalibration(kind: String, self: Button, other: Button) {
-        if (!StepsState.serviceRunning.value) {
-            StepsState.calibrationState.value = "Сначала нажми Старт"
-            return
-        }
-        val action = if (!calibrating) {
-            calibrating = true
-            self.text = if (kind == "walk") "Готово (шаг)" else "Готово (бег)"
-            other.isEnabled = false
-            if (kind == "walk") StepService.ACTION_CAL_WALK else StepService.ACTION_CAL_RUN
-        } else {
-            calibrating = false
-            self.text = if (kind == "walk") "Калибровка: шаг" else "Калибровка: бег"
-            other.isEnabled = true
-            StepService.ACTION_CAL_STOP
-        }
-        startForegroundService(Intent(this, StepService::class.java).setAction(action))
-    }
-
     /** Кольцо ходьба/бег + число% + км/ккал внутри круга. */
     /** Секунды -> "1 ч 52 мин" / "34 мин". */
     private fun fmtDur(sec: Long): String {
@@ -265,6 +203,12 @@ class MainActivity : AppCompatActivity() {
             m > 0 -> "$m мин"
             else -> "$sec сек"
         }
+    }
+
+    /** Бейдж точности данных -> ведёт на экран Калибровки (V10). */
+    private fun refreshAccuracyBadge() {
+        val pct = CalibrationRegistry.overallPercent(this)
+        accuracyBadge.text = "Точность данных $pct% · настроить"
     }
 
     private fun refreshRing(steps: Int) {
@@ -359,74 +303,9 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         goal = getSharedPreferences(StepService.PREFS, MODE_PRIVATE).getInt("p_goal", 10000)
+        if (::accuracyBadge.isInitialized) refreshAccuracyBadge()
         if (::ring.isInitialized) refreshRing(StepsState.steps.value)
         if (::statsView.isInitialized) updateStats()
-    }
-
-    /** Предупреждение о приватности + подсказка где мерить, затем permission. */
-    private fun confirmAndStartGps() {
-        androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Калибровка по GPS")
-            .setMessage(
-                "Включит GPS-приёмник на время замера. Координаты нужны только " +
-                "для подсчёта метров — никуда не отправляются и не сохраняются, " +
-                "StepCore остаётся офлайн.\n\n" +
-                "Где мерить для точности:\n" +
-                "• открытое небо (не между домами, не в лесу)\n" +
-                "• прямой участок, обычный шаг\n" +
-                "• идеально 300–500 м\n\n" +
-                "GPS в помещении и у высоких зданий врёт."
-            )
-            .setPositiveButton("Начать") { _, _ ->
-                gpsPermLauncher.launch(android.Manifest.permission.ACCESS_FINE_LOCATION)
-            }
-            .setNegativeButton("Отмена", null)
-            .show()
-    }
-
-    private fun startGpsCalibration() {
-        val cal = LocationCalibrator(this)
-        if (!cal.isGpsEnabled()) {
-            StepsState.calibrationState.value = "Включи GPS в настройках телефона"
-            return
-        }
-        gpsCalibrator = cal
-        gpsCalibrating = true
-        gpsStepsAtStart = StepsState.steps.value
-        calGpsBtn.text = "Готово (GPS)"
-        cal.onUpdate = { metres, fixes, acc ->
-            runOnUiThread {
-                val accTxt = if (acc >= 0) "±${acc.toInt()}м" else "—"
-                StepsState.calibrationState.value =
-                    "GPS: %.0f м, точек %d, сигнал %s".format(metres, fixes, accTxt)
-            }
-        }
-        cal.start()
-        StepsState.calibrationState.value = "GPS: иди по прямой… (ждём сигнал)"
-    }
-
-    private fun finishGpsCalibration() {
-        val cal = gpsCalibrator ?: return
-        gpsCalibrating = false
-        calGpsBtn.text = "Калибровка по GPS"
-        val metres = cal.stop()
-        gpsCalibrator = null
-        val steps = StepsState.steps.value - gpsStepsAtStart
-        if (metres < 100f || steps < 30) {
-            StepsState.calibrationState.value =
-                "Мало данных (%.0f м, %d шагов). Нужно ≥100 м на открытом небе.".format(metres, steps)
-            return
-        }
-        StrideModel.applyCalibration(this, metres, steps, byGps = true)
-        val slCm = StrideModel.measuredStrideCm(this) ?: 0
-        StepsState.calibrationState.value =
-            "Готово (GPS): %.0f м за %d шагов = длина шага %d см".format(metres, steps, slCm)
-        refreshRing(StepsState.steps.value)
-    }
-
-    override fun onPause() {
-        super.onPause()
-        if (gpsCalibrating) { gpsCalibrator?.stop(); gpsCalibrating = false; gpsCalibrator = null }
     }
 
     private fun startTracking() {
