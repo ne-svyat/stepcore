@@ -74,11 +74,19 @@ class TimelineActivity : AppCompatActivity() {
      * СНАПШОТА (заморожен, смена веса/калибровки его не тронет).
      * Сегодняшний -> на лету, покой за прошедшую долю суток.
      */
-    private fun dayEnergy(rec: DayRecord, isToday: Boolean): Triple<Int, Int, Int> {
+    /**
+     * Энергия и дистанция дня. Закрытый день - из СНАПШОТА, он заморожен.
+     * Сегодняшний (открытый) - почасовая сумма с профилем каждого часа
+     * (V11.2): груз, снятый вечером, не переписывает утро.
+     */
+    private suspend fun dayEnergy(rec: DayRecord, isToday: Boolean): Triple<Int, Int, Int> {
+        if (isToday) {
+            val (active, distM) = Stats.segmentedActiveAndDistance(this, rec.date)
+            return Triple(active, Stats.kcalBasalToday(this), distM.toInt())
+        }
         val (a, bFull) = Stats.kcalOfDay(this, rec)
-        val b = if (isToday) Stats.kcalBasalToday(this) else bFull
         val dm = (Stats.distanceOfDayKm(this, rec) * 1000).toInt()
-        return Triple(a, b, dm)
+        return Triple(a, bFull, dm)
     }
 
     private fun scaleTitle(s: Scale) = when (s) {
@@ -102,7 +110,8 @@ class TimelineActivity : AppCompatActivity() {
                 "за сегодня — по прошедшей части суток, за прошлые дни с данными — целиком. " +
                 "За будущие и пустые дни покой не считается.\n\n" +
                 "Калории и дистанция закрытых дней заморожены: смена веса или новая " +
-                "калибровка не меняют прошлое."
+                "калибровка не меняют прошлое. За сегодня каждый час считается " +
+                "с тем профилем, который действовал именно в тот час."
             )
             .setPositiveButton("Понятно", null)
             .show()
@@ -173,7 +182,13 @@ class TimelineActivity : AppCompatActivity() {
                         val w = r?.walkSteps ?: 0; val rn = r?.runSteps ?: 0
                         walkSum += w; runSum += rn
                         val act = if (w + rn > 0) 1f / 24f else 0f
-                        TimelineView.Seg(w, rn, "%02d".format(h), act)
+                        // Профиль СВОЕГО часа, не текущий - Stats.energyForHour (V11.2)
+                        if (r != null && w + rn > 0) {
+                            val (ha, hd) = Stats.energyForHour(this@TimelineActivity, r)
+                            TimelineView.Seg(w, rn, "%02d".format(h), act, ha, -1, hd.toInt())
+                        } else {
+                            TimelineView.Seg(w, rn, "%02d".format(h), act)
+                        }
                     }
                     basalDays = if (current == Scale.TODAY) todayFraction else 1f
                     labelEvery = 3

@@ -127,4 +127,20 @@ object Stats {
     /** То же, но сама грузит часы дня из БД. */
     suspend fun segmentedActiveAndDistance(c: Context, date: String): Pair<Int, Float> =
         segmentedActiveAndDistance(c, AppDb.get(c).dao().hoursOfDay(date))
+
+    /**
+     * Снапшот дня при закрытии (V11.2): сумма по часам, каждый час со своим
+     * профилем. Заменяет snapshotForDay, который брал профиль на момент
+     * полуночи и применял его ко всем шагам суток - день замерзал криво.
+     *
+     * Почасовых данных нет (день старее V9.4) - откат к whole-day способу.
+     */
+    suspend fun snapshotForDaySegmented(
+        c: Context, date: String, walkSteps: Int, runSteps: Int
+    ): Triple<Int, Int, Int> {
+        val hours = AppDb.get(c).dao().hoursOfDay(date)
+        if (hours.isEmpty()) return snapshotForDay(c, walkSteps, runSteps)
+        val (active, distM) = segmentedActiveAndDistance(c, hours)
+        return Triple(active, kcalBasalFullDay(c), distM.toInt())
+    }
 }

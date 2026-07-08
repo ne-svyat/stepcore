@@ -237,8 +237,8 @@ class StepService : Service(), SensorEventListener {
                 val today = LocalDate.now().toString()
                 val pending = dao.daysWithoutSnapshot(today)
                 pending.forEach { d ->
-                    val (a2, b2, dist) = Stats.snapshotForDay(
-                        this@StepService, d.walkSteps, d.runSteps)
+                    val (a2, b2, dist) = Stats.snapshotForDaySegmented(
+                        this@StepService, d.date, d.walkSteps, d.runSteps)
                     dao.upsertDay(d.copy(kcalActive = a2, kcalBasal = b2, distanceM = dist))
                 }
                 if (pending.isNotEmpty())
@@ -713,12 +713,17 @@ class StepService : Service(), SensorEventListener {
     }
 
     /**
-     * V9.9: замораживает энергию/дистанцию закрываемого дня в DayRecord
-     * с текущими параметрами. После этого смена веса не пересчитает день.
+     * Замораживает энергию/дистанцию закрываемого дня в DayRecord. После
+     * этого смена веса не пересчитает день (V9.9).
+     *
+     * V11.2: считает ПОЧАСОВО, каждый час со своим профилем из истории.
+     * Раньше брался профиль на момент полуночи и применялся ко всем шагам
+     * суток - день замерзал с неверной цифрой навсегда.
      */
     private fun freezeDaySnapshot(date: String, w: Int, r: Int) {
-        val (active, basal, distM) = Stats.snapshotForDay(this, w, r)
         scope.launch {
+            val (active, basal, distM) =
+                Stats.snapshotForDaySegmented(this@StepService, date, w, r)
             AppDb.get(this@StepService).dao()
                 .upsertDay(DayRecord(date, w, r, active, basal, distM))
         }
