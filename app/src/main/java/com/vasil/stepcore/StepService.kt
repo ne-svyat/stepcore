@@ -129,6 +129,7 @@ class StepService : Service(), SensorEventListener {
     private var calLastStepMs = 0L
     private var calUiTick = 0   // троттлинг живого прогресса, V11.4
     private var calRejected = 0 // отброшено мусорных интервалов, V11.5
+    private var calReadyBuzzed = false // сигнал готовности уже дан, V11.6
     // Калибровка дистанции (V9.3): якорь чипа + метраж отрезка.
     private var distCalActive = false
     private var distCalChipStart = -1L
@@ -345,10 +346,16 @@ class StepService : Service(), SensorEventListener {
         calLastStepMs = 0L
         calUiTick = 0
         calRejected = 0
+        calReadyBuzzed = false
+        // Ключевой вывод из реальных замеров (V11.6): когда пользователь
+        // смотрит в экран, он подстраивает шаг под цифру и разброс скачет до
+        // 18%. Смотрит на дорогу - идёт естественно, разброс 3%. Экран сам
+        // портит то, что измеряет. Поэтому обратная связь тут ТАКТИЛЬНАЯ:
+        // тик на шаг, двойной сигнал на готовность. Смотреть в телефон не надо.
         StepsState.calibrationState.value = if (kind == "walk")
-            "Калибровка ходьбы: иди обычным шагом, ровно"
+            "Калибровка ходьбы: смотри на дорогу, иди обычным шагом. Телефон тикнет дважды, когда готово."
         else
-            "Калибровка бега: беги в своём обычном темпе"
+            "Калибровка бега: смотри вперёд, беги как обычно. Телефон тикнет дважды, когда готово."
     }
 
     /**
@@ -389,12 +396,35 @@ class StepService : Service(), SensorEventListener {
     private fun collectCalInterval(kind: String, added: Int, timeMs: Long) {
         if (calLastStepMs > 0 && added == 1) {
             val iv = timeMs - calLastStepMs
-            if (iv in CAL_MIN_STEP_MS..CAL_MAX_STEP_MS) calIntervals.add(iv)
-            else calRejected++
+            if (iv in CAL_MIN_STEP_MS..CAL_MAX_STEP_MS) {
+                calIntervals.add(iv)
+                // Тихий тик "шаг зачтён" - чтобы пользователь понимал, что
+                // калибровка идёт, НЕ глядя в экран. Слабее обычной haptic.
+                vibrator.vibrate(VibrationEffect.createOneShot(CAL_TICK_MS, CAL_TICK_AMP))
+                maybeSignalReady()
+            } else calRejected++
         }
         calLastStepMs = timeMs
         calUiTick++
         if (calUiTick == 1 || calUiTick % CAL_UI_EVERY == 0) publishCalProgress(kind)
+    }
+
+    /**
+     * Двойной сигнал "можно завершать", один раз за сессию. Условие строже,
+     * чем просто "хватит шагов": нужен ровный ритм (иначе медиана ненадёжна).
+     * Это тактильный аналог "ритм ровный · можно завершать", но пользователю
+     * не нужно смотреть в экран, чтобы это увидеть.
+     */
+    private fun maybeSignalReady() {
+        if (calReadyBuzzed || calIntervals.size < CAL_READY_STEPS) return
+        val sorted = calIntervals.sorted()
+        val n = sorted.size
+        val median = sorted[n / 2]
+        if (median <= 0) return
+        val spreadPct = (100L * (sorted[n * 3 / 4] - sorted[n / 4]) / median).toInt()
+        if (spreadPct > CAL_SPREAD_OK_PCT) return
+        calReadyBuzzed = true
+        vibrator.vibrate(VibrationEffect.createWaveform(CAL_READY_PATTERN, -1))
     }
 
     private fun publishCalProgress(kind: String) {
@@ -918,6 +948,16 @@ class StepService : Service(), SensorEventListener {
         // 200 мс = 5 шагов/с (спринт), 2000 мс = очень медленный шаг.
         private const val CAL_MIN_STEP_MS = 200L
         private const val CAL_MAX_STEP_MS = 2000L
+        // Тактильная калибровка (V11.6). Тик слабее обычной haptic (255),
+        // чтобы не сбивать с шага - лёгкое подтверждение, а не удар.
+        private const val CAL_TICK_MS = 25L
+        private const val CAL_TICK_AMP = 90
+        // Готовность: 20 чистых интервалов при ровном шаге ~510 мс это ~10 с.
+        // Больше 10 (прежний минимум) - медиана заметно устойчивее, а десять
+        // секунд ходьбы пользователю необременительны.
+        private const val CAL_READY_STEPS = 20
+        // Двойной "дзынь": вибро-пауза-вибро. Ни с чем не спутать.
+        private val CAL_READY_PATTERN = longArrayOf(0, 120, 90, 120)
         private const val IDLE_LOG_DELAY_MS = 4000L
         private const val HEARTBEAT_MS = 30_000L
     }
