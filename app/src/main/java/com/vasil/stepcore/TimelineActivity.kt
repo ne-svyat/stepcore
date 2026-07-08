@@ -208,8 +208,14 @@ class TimelineActivity : AppCompatActivity() {
                 // шагам; Basal - BMR * суммарные дни всех сегментов (для
                 // "Сегодня/Вчера" сумма долей часов = 1 день).
                 val active = Stats.kcalActive(this@TimelineActivity, walkSum, runSum)
-                val periodDays = segs.sumOf { it.days.toDouble() }.toFloat()
-                val basal = (Stats.kcalBasalFullDay(this@TimelineActivity) * periodDays).toInt()
+                // Покой считаем ТОЛЬКО по столбцам с реальной активностью,
+                // а не по всем календарным слотам периода - иначе "30 дней"
+                // с данными за 3 дня показывали бы покой за 30 дней вперёд
+                // (в т.ч. будущие/пустые). Складывать BMR за непрожитые дни
+                // бессмысленно (V9.16).
+                val activeDays = segs.filter { it.walk + it.run > 0 }
+                    .sumOf { it.days.toDouble() }.toFloat()
+                val basal = (Stats.kcalBasalFullDay(this@TimelineActivity) * activeDays).toInt()
                 val activeSec = Stats.activeSeconds(this@TimelineActivity, walkSum, runSum)
                 summary.text = "Всего $total шагов · ходьба $walkSum · бег $runSum\n" +
                         "Активное время: ${fmtDuration(activeSec)}\n" +
