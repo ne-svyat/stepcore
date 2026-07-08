@@ -26,7 +26,14 @@ class TimelineView @JvmOverloads constructor(
      * Сегмент столбца. days - доля суток, покрытая столбцом, для масштаба
      * базового обмена (час = 1/24, день = 1, неделя = 7, месяц = N дней).
      */
-    data class Seg(val walk: Int, val run: Int, val label: String, val days: Float = 1f)
+    /**
+     * Сегмент столбца. activeDays - сколько РЕАЛЬНЫХ дней с активностью
+     * покрывает столбец (час = 1/24 если активен, день = 1 если активен,
+     * сегодня = доля прошедших суток, неделя/месяц = сумма таких дней).
+     * Покой (BMR) считается по activeDays, а не по календарным слотам -
+     * чтобы не начислять базовый расход за пустые/будущие дни (V9.17).
+     */
+    data class Seg(val walk: Int, val run: Int, val label: String, val activeDays: Float = 1f)
 
     private var segs: List<Seg> = emptyList()
     private var maxTotal = 1
