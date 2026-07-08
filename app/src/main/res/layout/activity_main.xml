@@ -219,7 +219,14 @@
                 android:id="@+id/calDistButton"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Калибровка дистанции"
+                android:text="Калибровка дистанции (по метражу)"
+                android:layout_marginTop="4dp" />
+
+            <Button
+                android:id="@+id/calGpsButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Калибровка по GPS"
                 android:layout_marginTop="4dp" />
 
             <TextView

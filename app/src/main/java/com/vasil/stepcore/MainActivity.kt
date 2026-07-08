@@ -31,6 +31,15 @@ class MainActivity : AppCompatActivity() {
 
     private var calibrating = false
     private var distCalibrating = false
+    private var gpsCalibrating = false
+    private var gpsCalibrator: LocationCalibrator? = null
+    private var gpsStepsAtStart = 0
+    private lateinit var calGpsBtn: Button
+    private val gpsPermLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) startGpsCalibration()
+            else StepsState.calibrationState.value = "Без доступа к GPS калибровка невозможна"
+        }
     private lateinit var statsView: TextView
     private lateinit var ring: ProgressRingView
     private lateinit var goalView: TextView
@@ -165,6 +174,14 @@ class MainActivity : AppCompatActivity() {
                 startForegroundService(Intent(this, StepService::class.java)
                     .setAction(StepService.ACTION_CAL_DIST_STOP))
             }
+        }
+
+        calGpsBtn = findViewById(R.id.calGpsButton)
+        calGpsBtn.setOnClickListener {
+            if (!StepsState.serviceRunning.value) {
+                StepsState.calibrationState.value = "Сначала нажми Старт"; return@setOnClickListener
+            }
+            if (!gpsCalibrating) confirmAndStartGps() else finishGpsCalibration()
         }
 
         lifecycleScope.launch {
@@ -320,6 +337,72 @@ class MainActivity : AppCompatActivity() {
         goal = getSharedPreferences(StepService.PREFS, MODE_PRIVATE).getInt("p_goal", 10000)
         if (::ring.isInitialized) refreshRing(StepsState.steps.value)
         if (::statsView.isInitialized) updateStats()
+    }
+
+    /** Предупреждение о приватности + подсказка где мерить, затем permission. */
+    private fun confirmAndStartGps() {
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Калибровка по GPS")
+            .setMessage(
+                "Включит GPS-приёмник на время замера. Координаты нужны только " +
+                "для подсчёта метров — никуда не отправляются и не сохраняются, " +
+                "StepCore остаётся офлайн.\n\n" +
+                "Где мерить для точности:\n" +
+                "• открытое небо (не между домами, не в лесу)\n" +
+                "• прямой участок, обычный шаг\n" +
+                "• идеально 300–500 м\n\n" +
+                "GPS в помещении и у высоких зданий врёт."
+            )
+            .setPositiveButton("Начать") { _, _ ->
+                gpsPermLauncher.launch(android.Manifest.permission.ACCESS_FINE_LOCATION)
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    private fun startGpsCalibration() {
+        val cal = LocationCalibrator(this)
+        if (!cal.isGpsEnabled()) {
+            StepsState.calibrationState.value = "Включи GPS в настройках телефона"
+            return
+        }
+        gpsCalibrator = cal
+        gpsCalibrating = true
+        gpsStepsAtStart = StepsState.steps.value
+        calGpsBtn.text = "Готово (GPS)"
+        cal.onUpdate = { metres, fixes, acc ->
+            runOnUiThread {
+                val accTxt = if (acc >= 0) "±${acc.toInt()}м" else "—"
+                StepsState.calibrationState.value =
+                    "GPS: %.0f м, точек %d, сигнал %s".format(metres, fixes, accTxt)
+            }
+        }
+        cal.start()
+        StepsState.calibrationState.value = "GPS: иди по прямой… (ждём сигнал)"
+    }
+
+    private fun finishGpsCalibration() {
+        val cal = gpsCalibrator ?: return
+        gpsCalibrating = false
+        calGpsBtn.text = "Калибровка по GPS"
+        val metres = cal.stop()
+        gpsCalibrator = null
+        val steps = StepsState.steps.value - gpsStepsAtStart
+        if (metres < 100f || steps < 30) {
+            StepsState.calibrationState.value =
+                "Мало данных (%.0f м, %d шагов). Нужно ≥100 м на открытом небе.".format(metres, steps)
+            return
+        }
+        StrideModel.applyCalibration(this, metres, steps, byGps = true)
+        val slCm = StrideModel.measuredStrideCm(this) ?: 0
+        StepsState.calibrationState.value =
+            "Готово (GPS): %.0f м за %d шагов = длина шага %d см".format(metres, steps, slCm)
+        refreshRing(StepsState.steps.value)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        if (gpsCalibrating) { gpsCalibrator?.stop(); gpsCalibrating = false; gpsCalibrator = null }
     }
 
     private fun startTracking() {

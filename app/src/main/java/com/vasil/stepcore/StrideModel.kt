@@ -21,7 +21,7 @@ import android.content.Context
  */
 object StrideModel {
 
-    enum class Source { ESTIMATE, MANUAL }
+    enum class Source { ESTIMATE, MANUAL, GPS }
 
     private const val A_DEFAULT = 0.37f          // популяционный наклон, м/Гц
     private const val HEIGHT_FACTOR_WALK = 0.414f
@@ -30,8 +30,11 @@ object StrideModel {
     private fun p(c: Context) =
         c.getSharedPreferences(StepService.PREFS, Context.MODE_PRIVATE)
 
-    fun source(c: Context): Source =
-        if (p(c).getBoolean("stride_manual", false)) Source.MANUAL else Source.ESTIMATE
+    fun source(c: Context): Source = when {
+        !p(c).getBoolean("stride_manual", false) -> Source.ESTIMATE
+        p(c).getBoolean("stride_by_gps", false) -> Source.GPS
+        else -> Source.MANUAL
+    }
 
     /** Длина шага ходьбы для заданного каденса (Гц). */
     fun walkStrideM(c: Context, cadenceHz: Float): Float {
@@ -68,7 +71,7 @@ object StrideModel {
      * Второй вызов с ДРУГИМ каденсом мог бы решить (a,b) точно - задел,
      * пока сохраняем последнюю точку и сдвиг.
      */
-    fun applyCalibration(c: Context, metres: Float, steps: Int) {
+    fun applyCalibration(c: Context, metres: Float, steps: Int, byGps: Boolean = false) {
         if (steps <= 0 || metres <= 0f) return
         val measuredSL = metres / steps
         val cadence = avgWalkCadenceHz(c)
@@ -77,6 +80,7 @@ object StrideModel {
             .putFloat("stride_a", A_DEFAULT)
             .putFloat("stride_b", b)
             .putBoolean("stride_manual", true)
+            .putBoolean("stride_by_gps", byGps)
             .putFloat("stride_measured_sl", measuredSL)
             .apply()
     }
@@ -84,7 +88,7 @@ object StrideModel {
     fun reset(c: Context) {
         p(c).edit()
             .remove("stride_a").remove("stride_b")
-            .remove("stride_manual").remove("stride_measured_sl")
+            .remove("stride_manual").remove("stride_by_gps").remove("stride_measured_sl")
             .apply()
     }
 
