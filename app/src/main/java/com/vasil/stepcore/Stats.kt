@@ -1,6 +1,8 @@
 package com.vasil.stepcore
 
 import android.content.Context
+import java.time.LocalDate
+import java.time.ZoneId
 
 /**
  * Адаптер профиля к моделям (V9.9): длина шага - StrideModel, энергия -
@@ -81,4 +83,48 @@ object Stats {
         val distM = (distanceKm(c, walkSteps, runSteps) * 1000).toInt()
         return Triple(active, basal, distM)
     }
+
+    // ===== V11.1: сегментированный расчёт по часам =====
+    // Проблема: kcalActive/distanceKm выше берут ТЕКУЩИЙ профиль и применяют
+    // его ко ВСЕЙ сумме шагов за день. Снял груз вечером - утренние шаги
+    // пересчитались задним числом. Решение: считать день по часам, каждый час
+    // с профилем, который действовал ИМЕННО В ТОТ час (ProfileHistory).
+
+    /** Конец часа из HourRecord.dateHour ("2026-07-06 14") -> epoch ms. */
+    private fun hourEndMs(dateHour: String): Long {
+        val start = LocalDate.parse(dateHour.substring(0, 10))
+            .atTime(dateHour.substring(11).toInt(), 0)
+        return start.plusHours(1).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+    }
+
+    /** ACTIVE ккал + дистанция (м) ОДНОГО часа, профиль - того часа. */
+    suspend fun energyForHour(c: Context, hour: HourRecord): Pair<Int, Float> {
+        if (hour.walkSteps <= 0 && hour.runSteps <= 0) return 0 to 0f
+        val p = ProfileHistory.at(c, hourEndMs(hour.dateHour))
+        val mass = p.weightKg + p.loadKg
+        if (mass <= 0f) return 0 to 0f
+        val cadence = StrideModel.walkCadenceHzOf(p.walkMinIntervalMs, p.walkMaxIntervalMs)
+        val walkStride =
+            StrideModel.walkStrideMOf(cadence, p.strideManual, p.strideA, p.strideB, p.heightCm)
+        val runStride = StrideModel.runStrideMOf(p.heightCm)
+        val walkIntervalS = if (cadence > 0f) 1f / cadence else 0f
+        val wk = EnergyModel.walkKcal(hour.walkSteps, mass, walkStride, walkIntervalS)
+        val rk = EnergyModel.runKcal(hour.runSteps * runStride / 1000f, mass)
+        val distM = hour.walkSteps * walkStride + hour.runSteps * runStride
+        return (wk + rk).toInt() to distM
+    }
+
+    /** Сумма по уже загруженным часам. */
+    suspend fun segmentedActiveAndDistance(c: Context, hours: List<HourRecord>): Pair<Int, Float> {
+        var active = 0; var dist = 0f
+        for (h in hours) {
+            val (a, d) = energyForHour(c, h)
+            active += a; dist += d
+        }
+        return active to dist
+    }
+
+    /** То же, но сама грузит часы дня из БД. */
+    suspend fun segmentedActiveAndDistance(c: Context, date: String): Pair<Int, Float> =
+        segmentedActiveAndDistance(c, AppDb.get(c).dao().hoursOfDay(date))
 }

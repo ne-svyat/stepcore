@@ -30,39 +30,56 @@ object StrideModel {
     private fun p(c: Context) =
         c.getSharedPreferences(StepService.PREFS, Context.MODE_PRIVATE)
 
+    // ===== ЧИСТЫЕ ФОРМУЛЫ (V11.1) =====
+    // Без Context: считают по ПЕРЕДАННЫМ параметрам, а не по живым prefs.
+    // Нужны Stats.energyForHour, который берёт профиль ИЗ ИСТОРИИ. Обёртки
+    // ниже делегируют сюда: одна формула, два способа достать параметры
+    // (ARCHITECTURE_RULES - источник истины один).
+
+    fun walkCadenceHzOf(minIntervalMs: Long, maxIntervalMs: Long): Float {
+        val medMs = (minIntervalMs + maxIntervalMs) / 2f
+        return if (medMs > 0) 1000f / medMs else 1.8f
+    }
+
+    fun walkStrideMOf(
+        cadenceHz: Float, strideManual: Boolean,
+        strideA: Float, strideB: Float, heightCm: Int
+    ): Float = if (strideManual) (strideA * cadenceHz + strideB).coerceIn(0.3f, 1.2f)
+        else if (heightCm > 0) heightCm * HEIGHT_FACTOR_WALK / 100f else 0.7f
+
+    fun runStrideMOf(heightCm: Int): Float =
+        if (heightCm > 0) heightCm * HEIGHT_FACTOR_RUN / 100f else 1.0f
+
     fun source(c: Context): Source = when {
         !p(c).getBoolean("stride_manual", false) -> Source.ESTIMATE
         p(c).getBoolean("stride_by_gps", false) -> Source.GPS
         else -> Source.MANUAL
     }
 
-    /** Длина шага ходьбы для заданного каденса (Гц). */
+    /** Длина шага ходьбы для заданного каденса (Гц), по ТЕКУЩЕМУ профилю. */
     fun walkStrideM(c: Context, cadenceHz: Float): Float {
         val pr = p(c)
-        if (pr.getBoolean("stride_manual", false)) {
-            val a = pr.getFloat("stride_a", A_DEFAULT)
-            val b = pr.getFloat("stride_b", 0f)
-            return (a * cadenceHz + b).coerceIn(0.3f, 1.2f)
-        }
-        val h = pr.getInt("p_height", 0)
-        return if (h > 0) h * HEIGHT_FACTOR_WALK / 100f else 0.7f
+        return walkStrideMOf(
+            cadenceHz,
+            pr.getBoolean("stride_manual", false),
+            pr.getFloat("stride_a", A_DEFAULT),
+            pr.getFloat("stride_b", 0f),
+            pr.getInt("p_height", 0)
+        )
     }
 
     /** Средняя длина шага ходьбы по калиброванному каденсу (для сумм за день). */
     fun walkStrideAvgM(c: Context): Float = walkStrideM(c, avgWalkCadenceHz(c))
 
-    fun runStrideM(c: Context): Float {
-        val h = p(c).getInt("p_height", 0)
-        return if (h > 0) h * HEIGHT_FACTOR_RUN / 100f else 1.0f
-    }
+    fun runStrideM(c: Context): Float = runStrideMOf(p(c).getInt("p_height", 0))
 
     /** Каденс ходьбы из калибровки интервалов: med = (lo+hi)/2 -> Гц. */
     fun avgWalkCadenceHz(c: Context): Float {
         val pr = p(c)
-        val lo = pr.getLong("walk_min_interval", 400L)
-        val hi = pr.getLong("walk_max_interval", 1200L)
-        val medMs = (lo + hi) / 2f
-        return if (medMs > 0) 1000f / medMs else 1.8f
+        return walkCadenceHzOf(
+            pr.getLong("walk_min_interval", 400L),
+            pr.getLong("walk_max_interval", 1200L)
+        )
     }
 
     /**

@@ -148,6 +148,14 @@ interface StepDao {
 
     @Query("SELECT * FROM profile_history WHERE timestampMs <= :atMs ORDER BY timestampMs DESC LIMIT 1")
     suspend fun profileAt(atMs: Long): ProfileSnapshotRecord?
+
+    /**
+     * Самая ранняя точка истории. Нужна как якорь для часов, прожитых ДО
+     * первой записи (переход на V11): они замораживаются на первом известном
+     * профиле, а не плывут вслед за текущим.
+     */
+    @Query("SELECT * FROM profile_history ORDER BY timestampMs ASC LIMIT 1")
+    suspend fun earliestProfile(): ProfileSnapshotRecord?
 }
 
 val MIGRATION_1_2 = object : Migration(1, 2) {

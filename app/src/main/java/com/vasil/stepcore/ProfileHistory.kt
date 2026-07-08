@@ -41,7 +41,18 @@ object ProfileHistory {
         AppDb.get(c).dao().insertProfileSnapshot(currentSnapshot(c, timestampMs))
     }
 
-    /** Профиль на момент atMs. Истории нет - текущий (переходный период). */
-    suspend fun at(c: Context, atMs: Long): ProfileSnapshotRecord =
-        AppDb.get(c).dao().profileAt(atMs) ?: currentSnapshot(c, atMs)
+    /**
+     * Профиль, действовавший в момент atMs.
+     *
+     * Порядок отката осознанный:
+     *   - точка не позже atMs: точный ответ;
+     *   - САМАЯ РАННЯЯ точка: для часов, прожитых до первой записи, при
+     *     переходе на V11. Замораживает их на первом известном профиле. Без
+     *     этого они плыли бы за текущим грузом - тот самый баг, что чиним;
+     *   - текущий профиль: только если история пуста совсем.
+     */
+    suspend fun at(c: Context, atMs: Long): ProfileSnapshotRecord {
+        val dao = AppDb.get(c).dao()
+        return dao.profileAt(atMs) ?: dao.earliestProfile() ?: currentSnapshot(c, atMs)
+    }
 }

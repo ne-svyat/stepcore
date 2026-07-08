@@ -20,6 +20,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
@@ -152,11 +153,11 @@ class MainActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
+                // Дёшево - можно на каждый шаг: число и кольцо, без БД.
                 launch {
                     StepsState.steps.collect { s ->
                         stepsView.text = s.toString()
                         refreshRing(s)
-                        updateStats()
                     }
                 }
                 launch {
@@ -169,6 +170,15 @@ class MainActivity : AppCompatActivity() {
                     StepsState.mode.collect { m -> applyModeBadge(modeView, m) }
                 }
                 launch { StepsState.diag.collect { findViewById<TextView>(R.id.diagText).text = it } }
+                // Дорого (почасовой расчёт, БД) - по таймеру, не на каждый шаг.
+                // 20 с незаметно глазу, нагрузка на порядок ниже (V11.1).
+                launch {
+                    while (true) {
+                        refreshTodayEnergy()
+                        updateStats()
+                        delay(20_000)
+                    }
+                }
             }
         }
     }
@@ -217,13 +227,24 @@ class MainActivity : AppCompatActivity() {
         val pct = steps * 100 / goal
         // Бейдж ×N убран: слои теперь показывают точки в кольце (V9.13).
         goalView.text = "$pct% · цель ${"%,d".format(goal).replace(',', ' ')}"
+    }
+
+    /**
+     * Км/ккал/активное время за сегодня - СЕГМЕНТИРОВАННО (V11.1): каждый
+     * прошедший час считается с профилем, который действовал в тот час
+     * (груз, вес, калибровка). Смена груза больше не переписывает прошлое.
+     * Ходит в БД - поэтому по таймеру, а не на каждый шаг.
+     */
+    private suspend fun refreshTodayEnergy() {
+        val (walk, run) = todayWalkRun()
         val activeSec = Stats.activeSeconds(this, walk, run)
         // Показываем при любой активности (>0), не только >=60 c - иначе
         // вечером при малом числе шагов строка была пустой (V9.14).
         activeTimeText.text = if (activeSec > 0) "\u23f1 ${fmtDur(activeSec)}" else ""
-        val km = Stats.distanceKm(this, walk, run)
-        val active = Stats.kcalActive(this, walk, run)
-        val total = Stats.kcalGrossToday(this, walk, run)
+        val (active, distM) = Stats.segmentedActiveAndDistance(
+            this, java.time.LocalDate.now().toString())
+        val km = distM / 1000f
+        val total = active + Stats.kcalBasalToday(this)
         // Active = расход на движение; Total = Active + базовый обмен (BMR)
         // за прошедшую часть суток. Тап по строке -> объяснение (V9.10).
         todayKmKcal.text = if (km > 0 || active > 0)
