@@ -128,6 +128,7 @@ class StepService : Service(), SensorEventListener {
     private val calIntervals = ArrayList<Long>()
     private var calLastStepMs = 0L
     private var calUiTick = 0   // троттлинг живого прогресса, V11.4
+    private var calRejected = 0 // отброшено мусорных интервалов, V11.5
     // Калибровка дистанции (V9.3): якорь чипа + метраж отрезка.
     private var distCalActive = false
     private var distCalChipStart = -1L
@@ -343,6 +344,7 @@ class StepService : Service(), SensorEventListener {
         calIntervals.clear()
         calLastStepMs = 0L
         calUiTick = 0
+        calRejected = 0
         StepsState.calibrationState.value = if (kind == "walk")
             "Калибровка ходьбы: иди обычным шагом, ровно"
         else
@@ -362,6 +364,39 @@ class StepService : Service(), SensorEventListener {
      * Сортировка идёт раз в CAL_UI_EVERY шагов, не на каждом: onSensorChanged -
      * горячий путь, лишней работы на нём быть не должно.
      */
+    /**
+     * Сбор ОДНОГО интервала калибровки, V11.5. Раньше в выборку летел любой
+     * added>0 - и это завышало разброс на ровном пути:
+     *
+     *   - детектор подтверждает шаги ПАЧКОЙ (выход из карантина, added=4):
+     *     все с одним timeMs. Сырой сбор писал один интервал вместо четырёх,
+     *     а следующий реальный растягивался на всю пачку -> выброс;
+     *   - после паузы (IDLE, потеря ритма) calLastStepMs помнил старый шаг,
+     *     и в статистику попадал интервал в 2-3 секунды посреди ходьбы.
+     *
+     * Оба - не про походку, а про то, что интервал брался не оттуда. Лечение:
+     * учитывать только ОДИНОЧНЫЙ шаг (added==1) и только физиологически
+     * правдоподобный интервал. Границы абсолютные (200..2000 мс), НЕ из
+     * профиля: калибровать шаг по старому же профилю шага - замкнутый круг,
+     * кривая калибровка заворачивала бы починку. 200..2000 покрывает всё от
+     * быстрого бега до очень медленной ходьбы, режется только явный мусор.
+     * Реальную вариативность шага НЕ трогаем - иначе подделаем разброс.
+     *
+     * Пачку не выбрасываем целиком: она сдвигает опору calLastStepMs, чтобы
+     * следующий одиночный шаг мерился от верного момента, но сама в выборку
+     * не идёт.
+     */
+    private fun collectCalInterval(kind: String, added: Int, timeMs: Long) {
+        if (calLastStepMs > 0 && added == 1) {
+            val iv = timeMs - calLastStepMs
+            if (iv in CAL_MIN_STEP_MS..CAL_MAX_STEP_MS) calIntervals.add(iv)
+            else calRejected++
+        }
+        calLastStepMs = timeMs
+        calUiTick++
+        if (calUiTick == 1 || calUiTick % CAL_UI_EVERY == 0) publishCalProgress(kind)
+    }
+
     private fun publishCalProgress(kind: String) {
         val n = calIntervals.size
         val label = if (kind == "walk") "Ходьба" else "Бег"
@@ -379,8 +414,9 @@ class StepService : Service(), SensorEventListener {
             spreadPct <= CAL_SPREAD_OK_PCT -> "ритм неровный"
             else -> "ритм рваный, иди спокойнее"
         }
+        val noise = if (calRejected > 0) " · отброшено $calRejected" else ""
         StepsState.calibrationState.value =
-            "$label: ${n + 1} шагов · темп $median мс · $rhythm · можно завершать"
+            "$label: чистых шагов $n · темп $median мс · $rhythm$noise · можно завершать"
     }
 
     private fun finishCalibration() {
@@ -556,14 +592,7 @@ class StepService : Service(), SensorEventListener {
                 if (added > 0) {
                     trackDivergence(added)
                     val calKind = calibrating
-                    if (calKind != null) {
-                        if (calLastStepMs > 0) calIntervals.add(timeMs - calLastStepMs)
-                        calLastStepMs = timeMs
-                        calUiTick++
-                        if (calUiTick == 1 || calUiTick % CAL_UI_EVERY == 0) {
-                            publishCalProgress(calKind)
-                        }
-                    }
+                    if (calKind != null) collectCalInterval(calKind, added, timeMs)
                     // V9: детектор НЕ считает - счёт ведёт чип (ветка
                     // TYPE_STEP_COUNTER). Здесь остаётся обратная связь:
                     // вибрация может тикнуть на ложный шаг (тап), но число
@@ -884,6 +913,11 @@ class StepService : Service(), SensorEventListener {
         // среднего. IQR теснее размаха, поэтому пороги ниже.
         private const val CAL_SPREAD_GOOD_PCT = 12
         private const val CAL_SPREAD_OK_PCT = 25
+        // Абсолютные границы правдоподобного человеческого шага, мс. НЕ из
+        // профиля (иначе калибровка зависела бы от прежней калибровки).
+        // 200 мс = 5 шагов/с (спринт), 2000 мс = очень медленный шаг.
+        private const val CAL_MIN_STEP_MS = 200L
+        private const val CAL_MAX_STEP_MS = 2000L
         private const val IDLE_LOG_DELAY_MS = 4000L
         private const val HEARTBEAT_MS = 30_000L
     }
