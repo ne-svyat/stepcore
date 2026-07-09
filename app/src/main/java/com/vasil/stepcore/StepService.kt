@@ -380,7 +380,7 @@ class StepService : Service(), SensorEventListener {
         StepsState.calibrationState.value = if (kind == "walk")
             "Калибровка ходьбы: смотри на дорогу, иди обычным шагом. Телефон тикнет дважды, когда готово."
         else
-            "Калибровка бега: нужен НАСТОЯЩИЙ бег (не быстрый шаг), лучше на улице. Телефон тикнет дважды, когда готово."
+            "Калибровка бега: беги на улице в своём темпе. Телефон тикнет дважды, когда готово."
     }
 
     /**
@@ -470,15 +470,6 @@ class StepService : Service(), SensorEventListener {
             else -> "ритм рваный, иди спокойнее"
         }
         val noise = if (calRejected > 0) " · отброшено $calRejected" else ""
-        // Бег с ходьбовым темпом - не бег. Данные с устройства: "беговые"
-        // попытки шли 660-720 мс (быстрая ходьба), детектор честно метил их
-        // Ходьбой. Говорим об этом прямо, а не пишем "можно завершать".
-        if (kind == "run" && median > RUN_MAX_PLAUSIBLE_MS) {
-            StepsState.calibrationState.value =
-                "Бег: темп $median мс - это ходьба, не бег. Нужен реальный бег " +
-                "(шаг быстрее ${RUN_MAX_PLAUSIBLE_MS} мс). Разбегись на улице."
-            return
-        }
         StepsState.calibrationState.value =
             "$label: чистых шагов $n · темп $median мс · $rhythm$noise · можно завершать"
     }
@@ -506,15 +497,6 @@ class StepService : Service(), SensorEventListener {
         val median = sorted[n / 2]
         val spreadPct =
             if (median > 0) (100L * (sorted[n * 3 / 4] - sorted[n / 4]) / median).toInt() else 0
-        // Отсечка (V11.10): калибровка бега на ходьбовом темпе испортила бы
-        // метку "бег" и время бега. Лучше не сохранить, чем сохранить ложь
-        // (принцип отказоустойчивости ARCHITECTURE_RULES).
-        if (kind == "run" && median > RUN_MAX_PLAUSIBLE_MS) {
-            StepsState.calibrationState.value =
-                "Бег не откалиброван: темп $median мс - это ходьба. Профиль бега " +
-                "не изменён. Для калибровки бега нужен настоящий бег на улице."
-            return
-        }
         val lo = (median * 0.65).toLong()
         val hi = (median * 1.35).toLong()
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
@@ -1024,10 +1006,6 @@ class StepService : Service(), SensorEventListener {
         // Диагностика STEP_DETECTOR: потолок выборки, чтобы длинная
         // калибровка не раздувала память и строку журнала.
         private const val HW_DET_DIAG_CAP = 300
-        // Верхняя граница правдоподобного БЕГОВОГО интервала, мс. Медленный
-        // бег ~2 шаг/с = 500 мс; медленнее - это уже ходьба. Не из профиля:
-        // калибровка не должна зависеть от прежней калибровки.
-        private const val RUN_MAX_PLAUSIBLE_MS = 500L
         private const val CAL_MIN_STEP_MS = 200L
         private const val CAL_MAX_STEP_MS = 2000L
         // Тактильная калибровка (V11.6). Тик слабее обычной haptic (255),
