@@ -67,13 +67,42 @@ object Stats {
         else distanceKm(c, rec.walkSteps, rec.runSteps)
 
     /**
-     * Время активности, сек. Интервал бега берётся из КАЛИБРОВКИ, а не
-     * из хардкода 0.34 c (до V10 калибровка бега на время не влияла).
+     * Время активности, сек, по ТЕКУЩЕЙ калибровке. Годится только для
+     * открытого дня; закрытые дни читают снапшот (activeSecOfDay, V11.9).
      */
     fun activeSeconds(c: Context, walkSteps: Int, runSteps: Int): Long {
         val walkIv = 1f / StrideModel.avgWalkCadenceHz(c)
         val runIv = CalibrationRegistry.runIntervalSec(c)
         return (walkSteps * walkIv + runSteps * runIv).toLong()
+    }
+
+    /** Активное время закрытого дня из снапшота, иначе на лету (старые дни). */
+    fun activeSecOfDay(c: Context, rec: DayRecord): Long =
+        if (rec.activeSec >= 0) rec.activeSec.toLong()
+        else activeSeconds(c, rec.walkSteps, rec.runSteps)
+
+    /**
+     * Активное время дня СЕГМЕНТИРОВАННО (V11.9): каждый час со своим темпом
+     * из истории профиля - как калории. Часов нет (старый день) - откат на
+     * текущую калибровку.
+     */
+    suspend fun segmentedActiveSeconds(
+        c: Context, date: String, walkSteps: Int, runSteps: Int
+    ): Long {
+        val hours = AppDb.get(c).dao().hoursOfDay(date)
+        if (hours.isEmpty()) return activeSeconds(c, walkSteps, runSteps)
+        var sec = 0f
+        for (h in hours) {
+            if (h.walkSteps <= 0 && h.runSteps <= 0) continue
+            val p = ProfileHistory.at(c, hourEndMs(h.dateHour))
+            val cadence = StrideModel.walkCadenceHzOf(p.walkMinIntervalMs, p.walkMaxIntervalMs)
+            val walkIv = if (cadence > 0f) 1f / cadence else 0f
+            // Интервал бега: середина калиброванного диапазона, как в
+            // CalibrationRegistry.runIntervalSec, но из профиля ТОГО часа.
+            val runIv = (p.runMinIntervalMs + p.runMaxIntervalMs) / 2f / 1000f
+            sec += h.walkSteps * walkIv + h.runSteps * runIv
+        }
+        return sec.toLong()
     }
 
     /** Снапшот дня при закрытии (V9.9): (active, basal, distM). */

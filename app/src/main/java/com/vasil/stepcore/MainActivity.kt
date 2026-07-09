@@ -304,7 +304,9 @@ class MainActivity : AppCompatActivity() {
         }
         val (yActive, yBasal) = Stats.kcalOfDay(this, rec)
         val yKm = Stats.distanceOfDayKm(this, rec)
-        val ySec = Stats.activeSeconds(this, yWalk, yRun)
+        // V11.9: время вчера - из СНАПШОТА, как калории. Не пересчитывается
+        // текущей калибровкой.
+        val ySec = Stats.activeSecOfDay(this, rec)
         val sb = StringBuilder()
         sb.append("ВЧЕРА · ${fmtNumM(yesterdayTotal)} шагов")
         sb.append("\n")

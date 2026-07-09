@@ -262,7 +262,10 @@ class StepService : Service(), SensorEventListener {
                 pending.forEach { d ->
                     val (a2, b2, dist) = Stats.snapshotForDaySegmented(
                         this@StepService, d.date, d.walkSteps, d.runSteps)
-                    dao.upsertDay(d.copy(kcalActive = a2, kcalBasal = b2, distanceM = dist))
+                    val aSec2 = Stats.segmentedActiveSeconds(
+                        this@StepService, d.date, d.walkSteps, d.runSteps).toInt()
+                    dao.upsertDay(d.copy(kcalActive = a2, kcalBasal = b2,
+                        distanceM = dist, activeSec = aSec2))
                 }
                 if (pending.isNotEmpty())
                     logEvent("Заморожена статистика прошлых дней: ${pending.size}")
@@ -884,8 +887,11 @@ class StepService : Service(), SensorEventListener {
         scope.launch {
             val (active, basal, distM) =
                 Stats.snapshotForDaySegmented(this@StepService, date, w, r)
+            // V11.9: активное время замораживается вместе с калориями -
+            // новая калибровка темпа больше не переписывает прошлые дни.
+            val aSec = Stats.segmentedActiveSeconds(this@StepService, date, w, r)
             AppDb.get(this@StepService).dao()
-                .upsertDay(DayRecord(date, w, r, active, basal, distM))
+                .upsertDay(DayRecord(date, w, r, active, basal, distM, aSec.toInt()))
         }
     }
 
