@@ -217,6 +217,20 @@ class StepService : Service(), SensorEventListener {
         } else {
             logEvent("⚠ Аппаратного счётчика шагов нет на устройстве")
         }
+        // TYPE_STEP_DETECTOR: один аппаратный импульс на КАЖДЫЙ шаг, с меткой
+        // времени, в реальном времени. Тот же чип, что и STEP_COUNTER (та же
+        // надёжность в кармане и на бегу), но вместо "сколько всего" даёт
+        // "вот шаг, вот когда". Нужен ТОЛЬКО для калибровки темпа (V11.7):
+        // раньше темп мерился по детектору-на-акселерометре, который врёт в
+        // кармане и выдаёт бег пачками - отсюда "карман 50%, бег не калибруется".
+        // Вне калибровки события игнорируются (см. onSensorChanged), счёт
+        // по-прежнему только на STEP_COUNTER.
+        val hwDetector = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR)
+        if (hwDetector != null) {
+            sensorManager.registerListener(this, hwDetector, SensorManager.SENSOR_DELAY_FASTEST)
+        } else {
+            logEvent("⚠ Аппаратного детектора шагов нет - калибровка темпа по акселерометру")
+        }
         registerReceiver(screenReceiver, IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_OFF)
             addAction(Intent.ACTION_SCREEN_ON)
@@ -534,6 +548,14 @@ class StepService : Service(), SensorEventListener {
         }
         val timeMs = event.timestamp / 1_000_000
         when (event.sensor.type) {
+            Sensor.TYPE_STEP_DETECTOR -> {
+                // Один импульс = один шаг. Только для калибровки темпа.
+                val calKind = calibrating
+                if (calKind != null) {
+                    collectCalInterval(calKind, 1, event.timestamp / 1_000_000L)
+                }
+                return
+            }
             Sensor.TYPE_STEP_COUNTER -> {
                 val hwTotal = event.values[0].toLong()
                 hwLastTotal = hwTotal
@@ -621,8 +643,8 @@ class StepService : Service(), SensorEventListener {
                 }
                 if (added > 0) {
                     trackDivergence(added)
-                    val calKind = calibrating
-                    if (calKind != null) collectCalInterval(calKind, added, timeMs)
+                    // Калибровка темпа больше НЕ берёт время из детектора-на-
+                    // акселерометре (V11.7) - она на STEP_DETECTOR. Здесь только счёт.
                     // V9: детектор НЕ считает - счёт ведёт чип (ветка
                     // TYPE_STEP_COUNTER). Здесь остаётся обратная связь:
                     // вибрация может тикнуть на ложный шаг (тап), но число
