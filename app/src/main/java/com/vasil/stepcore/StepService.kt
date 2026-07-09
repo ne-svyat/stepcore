@@ -130,6 +130,12 @@ class StepService : Service(), SensorEventListener {
     private var calUiTick = 0   // троттлинг живого прогресса, V11.4
     private var calRejected = 0 // отброшено мусорных интервалов, V11.5
     private var calReadyBuzzed = false // сигнал готовности уже дан, V11.6
+    // Диагностика STEP_DETECTOR (V11.8): сырые интервалы его событий во время
+    // калибровки. На этом устройстве (MIUI) сенсор отдал walk=774, run=775,
+    // разброс 0% - метки времени ставятся при ДОСТАВКЕ пачки, а не при шаге.
+    // Копим и пишем в журнал, чтобы решать про карман/бег по данным.
+    private val hwDetDiag = ArrayList<Long>()
+    private var hwDetLastMs = 0L
     // Калибровка дистанции (V9.3): якорь чипа + метраж отрезка.
     private var distCalActive = false
     private var distCalChipStart = -1L
@@ -361,6 +367,8 @@ class StepService : Service(), SensorEventListener {
         calUiTick = 0
         calRejected = 0
         calReadyBuzzed = false
+        hwDetDiag.clear()
+        hwDetLastMs = 0L
         // Ключевой вывод из реальных замеров (V11.6): когда пользователь
         // смотрит в экран, он подстраивает шаг под цифру и разброс скачет до
         // 18%. Смотрит на дорогу - идёт естественно, разброс 3%. Экран сам
@@ -466,6 +474,16 @@ class StepService : Service(), SensorEventListener {
     private fun finishCalibration() {
         val kind = calibrating ?: return
         calibrating = null
+        // V11.8: сырьё обоих источников в журнал - по нему решаем про
+        // карман/бег. Автоочистка [диаг] через 14 дней штатная.
+        if (hwDetDiag.isNotEmpty()) {
+            logEvent("[диаг] кал.$kind STEP_DETECTOR (${hwDetDiag.size}): " +
+                hwDetDiag.joinToString(","))
+        }
+        if (calIntervals.isNotEmpty()) {
+            logEvent("[диаг] кал.$kind акселерометр (${calIntervals.size}): " +
+                calIntervals.joinToString(","))
+        }
         if (calIntervals.size < MIN_CAL_INTERVALS) {
             StepsState.calibrationState.value =
                 "Мало данных (${calIntervals.size + 1} шагов), профиль не изменён"
@@ -549,10 +567,17 @@ class StepService : Service(), SensorEventListener {
         val timeMs = event.timestamp / 1_000_000
         when (event.sensor.type) {
             Sensor.TYPE_STEP_DETECTOR -> {
-                // Один импульс = один шаг. Только для калибровки темпа.
-                val calKind = calibrating
-                if (calKind != null) {
-                    collectCalInterval(calKind, 1, event.timestamp / 1_000_000L)
+                // V11.8: НЕ источник калибровки. Гипотеза V11.7 провалена на
+                // устройстве: MIUI отдаёт события пачками по ~750 мс, метка
+                // времени = момент доставки, не шага (walk==run, разброс 0%).
+                // Оставлен только как диагностика: сырые интервалы уходят в
+                // журнал при завершении калибровки.
+                if (calibrating != null) {
+                    val t = event.timestamp / 1_000_000L
+                    if (hwDetLastMs > 0 && hwDetDiag.size < HW_DET_DIAG_CAP) {
+                        hwDetDiag.add(t - hwDetLastMs)
+                    }
+                    hwDetLastMs = t
                 }
                 return
             }
@@ -643,8 +668,12 @@ class StepService : Service(), SensorEventListener {
                 }
                 if (added > 0) {
                     trackDivergence(added)
-                    // Калибровка темпа больше НЕ берёт время из детектора-на-
-                    // акселерометре (V11.7) - она на STEP_DETECTOR. Здесь только счёт.
+                    // V11.8: калибровка темпа ВОЗВРАЩЕНА на детектор-акселерометр.
+                    // STEP_DETECTOR на этом устройстве непригоден (см. ветку выше).
+                    // В руке акселерометр честен: разброс 3-7% по замерам V11.6.
+                    // Карман и бег - открытая проблема, решение по диаг-данным.
+                    val calKind = calibrating
+                    if (calKind != null) collectCalInterval(calKind, added, timeMs)
                     // V9: детектор НЕ считает - счёт ведёт чип (ветка
                     // TYPE_STEP_COUNTER). Здесь остаётся обратная связь:
                     // вибрация может тикнуть на ложный шаг (тап), но число
@@ -968,6 +997,9 @@ class StepService : Service(), SensorEventListener {
         // Абсолютные границы правдоподобного человеческого шага, мс. НЕ из
         // профиля (иначе калибровка зависела бы от прежней калибровки).
         // 200 мс = 5 шагов/с (спринт), 2000 мс = очень медленный шаг.
+        // Диагностика STEP_DETECTOR: потолок выборки, чтобы длинная
+        // калибровка не раздувала память и строку журнала.
+        private const val HW_DET_DIAG_CAP = 300
         private const val CAL_MIN_STEP_MS = 200L
         private const val CAL_MAX_STEP_MS = 2000L
         // Тактильная калибровка (V11.6). Тик слабее обычной haptic (255),
