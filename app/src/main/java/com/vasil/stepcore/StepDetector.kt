@@ -399,8 +399,40 @@ class StepDetector {
         return byRange
     }
 
+    /**
+     * Переключение WALK<->RUN на лету (V11.13: голос амплитуды добавлен).
+     *
+     * До V11.13 решал только интервал (RUN_ENTER/RUN_EXIT). На устройстве
+     * нашёлся пользователь, у которого беговой и ходьбовый темп совпадают
+     * (диагностика: медианы 523 vs 543 мс, полное перекрытие) - для него
+     * интервал НЕ МОГ надёжно переключать режим, отсюда флаппинг метки.
+     *
+     * Та же диагностика показала: амплитуда удара у него разделяется чисто
+     * (ходьба 0.8-7.8 м/с2, бег 9.2-21.1, зазор 1.4 без единого шага внутри).
+     * Амплитуда - независимый от темпа сигнал (сила удара, не частота),
+     * поэтому она дополняет интервал, а не заменяет: где темп неоднозначен,
+     * решает удар.
+     *
+     * AMP_RUN_FLOOR не то же самое, что profile.walkPeakCap (6f): тот -
+     * потолок ВХОДА в WALK при классификации из карантина (classifyPending),
+     * этот - порог ГОЛОСА амплитуды при live-переключении уже подтверждённого
+     * режима. Разные этапы конвейера, разные константы, разные допуски -
+     * объединять их значило бы завязать вход и удержание на одно число,
+     * которое пришлось бы подбирать компромиссом для обеих задач сразу.
+     *
+     * Порог 8f - середина измеренного зазора 7.8-9.2 у пользователя с explicit
+     * данными; для остальных работает как ЯВНЫЙ признак бега (значительно
+     * выше 6f = потолок обычной ходьбы), так что универсальности не теряет.
+     */
     private fun reclassify() {
+        val ampSaysRun = emaAmp >= AMP_RUN_FLOOR
+        val ampSaysWalk = emaAmp < profile.walkPeakCap
         mode = when {
+            // Амплитуда однозначна - решает сама, даже при пограничном интервале.
+            ampSaysRun && emaIntervalMs <= RUN_EXIT_MS -> Mode.RUN
+            ampSaysWalk && emaIntervalMs >= RUN_ENTER_MS -> Mode.WALK
+            // Амплитуда в серой зоне (между walkPeakCap и AMP_RUN_FLOOR) -
+            // как раньше, решает только интервал.
             emaIntervalMs < RUN_ENTER_MS -> Mode.RUN
             emaIntervalMs > RUN_EXIT_MS -> Mode.WALK
             else -> mode
@@ -449,6 +481,8 @@ class StepDetector {
         private const val WARM_AMP_HI = 1.5f
         private const val RUN_ENTER_MS = 380f
         private const val RUN_EXIT_MS = 500f
+        // Порог голоса амплитуды в reclassify (V11.13). См. комментарий там.
+        private const val AMP_RUN_FLOOR = 8f
         private const val TRANSPORT_WINDOW_MS = 15000L
         private const val TRANSPORT_PEAKS_MIN = 15
         private const val TRANSPORT_STICKY_MS = 10000L
