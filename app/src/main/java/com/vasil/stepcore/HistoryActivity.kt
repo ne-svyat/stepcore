@@ -14,7 +14,9 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
+import androidx.room.withTransaction
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -108,19 +110,30 @@ class HistoryActivity : AppCompatActivity() {
      *   - битый файл - отказ целиком, база не тронута.
      */
     private suspend fun importJson(uri: android.net.Uri) {
-        toast("Импортирую...")
+        toast("Импортирую... Большой файл - до минуты")
         val report = try {
-            withContext(Dispatchers.IO) {
+            // NonCancellable (V11.18): раньше импорт жил в lifecycleScope
+            // экрана - уход на главный посреди большого файла ОТМЕНЯЛ его на
+            // середине. Реальный случай: события до 08.07 успели вставиться,
+            // 09-10.07 - нет, а отмена маскировалась под "файл повреждён".
+            // Начатый импорт теперь доводится до конца независимо от экрана.
+            withContext(Dispatchers.IO + NonCancellable) {
                 val text = contentResolver.openInputStream(uri)
                     ?.bufferedReader()?.use { it.readText() }
                     ?: return@withContext "Не удалось открыть файл"
                 val root = org.json.JSONObject(text)
                 val schema = root.optInt("schema", 1)
-                val dao = AppDb.get(this@HistoryActivity).dao()
+                val db = AppDb.get(this@HistoryActivity)
+                val dao = db.dao()
                 val haveDates = dao.allDays().map { it.date }.toHashSet()
                 val haveHours = dao.allHours().map { it.dateHour }.toHashSet()
                 val haveTimes = dao.allEventTimes().toHashSet()
                 var dA = 0; var dS = 0; var hA = 0; var hS = 0; var eA = 0; var eS = 0
+
+                // Одна транзакция на весь импорт (V11.18): на порядки быстрее
+                // тысяч одиночных вставок и атомарно - при любой ошибке
+                // откатывается ВСЁ, частичного импорта не бывает.
+                db.withTransaction {
 
                 val days = root.optJSONArray("days") ?: org.json.JSONArray()
                 for (i in 0 until days.length()) {
@@ -162,6 +175,7 @@ class HistoryActivity : AppCompatActivity() {
                     ))
                     eA++
                 }
+                }
                 buildString {
                     append("Дни: +$dA, дубликатов $dS\n")
                     append("Часы: +$hA, дубликатов $hS\n")
@@ -171,8 +185,12 @@ class HistoryActivity : AppCompatActivity() {
                         "Импортированные дни будут считаться по текущему профилю.")
                 }
             }
+        } catch (e: org.json.JSONException) {
+            "Импорт не удался: файл повреждён или это не бэкап StepCore. База не изменена."
         } catch (e: Exception) {
-            "Импорт не удался: файл повреждён или не тот формат. База не изменена."
+            // Не выдумываем причину: показываем класс ошибки. Транзакция
+            // гарантирует, что база откатилась в исходное состояние.
+            "Импорт не удался: ${e.javaClass.simpleName}. Транзакция откатила изменения, база в исходном состоянии."
         }
         // V11.17: порядок и защита. Раньше диалог показывался ДО reload и
         // падал с BadTokenException, если окно Activity уже невалидно (MIUI
