@@ -126,6 +126,11 @@ class StepService : Service(), SensorEventListener {
 
     private var calibrating: String? = null
     private val calIntervals = ArrayList<Long>()
+    // Диагностика V11.12: амплитуда удара и фон гироскопа НА КАЖДЫЙ принятый
+    // шаг калибровки, параллельно calIntervals. По этим данным проектируется
+    // различение бег/ходьба (по темпу у этого пользователя они неразличимы).
+    private val calAmps = ArrayList<Float>()
+    private val calGyros = ArrayList<Float>()
     private var calLastStepMs = 0L
     private var calUiTick = 0   // троттлинг живого прогресса, V11.4
     private var calRejected = 0 // отброшено мусорных интервалов, V11.5
@@ -366,6 +371,8 @@ class StepService : Service(), SensorEventListener {
     private fun startCalibration(kind: String) {
         calibrating = kind
         calIntervals.clear()
+        calAmps.clear()
+        calGyros.clear()
         calLastStepMs = 0L
         calUiTick = 0
         calRejected = 0
@@ -423,6 +430,8 @@ class StepService : Service(), SensorEventListener {
             val iv = timeMs - calLastStepMs
             if (iv in CAL_MIN_STEP_MS..CAL_MAX_STEP_MS) {
                 calIntervals.add(iv)
+                calAmps.add(detector.lastStepAmp)
+                calGyros.add(detector.gyroRms)
                 // Тихий тик "шаг зачтён" - чтобы пользователь понимал, что
                 // калибровка идёт, НЕ глядя в экран. Слабее обычной haptic.
                 vibrator.vibrate(VibrationEffect.createOneShot(CAL_TICK_MS, CAL_TICK_AMP))
@@ -486,6 +495,13 @@ class StepService : Service(), SensorEventListener {
         if (calIntervals.isNotEmpty()) {
             logEvent("[диаг] кал.$kind акселерометр (${calIntervals.size}): " +
                 calIntervals.joinToString(","))
+            // Тройки мс/амплитуда/гиро - главные данные для различения
+            // бег/ходьба. Индексы совпадают с calIntervals.
+            logEvent("[диаг] кал.$kind шаги мс/амп/гиро: " +
+                calIntervals.indices.joinToString(" ") { i ->
+                    "%d/%.1f/%.1f".format(calIntervals[i],
+                        calAmps.getOrElse(i) { 0f }, calGyros.getOrElse(i) { 0f })
+                })
         }
         if (calIntervals.size < MIN_CAL_INTERVALS) {
             StepsState.calibrationState.value =

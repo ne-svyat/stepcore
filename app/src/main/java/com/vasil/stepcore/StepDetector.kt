@@ -84,6 +84,11 @@ class StepDetector {
     var acceptedExempt = 0
         private set
     val gyroRms: Float get() = sqrt(gyroRmsSq)
+
+    /** Амплитуда последнего подтверждённого шага (вертикаль, м/с2). Только
+     *  для диагностики V11.12 - ядро её не читает. */
+    var lastStepAmp = 0f
+        private set
     var rejectedNoRotation = 0
         private set
     var rejectedWarmAmp = 0
@@ -325,6 +330,7 @@ class StepDetector {
                 lastConfirmInWindowMs = timeMs
                 updateEstimates(interval.toFloat(), vert)
                 reclassify()
+                lastStepAmp = vert
                 stepCount++
                 return 1
             }
@@ -343,6 +349,7 @@ class StepDetector {
                 lastConfirmInWindowMs = timeMs
                 emaIntervalMs = avgPendingInterval()
                 emaAmp = pendingAmps.average().toFloat()
+                lastStepAmp = emaAmp
                 val granted = pendingTimesMs.size
                 pendingTimesMs.clear(); pendingAmps.clear()
                 stepCount += granted
