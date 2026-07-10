@@ -14,7 +14,9 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -90,6 +92,96 @@ class HistoryActivity : AppCompatActivity() {
             }
         }
 
+    private val jsonImporter =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri != null) lifecycleScope.launch { importJson(uri) }
+        }
+
+    /**
+     * Импорт бэкапа (V11.16). Правила безопасности:
+     *   - существующие дни/часы НИКОГДА не перезаписываются - импорт только
+     *     добавляет отсутствующее. Локальные данные всегда главнее файла;
+     *   - события дедуплицируются по timeMs - повторный импорт того же файла
+     *     не плодит копии;
+     *   - schema 1 - прежний неполный формат: дни без снапшотов, часов нет
+     *     совсем. Принимается, но с честным предупреждением в отчёте;
+     *   - битый файл - отказ целиком, база не тронута.
+     */
+    private suspend fun importJson(uri: android.net.Uri) {
+        toast("Импортирую...")
+        val report = try {
+            withContext(Dispatchers.IO) {
+                val text = contentResolver.openInputStream(uri)
+                    ?.bufferedReader()?.use { it.readText() }
+                    ?: return@withContext "Не удалось открыть файл"
+                val root = org.json.JSONObject(text)
+                val schema = root.optInt("schema", 1)
+                val dao = AppDb.get(this@HistoryActivity).dao()
+                val haveDates = dao.allDays().map { it.date }.toHashSet()
+                val haveHours = dao.allHours().map { it.dateHour }.toHashSet()
+                val haveTimes = dao.allEventTimes().toHashSet()
+                var dA = 0; var dS = 0; var hA = 0; var hS = 0; var eA = 0; var eS = 0
+
+                val days = root.optJSONArray("days") ?: org.json.JSONArray()
+                for (i in 0 until days.length()) {
+                    val o = days.getJSONObject(i)
+                    val date = o.getString("date")
+                    if (date in haveDates) { dS++; continue }
+                    dao.insertDayIfAbsent(DayRecord(
+                        date = date,
+                        walkSteps = o.optInt("walk", 0),
+                        runSteps = o.optInt("run", 0),
+                        kcalActive = o.optInt("kcalActive", -1),
+                        kcalBasal = o.optInt("kcalBasal", -1),
+                        distanceM = o.optInt("distanceM", -1),
+                        activeSec = o.optInt("activeSec", -1),
+                    ))
+                    dA++
+                }
+                val hours = root.optJSONArray("hours") ?: org.json.JSONArray()
+                for (i in 0 until hours.length()) {
+                    val o = hours.getJSONObject(i)
+                    val k = o.getString("dateHour")
+                    if (k in haveHours) { hS++; continue }
+                    dao.insertHourIfAbsent(HourRecord(
+                        dateHour = k,
+                        walkSteps = o.optInt("walk", 0),
+                        runSteps = o.optInt("run", 0),
+                    ))
+                    hA++
+                }
+                val events = root.optJSONArray("events") ?: org.json.JSONArray()
+                for (i in 0 until events.length()) {
+                    val o = events.getJSONObject(i)
+                    val t = o.getLong("timeMs")
+                    if (t in haveTimes) { eS++; continue }
+                    dao.addEvent(EventRecord(
+                        timeMs = t,
+                        date = o.getString("date"),
+                        text = o.getString("text"),
+                    ))
+                    eA++
+                }
+                buildString {
+                    append("Дни: +$dA, дубликатов $dS\n")
+                    append("Часы: +$hA, дубликатов $hS\n")
+                    append("События: +$eA, дубликатов $eS")
+                    if (schema < 2) append("\n\nВнимание: это старый неполный бэкап - " +
+                        "без калорий, дистанции, активного времени и почасовых данных. " +
+                        "Импортированные дни будут считаться по текущему профилю.")
+                }
+            }
+        } catch (e: Exception) {
+            "Импорт не удался: файл повреждён или не тот формат. База не изменена."
+        }
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Импорт завершён")
+            .setMessage(report)
+            .setPositiveButton("Понятно", null)
+            .show()
+        reload()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_history)
@@ -110,6 +202,10 @@ class HistoryActivity : AppCompatActivity() {
         }
         findViewById<Button>(R.id.exportJsonButton).setOnClickListener {
             jsonSaver.launch("stepcore_full.json")
+        }
+        findViewById<Button>(R.id.importJsonButton).setOnClickListener {
+            jsonImporter.launch(arrayOf(
+                "application/json", "application/octet-stream", "text/plain"))
         }
 
         findViewById<Button>(R.id.deleteButton).setOnClickListener {

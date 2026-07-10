@@ -83,6 +83,13 @@ interface StepDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertDay(day: DayRecord)
 
+    /**
+     * Вставка дня ТОЛЬКО если его нет (V11.16, импорт). Импорт никогда не
+     * перезаписывает существующие данные - REPLACE тут был бы потерей.
+     */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertDayIfAbsent(day: DayRecord)
+
     @Query("SELECT * FROM days WHERE date = :date")
     suspend fun day(date: String): DayRecord?
 
@@ -147,6 +154,14 @@ interface StepDao {
     /** Вся почасовая таблица - для полного бэкапа (V11.15). */
     @Query("SELECT * FROM hours ORDER BY dateHour ASC")
     suspend fun allHours(): List<HourRecord>
+
+    /** Вставка часа только если его нет (V11.16, импорт). */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertHourIfAbsent(h: HourRecord)
+
+    /** Времена всех событий - дедупликация при импорте (V11.16). */
+    @Query("SELECT timeMs FROM events")
+    suspend fun allEventTimes(): List<Long>
 
     @Query("DELETE FROM hours")
     suspend fun deleteAllHours()

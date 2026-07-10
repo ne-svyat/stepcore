@@ -63,6 +63,9 @@
                 <Button android:id="@+id/exportJsonButton" style="?android:attr/buttonBarButtonStyle"
                     android:layout_width="0dp" android:layout_weight="1"
                     android:layout_height="wrap_content" android:text="JSON" />
+                <Button android:id="@+id/importJsonButton" style="?android:attr/buttonBarButtonStyle"
+                    android:layout_width="0dp" android:layout_weight="1"
+                    android:layout_height="wrap_content" android:text="Импорт" />
             </LinearLayout>
 
             <TextView
