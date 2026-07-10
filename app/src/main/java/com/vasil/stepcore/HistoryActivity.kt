@@ -40,27 +40,53 @@ class HistoryActivity : AppCompatActivity() {
             }
         }
 
+    /**
+     * Экранирование строк для JSON (V11.15). Тексты событий содержат что
+     * угодно (диаг-строки со скобками, будущие пользовательские заметки) -
+     * без экранирования одна кавычка ломает весь бэкап.
+     */
+    private fun jsonEsc(t: String) = t
+        .replace("\\", "\\\\").replace("\"", "\\\"")
+        .replace("\n", "\\n").replace("\r", "")
+
+    /**
+     * Полный бэкап, schema 2 (V11.15). Прежний формат терял снапшоты дней
+     * (kcal, дистанция, активное время) и ВСЮ почасовую таблицу:
+     * восстановление из него пересчитало бы прошлое текущим профилем -
+     * ровно тот класс багов, что закрыт в V9.9-V11.9, - и оставило бы
+     * Timeline внутри дня пустым. Теперь уходит всё, из чего состоит
+     * история. Поле schema позволит импорту различать форматы.
+     */
     private val jsonSaver =
         registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
             if (uri != null) lifecycleScope.launch {
                 val dao = AppDb.get(this@HistoryActivity).dao()
                 val days = dao.allDays()
+                val hours = dao.allHours()
                 val events = dao.allEvents()
                 val json = buildString {
                     appendLine("{")
+                    appendLine("\"schema\":2,")
                     appendLine("\"days\":[")
                     append(days.joinToString(",\n") {
-                        "{\"date\":\"${it.date}\",\"walk\":${it.walkSteps},\"run\":${it.runSteps}}"
+                        "{\"date\":\"${it.date}\",\"walk\":${it.walkSteps},\"run\":${it.runSteps}," +
+                        "\"kcalActive\":${it.kcalActive},\"kcalBasal\":${it.kcalBasal}," +
+                        "\"distanceM\":${it.distanceM},\"activeSec\":${it.activeSec}}"
+                    })
+                    appendLine("],")
+                    appendLine("\"hours\":[")
+                    append(hours.joinToString(",\n") {
+                        "{\"dateHour\":\"${it.dateHour}\",\"walk\":${it.walkSteps},\"run\":${it.runSteps}}"
                     })
                     appendLine("],")
                     appendLine("\"events\":[")
                     append(events.joinToString(",\n") {
-                        "{\"timeMs\":${it.timeMs},\"date\":\"${it.date}\",\"text\":\"${it.text}\"}"
+                        "{\"timeMs\":${it.timeMs},\"date\":\"${it.date}\",\"text\":\"${jsonEsc(it.text)}\"}"
                     })
                     appendLine("]}")
                 }
                 contentResolver.openOutputStream(uri)?.use { it.write(json.toByteArray()) }
-                toast("JSON сохранён")
+                toast("JSON сохранён (полный бэкап)")
             }
         }
 

@@ -144,6 +144,10 @@ interface StepDao {
     @Query("SELECT * FROM hours WHERE dateHour LIKE :dayPrefix || '%' ORDER BY dateHour ASC")
     suspend fun hoursOfDay(dayPrefix: String): List<HourRecord>
 
+    /** Вся почасовая таблица - для полного бэкапа (V11.15). */
+    @Query("SELECT * FROM hours ORDER BY dateHour ASC")
+    suspend fun allHours(): List<HourRecord>
+
     @Query("DELETE FROM hours")
     suspend fun deleteAllHours()
 
