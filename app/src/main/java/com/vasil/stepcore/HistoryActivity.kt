@@ -174,12 +174,28 @@ class HistoryActivity : AppCompatActivity() {
         } catch (e: Exception) {
             "Импорт не удался: файл повреждён или не тот формат. База не изменена."
         }
-        androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Импорт завершён")
-            .setMessage(report)
-            .setPositiveButton("Понятно", null)
-            .show()
+        // V11.17: порядок и защита. Раньше диалог показывался ДО reload и
+        // падал с BadTokenException, если окно Activity уже невалидно (MIUI
+        // уводит его за системным пикером файлов, а импорт большого файла
+        // долгий). Падение убивало процесс ПОСЛЕ успешной записи в базу:
+        // данные были на месте, но экран не обновлялся - выглядело как
+        // "импорт не сработал, появилось со второго захода".
+        // Теперь: сначала обновить экран, потом диалог - и только если окно
+        // живо; иначе тост (он не привязан к окну Activity).
         reload()
+        if (!isFinishing && !isDestroyed) {
+            try {
+                androidx.appcompat.app.AlertDialog.Builder(this)
+                    .setTitle("Импорт завершён")
+                    .setMessage(report)
+                    .setPositiveButton("Понятно", null)
+                    .show()
+            } catch (e: Exception) {
+                toast("Импорт завершён. " + report.replace("\n", " · "))
+            }
+        } else {
+            toast("Импорт завершён. " + report.replace("\n", " · "))
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
