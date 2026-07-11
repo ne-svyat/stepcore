@@ -1,5 +1,6 @@
 package com.vasil.stepcore.survival.harness
 
+import com.vasil.stepcore.survival.engine.BackupCodec
 import com.vasil.stepcore.survival.engine.Corpus
 import com.vasil.stepcore.survival.engine.StepLedger
 import com.vasil.stepcore.survival.engine.SurvivalEngine
@@ -188,6 +189,42 @@ fun main(args: Array<String>) {
             "final.summary", "final.first_snow", "final.storms",
         )
         for (k in need) check("corpus.key." + k, corpus.has(k))
+    }
+
+    // --- 7. Кодек бэкапа: экранирование и план слияния ---
+    run {
+        val ev = BackupCodec.EvBackup(1, 5L, "weather", "Строка с \"кавычкой\", \\ и\nпереносом")
+        val exp = BackupCodec.ExpBackup(42L, 1, "taiga", 2, 20, 30, 100,
+            "done_success", 1L, 2L, 30, "2026-07-11", 0, 0, listOf(ev))
+        val frag = BackupCodec.exportFragment(listOf(exp))
+        check("codec.no_raw_newline_in_strings", !frag.contains("и\nпереносом"))
+        check("codec.escaped_quote", frag.contains("\\\"кавычкой\\\""))
+        check("codec.fragment_shape", frag.startsWith("\"expeditions\":[") && frag.endsWith("]"))
+
+        // план слияния: дубликат seed, конфликт активных, свежая вставка
+        val a1 = BackupCodec.ExpBackup(100L, 1, "taiga", 0, 10, 30, 100, "active", 0, 0, 1, "d", 0, 0, emptyList())
+        val a2 = BackupCodec.ExpBackup(200L, 1, "taiga", 0, 10, 30, 100, "active", 0, 0, 1, "d", 0, 0, emptyList())
+        val d1 = BackupCodec.ExpBackup(300L, 1, "taiga", 0, 10, 30, 100, "done_success", 0, 0, 30, "d", 0, 0, emptyList())
+        val dup = BackupCodec.ExpBackup(400L, 1, "taiga", 0, 10, 30, 100, "done_success", 0, 0, 30, "d", 0, 0, emptyList())
+
+        // свежее устройство: всё входит, активная одна
+        var plan = BackupCodec.mergePlan(emptySet(), false, listOf(a1, d1))
+        check("merge.fresh_all_insert", plan.all { it is BackupCodec.Action.Insert })
+
+        // локальная активная есть: активная из файла пропускается, завершённая входит
+        plan = BackupCodec.mergePlan(emptySet(), true, listOf(a1, d1))
+        check("merge.active_conflict_skip", plan[0] is BackupCodec.Action.Skip &&
+            (plan[0] as BackupCodec.Action.Skip).reason == "уже есть активная")
+        check("merge.done_passes", plan[1] is BackupCodec.Action.Insert)
+
+        // дубликат seed пропускается
+        plan = BackupCodec.mergePlan(setOf(400L), false, listOf(dup))
+        check("merge.seed_dup_skip", plan[0] is BackupCodec.Action.Skip)
+
+        // две активные в файле: входит только первая
+        plan = BackupCodec.mergePlan(emptySet(), false, listOf(a1, a2))
+        check("merge.two_actives_in_file", plan[0] is BackupCodec.Action.Insert &&
+            plan[1] is BackupCodec.Action.Skip)
     }
 
     // --- 6. Склонение дней ---

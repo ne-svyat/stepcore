@@ -68,9 +68,12 @@ class HistoryActivity : AppCompatActivity() {
                 val days = dao.allDays()
                 val hours = dao.allHours()
                 val events = dao.allEvents()
+                // Секция экспедиций (schema 3): собирается survival-модулем,
+                // ядро о его устройстве не знает. Вызов до buildString - suspend.
+                val survivalJson = com.vasil.stepcore.survival.SurvivalBackup.exportFragment(this@HistoryActivity)
                 val json = buildString {
                     appendLine("{")
-                    appendLine("\"schema\":2,")
+                    appendLine("\"schema\":3,")
                     appendLine("\"days\":[")
                     append(days.joinToString(",\n") {
                         "{\"date\":\"${it.date}\",\"walk\":${it.walkSteps},\"run\":${it.runSteps}," +
@@ -87,7 +90,9 @@ class HistoryActivity : AppCompatActivity() {
                     append(events.joinToString(",\n") {
                         "{\"timeMs\":${it.timeMs},\"date\":\"${it.date}\",\"text\":\"${jsonEsc(it.text)}\"}"
                     })
-                    appendLine("]}")
+                    appendLine("],")
+                    append(survivalJson)
+                    appendLine("}")
                 }
                 contentResolver.openOutputStream(uri)?.use { it.write(json.toByteArray()) }
                 toast("JSON сохранён (полный бэкап)")
@@ -176,10 +181,14 @@ class HistoryActivity : AppCompatActivity() {
                     eA++
                 }
                 }
+                // Экспедиции (schema 3): отдельная БД - отдельная транзакция.
+                // Пустая строка = секции в файле нет, survival не трогается.
+                val svReport = com.vasil.stepcore.survival.SurvivalBackup.importFromBackup(this@HistoryActivity, root)
                 buildString {
                     append("Дни: +$dA, дубликатов $dS\n")
                     append("Часы: +$hA, дубликатов $hS\n")
                     append("События: +$eA, дубликатов $eS")
+                    if (svReport.isNotEmpty()) append("\n" + svReport)
                     if (schema < 2) append("\n\nВнимание: это старый неполный бэкап - " +
                         "без калорий, дистанции, активного времени и почасовых данных. " +
                         "Импортированные дни будут считаться по текущему профилю.")
