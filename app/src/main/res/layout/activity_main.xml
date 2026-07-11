@@ -184,6 +184,11 @@
                 android:layout_width="0dp" android:layout_weight="1"
                 android:layout_height="wrap_content" android:text="Калибровка"
                 android:textColor="@color/text_main" />
+
+            <Button android:id="@+id/survivalButton" style="?android:attr/buttonBarButtonStyle"
+                android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content" android:text="Экспедиция"
+                android:textColor="@color/text_main" />
         </LinearLayout>
 
         <androidx.appcompat.widget.SwitchCompat

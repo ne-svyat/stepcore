@@ -1,0 +1,191 @@
+package com.vasil.stepcore.survival.harness
+
+import com.vasil.stepcore.survival.engine.Corpus
+import com.vasil.stepcore.survival.engine.StepLedger
+import com.vasil.stepcore.survival.engine.SurvivalEngine
+import com.vasil.stepcore.survival.engine.WorldEvent
+import java.io.File
+
+/**
+ * Песочный прогон движка Survival Mode. НЕ входит в APK — лежит в tools/.
+ * Запуск: kotlinc (все .kt движка) SimHarness.kt -include-runtime -d h.jar
+ *         java -jar h.jar app/src/main/assets/survival/weather_ru.txt
+ * Ненулевой код выхода = нарушен инвариант.
+ */
+
+private var failures = 0
+
+private fun check(name: String, ok: Boolean, detail: String = "") {
+    if (!ok) {
+        failures++
+        println("FAIL  " + name + (if (detail.isEmpty()) "" else "  [" + detail + "]"))
+    }
+}
+
+private fun sig(e: WorldEvent) = "" + e.tick + "|" + e.category + "|" + e.key + "|" + e.roll
+
+fun main(args: Array<String>) {
+    val corpus = Corpus(File(args[0]).readText())
+
+    // --- 1. Детерминизм: два прогона одного seed идентичны ---
+    run {
+        val a = ArrayList<String>(); val b = ArrayList<String>()
+        SurvivalEngine(42L, 3, 30).run(0, 100) { a.add(sig(it)) }
+        SurvivalEngine(42L, 3, 30).run(0, 100) { b.add(sig(it)) }
+        check("determinism.same_seed", a == b)
+        val c = ArrayList<String>()
+        SurvivalEngine(43L, 3, 30).run(0, 100) { c.add(sig(it)) }
+        check("determinism.diff_seed_diff_world", a != c)
+    }
+
+    // --- 2. Инвариантность партий: 1x100 == куски произвольной нарезки ---
+    run {
+        val whole = ArrayList<String>()
+        SurvivalEngine(777L, 2, 25).run(0, 100) { whole.add(sig(it)) }
+        val cuts = listOf(0, 1, 7, 8, 37, 64, 99, 100)
+        val chunked = ArrayList<String>()
+        val eng = SurvivalEngine(777L, 2, 25)
+        for (i in 1 until cuts.size) {
+            eng.run(cuts[i - 1], cuts[i]) { chunked.add(sig(it)) }
+        }
+        check("determinism.batch_invariance", whole == chunked,
+            "whole=" + whole.size + " chunked=" + chunked.size)
+    }
+
+    // --- 3. Массовый прогон: 2000 экспедиций x 100 дней, все сезоны ---
+    run {
+        var events = 0L; var days = 0L
+        var weather = 0L; var ambient = 0L; var milestones = 0L
+        var stormDaysTotal = 0L
+        var holes = 0
+        val perDayMax = HashMap<Int, Int>()
+        var autumnFirstSnow = 0; var autumnRuns = 0
+        var winterFirstSnowLeak = 0
+        val tempMin = IntArray(4) { Int.MAX_VALUE }
+        val tempMax = IntArray(4) { Int.MIN_VALUE }
+
+        for (i in 0 until 2000) {
+            val season = i % 4
+            val seed = 100000L + i * 31L
+            val eng = SurvivalEngine(seed, season, SurvivalEngine.startOffsetFrom(seed))
+            var expFirstSnowEvent = false
+            val perDay = HashMap<Int, Int>()
+            val summary = eng.run(0, 100) { e ->
+                events++
+                when (e.category) {
+                    "weather" -> weather++
+                    "ambient" -> ambient++
+                    "milestone" -> milestones++
+                }
+                if (e.key == "wx.snow_first") expFirstSnowEvent = true
+                perDay[e.tick] = (perDay[e.tick] ?: 0) + 1
+                val txt = corpus.render(e.key, e.roll, e.params)
+                if (txt.startsWith("[")) { holes++; println("  дыра корпуса: " + e.key) }
+                if (txt.contains("{")) { holes++; println("  сирота-плейсхолдер: " + txt) }
+            }
+            days += 100
+            stormDaysTotal += summary.stormDays
+            if (tempMin[season] > summary.minTemp) tempMin[season] = summary.minTemp
+            if (tempMax[season] < summary.maxTemp) tempMax[season] = summary.maxTemp
+            for ((d, n) in perDay) {
+                if ((perDayMax[d] ?: 0) < n) perDayMax[d] = n
+            }
+            if (season == 3) { autumnRuns++; if (expFirstSnowEvent) autumnFirstSnow++ }
+            if (season == 0 && expFirstSnowEvent) winterFirstSnowLeak++
+        }
+
+        val perDayRate = events.toDouble() / days
+        println("события/день = " + String.format("%.3f", perDayRate) +
+            "  (погода " + weather + " · зарисовки " + ambient + " · вехи " + milestones + ")")
+        println("бурь: " + String.format("%.1f", stormDaysTotal * 100.0 / days) + " проц. дней")
+        println("температуры по сезонам (мин..макс): зима " + tempMin[0] + ".." + tempMax[0] +
+            " · весна " + tempMin[1] + ".." + tempMax[1] +
+            " · лето " + tempMin[2] + ".." + tempMax[2] +
+            " · осень " + tempMin[3] + ".." + tempMax[3])
+        println("первый снег: осень " + autumnFirstSnow + "/" + autumnRuns)
+
+        check("rate.per_day_in_band", perDayRate in 0.30..0.65, "" + perDayRate)
+        check("rate.max_two_per_day", (perDayMax.values.maxOrNull() ?: 0) <= 2)
+        check("corpus.no_holes", holes == 0)
+        // границы учитывают дрейф сезона: старт зимой за 100 дней доходит
+        // до середины весны (до ~+20), старт летом — до осенних холодов (~-18)
+        check("temp.winter_sane", tempMin[0] >= -45 && tempMax[0] <= 25,
+            tempMin[0].toString() + ".." + tempMax[0])
+        check("temp.summer_sane", tempMin[2] >= -25 && tempMax[2] <= 40,
+            tempMin[2].toString() + ".." + tempMax[2])
+        check("snow.autumn_first_snow_common", autumnFirstSnow.toDouble() / autumnRuns > 0.7,
+            "" + autumnFirstSnow + "/" + autumnRuns)
+        check("snow.no_first_snow_in_winter_start", winterFirstSnowLeak == 0)
+        check("storm.rare", stormDaysTotal.toDouble() / days in 0.005..0.10)
+    }
+
+    // --- 4. StepLedger: крайние случаи ---
+    run {
+        val totals = mapOf("2026-07-08" to 9000, "2026-07-09" to 4000, "2026-07-10" to 12000)
+        val get = { d: String -> totals[d] ?: 0 }
+
+        // тот же день, простое приращение
+        var r = StepLedger.advance(StepLedger.Sync("2026-07-11", 1000, 200), "2026-07-11",
+            4300, get, emptyList(), 1000)
+        check("ledger.same_day", r.newTicks == 3 && r.sync.remainder == 500 &&
+            r.sync.daySteps == 4300, r.toString())
+
+        // ролловер: хвост дня синхронизации + дни между + сегодня
+        r = StepLedger.advance(StepLedger.Sync("2026-07-08", 6500, 0), "2026-07-11",
+            700, get, listOf("2026-07-09", "2026-07-10"), 5000)
+        // хвост 2500 + 4000 + 12000 + 700 = 19200 -> 3 тика, остаток 4200
+        check("ledger.rollover", r.newTicks == 3 && r.sync.remainder == 4200 &&
+            r.sync.date == "2026-07-11", r.toString())
+
+        // часы назад: ноль начислений, состояние не тронуто
+        r = StepLedger.advance(StepLedger.Sync("2026-07-11", 500, 100), "2026-07-10",
+            9999, get, emptyList(), 1000)
+        check("ledger.clock_back", r.newTicks == 0 && r.sync.date == "2026-07-11" &&
+            r.sync.daySteps == 500 && r.sync.remainder == 100)
+
+        // сброс prefs: сегодня счётчик меньше базы -> принять новую базу
+        r = StepLedger.advance(StepLedger.Sync("2026-07-11", 8000, 300), "2026-07-11",
+            50, get, emptyList(), 1000)
+        check("ledger.prefs_reset", r.newTicks == 0 && r.sync.daySteps == 50 &&
+            r.sync.remainder == 300)
+
+        // исчезнувшая запись дня синхронизации не даёт отрицательных шагов
+        r = StepLedger.advance(StepLedger.Sync("2026-07-01", 5000, 0), "2026-07-11",
+            100, get, emptyList(), 1000)
+        check("ledger.missing_day_guard", r.newTicks == 0 && r.sync.remainder == 100)
+
+        // эквивалентность: скормить шаги одним куском == произвольными кусками
+        val lump = StepLedger.advance(StepLedger.Sync("2026-07-11", 0, 0), "2026-07-11",
+            23456, get, emptyList(), 700)
+        var s = StepLedger.Sync("2026-07-11", 0, 0)
+        var ticks = 0
+        for (v in intArrayOf(100, 5000, 5100, 12222, 23456)) {
+            val rr = StepLedger.advance(s, "2026-07-11", v, get, emptyList(), 700)
+            ticks += rr.newTicks; s = rr.sync
+        }
+        check("ledger.chunk_equivalence", ticks == lump.newTicks && s.remainder == lump.sync.remainder,
+            "lump=" + lump.newTicks + " chunk=" + ticks)
+    }
+
+    // --- 5. Корпус: обязательные ключи присутствуют ---
+    run {
+        val need = listOf(
+            "start.winter", "start.spring", "start.summer", "start.autumn",
+            "season.to_winter", "season.to_spring", "season.to_summer", "season.to_autumn",
+            "wx.rain_start", "wx.rain_stop", "wx.heavy_rain", "wx.thunder",
+            "wx.sleet_start", "wx.snow_first", "wx.snow_start", "wx.snow_stop",
+            "wx.blizzard", "wx.storm", "wx.cold_snap", "wx.thaw", "wx.heat",
+            "wx.clear_streak", "wx.fog", "wx.wind_strong", "ambient",
+            "end.success", "end.voluntary",
+            "final.summary", "final.first_snow", "final.storms",
+        )
+        for (k in need) check("corpus.key." + k, corpus.has(k))
+    }
+
+    if (failures == 0) {
+        println("OK: все инварианты выдержаны")
+    } else {
+        println("ПРОВАЛОВ: " + failures)
+        kotlin.system.exitProcess(1)
+    }
+}

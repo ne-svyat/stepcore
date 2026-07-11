@@ -113,6 +113,10 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(this, TimelineActivity::class.java))
         }
 
+        findViewById<Button>(R.id.survivalButton).setOnClickListener {
+            startActivity(Intent(this, com.vasil.stepcore.survival.SurvivalActivity::class.java))
+        }
+
         toolsToggle.setOnClickListener {
             val open = toolsContainer.visibility == View.VISIBLE
             toolsContainer.visibility = if (open) View.GONE else View.VISIBLE

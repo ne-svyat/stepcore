@@ -1,0 +1,261 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="16dp"
+            android:paddingBottom="80dp">
+
+            <!-- ===== форма старта (видна, когда активной экспедиции нет) ===== -->
+            <LinearLayout
+                android:id="@+id/startBox"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="НОВАЯ ЭКСПЕДИЦИЯ"
+                    android:textColor="@color/accent_red"
+                    android:textStyle="bold"
+                    android:letterSpacing="0.08"
+                    android:textSize="15sp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Северная тайга. Мир живёт от твоих шагов."
+                    android:textColor="@color/text_dim"
+                    android:textSize="13sp"
+                    android:layout_marginTop="4dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Сезон старта"
+                    android:textColor="@color/text_dim"
+                    android:textSize="13sp"
+                    android:layout_marginTop="20dp" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+                    <Button android:id="@+id/seasonWinterBtn" style="?android:attr/buttonBarButtonStyle"
+                        android:layout_width="0dp" android:layout_weight="1"
+                        android:layout_height="wrap_content" android:text="Зима"
+                        android:textColor="@color/text_main" />
+                    <Button android:id="@+id/seasonSpringBtn" style="?android:attr/buttonBarButtonStyle"
+                        android:layout_width="0dp" android:layout_weight="1"
+                        android:layout_height="wrap_content" android:text="Весна"
+                        android:textColor="@color/text_main" />
+                    <Button android:id="@+id/seasonSummerBtn" style="?android:attr/buttonBarButtonStyle"
+                        android:layout_width="0dp" android:layout_weight="1"
+                        android:layout_height="wrap_content" android:text="Лето"
+                        android:textColor="@color/text_main" />
+                    <Button android:id="@+id/seasonAutumnBtn" style="?android:attr/buttonBarButtonStyle"
+                        android:layout_width="0dp" android:layout_weight="1"
+                        android:layout_height="wrap_content" android:text="Осень"
+                        android:textColor="@color/text_main" />
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="План, дней мира"
+                    android:textColor="@color/text_dim"
+                    android:textSize="13sp"
+                    android:layout_marginTop="12dp" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+                    <Button android:id="@+id/dur30Btn" style="?android:attr/buttonBarButtonStyle"
+                        android:layout_width="0dp" android:layout_weight="1"
+                        android:layout_height="wrap_content" android:text="30"
+                        android:textColor="@color/text_main" />
+                    <Button android:id="@+id/dur60Btn" style="?android:attr/buttonBarButtonStyle"
+                        android:layout_width="0dp" android:layout_weight="1"
+                        android:layout_height="wrap_content" android:text="60"
+                        android:textColor="@color/text_main" />
+                    <Button android:id="@+id/dur100Btn" style="?android:attr/buttonBarButtonStyle"
+                        android:layout_width="0dp" android:layout_weight="1"
+                        android:layout_height="wrap_content" android:text="100"
+                        android:textColor="@color/text_main" />
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Темп: шагов на один день мира"
+                    android:textColor="@color/text_dim"
+                    android:textSize="13sp"
+                    android:layout_marginTop="12dp" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+                    <Button android:id="@+id/tempo100Btn" style="?android:attr/buttonBarButtonStyle"
+                        android:layout_width="0dp" android:layout_weight="1"
+                        android:layout_height="wrap_content" android:text="100"
+                        android:textColor="@color/text_main" />
+                    <Button android:id="@+id/tempo1000Btn" style="?android:attr/buttonBarButtonStyle"
+                        android:layout_width="0dp" android:layout_weight="1"
+                        android:layout_height="wrap_content" android:text="1 000"
+                        android:textColor="@color/text_main" />
+                    <Button android:id="@+id/tempo5000Btn" style="?android:attr/buttonBarButtonStyle"
+                        android:layout_width="0dp" android:layout_weight="1"
+                        android:layout_height="wrap_content" android:text="5 000"
+                        android:textColor="@color/text_main" />
+                    <Button android:id="@+id/tempo10000Btn" style="?android:attr/buttonBarButtonStyle"
+                        android:layout_width="0dp" android:layout_weight="1"
+                        android:layout_height="wrap_content" android:text="10 000"
+                        android:textColor="@color/text_main" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/tempoHintText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/text_dim"
+                    android:textSize="13sp"
+                    android:layout_marginTop="8dp" />
+
+                <Button
+                    android:id="@+id/startExpBtn"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Отправиться"
+                    android:layout_marginTop="16dp" />
+
+                <TextView
+                    android:id="@+id/archiveTitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="АРХИВ"
+                    android:textColor="@color/accent_red"
+                    android:textStyle="bold"
+                    android:letterSpacing="0.08"
+                    android:textSize="15sp"
+                    android:layout_marginTop="28dp" />
+
+                <LinearLayout
+                    android:id="@+id/archiveBox"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:layout_marginTop="8dp" />
+
+            </LinearLayout>
+
+            <!-- ===== активная экспедиция / просмотр архива ===== -->
+            <LinearLayout
+                android:id="@+id/activeBox"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <Button
+                    android:id="@+id/backBtn"
+                    style="?android:attr/buttonBarButtonStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="&#8592; К списку"
+                    android:textColor="@color/text_dim"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/expTitleText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/text_main"
+                    android:textStyle="bold"
+                    android:textSize="20sp" />
+
+                <TextView
+                    android:id="@+id/expPassportText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/text_dim"
+                    android:textSize="13sp"
+                    android:layout_marginTop="4dp" />
+
+                <TextView
+                    android:id="@+id/expStateText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/text_main"
+                    android:textSize="16sp"
+                    android:layout_marginTop="14dp" />
+
+                <TextView
+                    android:id="@+id/expCountdownText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/text_dim"
+                    android:textSize="13sp"
+                    android:layout_marginTop="4dp" />
+
+                <TextView
+                    android:id="@+id/syncNoteText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/accent_blue"
+                    android:textSize="13sp"
+                    android:layout_marginTop="8dp"
+                    android:visibility="gone" />
+
+                <LinearLayout
+                    android:id="@+id/actionRow"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginTop="12dp">
+                    <Button android:id="@+id/refreshBtn"
+                        android:layout_width="0dp" android:layout_weight="1"
+                        android:layout_height="wrap_content"
+                        android:text="Обновить" />
+                    <Button android:id="@+id/finishBtn" style="?android:attr/buttonBarButtonStyle"
+                        android:layout_width="0dp" android:layout_weight="1"
+                        android:layout_height="wrap_content"
+                        android:text="Завершить"
+                        android:textColor="@color/text_dim" />
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="ЖУРНАЛ"
+                    android:textColor="@color/accent_red"
+                    android:textStyle="bold"
+                    android:letterSpacing="0.08"
+                    android:textSize="15sp"
+                    android:layout_marginTop="20dp" />
+
+                <TextView
+                    android:id="@+id/journalText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/text_main"
+                    android:textSize="15sp"
+                    android:lineSpacingExtra="6dp"
+                    android:layout_marginTop="8dp" />
+
+            </LinearLayout>
+
+        </LinearLayout>
+    </ScrollView>
+</FrameLayout>

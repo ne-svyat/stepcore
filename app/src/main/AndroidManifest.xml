@@ -59,5 +59,10 @@
             android:exported="false"
             android:screenOrientation="portrait" />
 
+        <activity
+            android:name=".survival.SurvivalActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
     </application>
 </manifest>

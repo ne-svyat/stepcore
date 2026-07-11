@@ -1,0 +1,324 @@
+package com.vasil.stepcore.survival
+
+import android.os.Bundle
+import android.view.View
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.TextView
+import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
+import com.vasil.stepcore.R
+import com.vasil.stepcore.survival.engine.SurvivalEngine
+import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.time.LocalDate
+import java.util.Date
+import java.util.Locale
+
+/**
+ * Экран Survival Mode. Три состояния одного layout:
+ * - форма старта + архив (активной экспедиции нет);
+ * - активная экспедиция (паспорт, догон, журнал);
+ * - просмотр завершённой экспедиции из архива (read-only).
+ *
+ * Догон мира происходит ТОЛЬКО здесь (onResume / кнопка «Обновить») —
+ * ноль фоновых вычислений, бюджет батареи режима равен нулю.
+ */
+class SurvivalActivity : AppCompatActivity() {
+
+    private lateinit var repo: SurvivalRepo
+
+    // выбор в форме старта
+    private var season = defaultSeason()
+    private var durDays = 60
+    private var tempo = 5000
+    private var avgSteps = 0
+
+    /** id экспедиции из архива, открытой на просмотр; -1 = не в архиве. */
+    private var viewingId = -1L
+
+    private lateinit var startBox: LinearLayout
+    private lateinit var activeBox: LinearLayout
+    private lateinit var archiveBox: LinearLayout
+    private lateinit var seasonBtns: List<Button>
+    private lateinit var durBtns: List<Button>
+    private lateinit var tempoBtns: List<Button>
+    private lateinit var tempoHint: TextView
+    private lateinit var expTitle: TextView
+    private lateinit var expPassport: TextView
+    private lateinit var expState: TextView
+    private lateinit var expCountdown: TextView
+    private lateinit var syncNote: TextView
+    private lateinit var journal: TextView
+    private lateinit var actionRow: LinearLayout
+    private lateinit var refreshBtn: Button
+    private lateinit var finishBtn: Button
+    private lateinit var backBtn: Button
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_survival)
+        repo = SurvivalRepo(this)
+
+        startBox = findViewById(R.id.startBox)
+        activeBox = findViewById(R.id.activeBox)
+        archiveBox = findViewById(R.id.archiveBox)
+        tempoHint = findViewById(R.id.tempoHintText)
+        expTitle = findViewById(R.id.expTitleText)
+        expPassport = findViewById(R.id.expPassportText)
+        expState = findViewById(R.id.expStateText)
+        expCountdown = findViewById(R.id.expCountdownText)
+        syncNote = findViewById(R.id.syncNoteText)
+        journal = findViewById(R.id.journalText)
+        actionRow = findViewById(R.id.actionRow)
+        refreshBtn = findViewById(R.id.refreshBtn)
+        finishBtn = findViewById(R.id.finishBtn)
+        backBtn = findViewById(R.id.backBtn)
+
+        seasonBtns = listOf(
+            findViewById(R.id.seasonWinterBtn), findViewById(R.id.seasonSpringBtn),
+            findViewById(R.id.seasonSummerBtn), findViewById(R.id.seasonAutumnBtn),
+        )
+        durBtns = listOf(
+            findViewById(R.id.dur30Btn), findViewById(R.id.dur60Btn), findViewById(R.id.dur100Btn),
+        )
+        tempoBtns = listOf(
+            findViewById(R.id.tempo100Btn), findViewById(R.id.tempo1000Btn),
+            findViewById(R.id.tempo5000Btn), findViewById(R.id.tempo10000Btn),
+        )
+
+        for (i in seasonBtns.indices) {
+            seasonBtns[i].setOnClickListener { season = i; refreshStartControls() }
+        }
+        val durVals = intArrayOf(30, 60, 100)
+        for (i in durBtns.indices) {
+            durBtns[i].setOnClickListener { durDays = durVals[i]; refreshStartControls() }
+        }
+        val tempoVals = intArrayOf(100, 1000, 5000, 10000)
+        for (i in tempoBtns.indices) {
+            tempoBtns[i].setOnClickListener { tempo = tempoVals[i]; refreshStartControls() }
+        }
+
+        findViewById<Button>(R.id.startExpBtn).setOnClickListener { v ->
+            v.isEnabled = false
+            lifecycleScope.launch {
+                repo.start(season, durDays, tempo)
+                v.isEnabled = true
+                refreshUi(runSync = false)
+            }
+        }
+
+        refreshBtn.setOnClickListener {
+            refreshBtn.isEnabled = false
+            lifecycleScope.launch {
+                refreshUi(runSync = true)
+                refreshBtn.isEnabled = true
+            }
+        }
+
+        finishBtn.setOnClickListener {
+            AlertDialog.Builder(this)
+                .setTitle("Завершить экспедицию?")
+                .setMessage("Накопленные шаги будут учтены, мир уйдёт в архив. Действие необратимо.")
+                .setPositiveButton("Завершить") { _, _ ->
+                    finishBtn.isEnabled = false
+                    lifecycleScope.launch {
+                        repo.finishVoluntary()
+                        finishBtn.isEnabled = true
+                        refreshUi(runSync = false)
+                    }
+                }
+                .setNegativeButton("Отмена", null)
+                .show()
+        }
+
+        backBtn.setOnClickListener {
+            viewingId = -1L
+            lifecycleScope.launch { refreshUi(runSync = false) }
+        }
+
+        lifecycleScope.launch {
+            avgSteps = repo.avgDailySteps()
+            refreshStartControls()
+        }
+        refreshStartControls()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        lifecycleScope.launch { refreshUi(runSync = viewingId < 0) }
+    }
+
+    /** Единая точка обновления экрана. runSync = догнать мир по шагам. */
+    private suspend fun refreshUi(runSync: Boolean) {
+        if (viewingId >= 0) {
+            val e = repo.byId(viewingId)
+            if (e != null) { renderReadOnly(e); return }
+            viewingId = -1L
+        }
+        var e = repo.active()
+        var note: String? = null
+        if (e != null && runSync) {
+            val o = repo.sync()
+            if (o != null) {
+                if (o.newDays > 0) {
+                    note = "+" + o.newDays + " " + daysWord(o.newDays) +
+                        " мира · " + o.consumedSteps + " шагов"
+                }
+                if (o.completed) {
+                    // экспедиция закрылась этим догоном: открыть её архивную страницу
+                    viewingId = o.expeditionId
+                    val done = repo.byId(o.expeditionId)
+                    if (done != null) { renderReadOnly(done); return }
+                }
+            }
+            e = repo.active()
+        }
+        if (e != null) renderActive(e, note) else renderStartForm()
+    }
+
+    // ---------- отрисовка состояний ----------
+
+    private suspend fun renderActive(e: Expedition, note: String?) {
+        startBox.visibility = View.GONE
+        activeBox.visibility = View.VISIBLE
+        backBtn.visibility = View.GONE
+        actionRow.visibility = View.VISIBLE
+        expCountdown.visibility = View.VISIBLE
+
+        fillHeader(e)
+        expCountdown.text = "До следующего дня мира: " +
+            (e.stepsPerTick - e.stepRemainder) + " шагов"
+        if (note != null) {
+            syncNote.text = note
+            syncNote.visibility = View.VISIBLE
+        } else {
+            syncNote.visibility = View.GONE
+        }
+        journal.text = buildJournal(e.id)
+    }
+
+    private suspend fun renderReadOnly(e: Expedition) {
+        startBox.visibility = View.GONE
+        activeBox.visibility = View.VISIBLE
+        backBtn.visibility = View.VISIBLE
+        actionRow.visibility = View.GONE
+        expCountdown.visibility = View.GONE
+
+        fillHeader(e)
+        val fmt = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault())
+        val label = if (e.status == "done_success") "Завершена по плану" else "Прервана"
+        syncNote.text = label + " · " + fmt.format(Date(e.finishedMs))
+        syncNote.visibility = View.VISIBLE
+        journal.text = buildJournal(e.id)
+    }
+
+    private fun fillHeader(e: Expedition) {
+        expTitle.text = "Экспедиция №" + e.id
+        expPassport.text = "Северная тайга · старт: " +
+            SurvivalEngine.SEASON_RU[e.startSeason] +
+            " · план " + e.plannedDays + " дн. · темп " + e.stepsPerTick + " шаг/день"
+        val nowSeason = if (e.ticksDone == 0) e.startSeason
+        else SurvivalEngine(e.seed, e.startSeason, e.startOffset).seasonOf(e.ticksDone)
+        expState.text = "День " + e.ticksDone + " из " + e.plannedDays +
+            " · " + SurvivalEngine.SEASON_RU[nowSeason]
+    }
+
+    private suspend fun renderStartForm() {
+        activeBox.visibility = View.GONE
+        startBox.visibility = View.VISIBLE
+        refreshStartControls()
+
+        archiveBox.removeAllViews()
+        val arch = repo.archive()
+        if (arch.isEmpty()) {
+            archiveBox.addView(dimRow("Пока пусто. Первая экспедиция впереди."))
+            return
+        }
+        for (a in arch) {
+            val mark = if (a.status == "done_success") "по плану" else "прервана"
+            val row = TextView(this).apply {
+                text = "№" + a.id + " · " + SurvivalEngine.SEASON_RU[a.startSeason] +
+                    " · " + a.ticksDone + "/" + a.plannedDays + " дн. · " + mark
+                textSize = 15f
+                setTextColor(ContextCompat.getColor(this@SurvivalActivity, R.color.text_main))
+                setPadding(0, dp(10), 0, dp(10))
+                setOnClickListener {
+                    viewingId = a.id
+                    lifecycleScope.launch { refreshUi(runSync = false) }
+                }
+            }
+            archiveBox.addView(row)
+        }
+    }
+
+    // ---------- вспомогательное ----------
+
+    private suspend fun buildJournal(expeditionId: Long): String {
+        val events = repo.events(expeditionId)
+        if (events.isEmpty()) return "Журнал пуст."
+        val sb = StringBuilder()
+        for (ev in events) {
+            if (sb.isNotEmpty()) sb.append("\n\n")
+            val prefix = if (ev.tick == 0) "Старт" else "Д" + ev.tick
+            sb.append(prefix).append(" · ").append(ev.text)
+        }
+        return sb.toString()
+    }
+
+    /** Подсветка выбранных кнопок формы + пересчёт подсказки. */
+    private fun refreshStartControls() {
+        markGroup(seasonBtns, season)
+        markGroup(durBtns, when (durDays) { 30 -> 0; 60 -> 1; else -> 2 })
+        markGroup(tempoBtns, when (tempo) { 100 -> 0; 1000 -> 1; 5000 -> 2; else -> 3 })
+        val sb = StringBuilder()
+        if (avgSteps > 0) {
+            val est = (durDays.toLong() * tempo + avgSteps - 1) / avgSteps
+            sb.append("Твой средний темп ~").append(avgSteps)
+                .append(" шагов/день. Этот план: примерно ").append(est)
+                .append(" ").append(daysWord(est.toInt())).append(" реальной ходьбы.")
+        } else {
+            sb.append("Темп мира не зависит от скорости ходьбы — только от числа шагов.")
+        }
+        sb.append("\nТемп 100 — тестовый: увидеть жизнь мира за одну прогулку.")
+        tempoHint.text = sb.toString()
+    }
+
+    private fun markGroup(btns: List<Button>, selected: Int) {
+        for (i in btns.indices) {
+            val sel = i == selected
+            btns[i].setTextColor(ContextCompat.getColor(this,
+                if (sel) R.color.accent_red else R.color.text_main))
+            btns[i].alpha = if (sel) 1.0f else 0.55f
+        }
+    }
+
+    private fun dimRow(text: String): TextView = TextView(this).apply {
+        this.text = text
+        textSize = 13f
+        setTextColor(ContextCompat.getColor(this@SurvivalActivity, R.color.text_dim))
+    }
+
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    private fun daysWord(n: Int): String {
+        val m10 = n % 10; val m100 = n % 100
+        return when {
+            m100 in 11..14 -> "дней"
+            m10 == 1 -> "день"
+            m10 in 2..4 -> "дня"
+            else -> "дней"
+        }
+    }
+
+    companion object {
+        private fun defaultSeason(): Int = when (LocalDate.now().monthValue) {
+            12, 1, 2 -> 0
+            3, 4, 5 -> 1
+            6, 7, 8 -> 2
+            else -> 3
+        }
+    }
+}
