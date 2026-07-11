@@ -15,7 +15,7 @@
             android:layout_height="wrap_content"
             android:text="КАЛИБРОВКА"
             android:textColor="@color/text_main"
-            android:textSize="24sp"
+            android:textSize="31sp"
             android:letterSpacing="0.05" />
 
         <LinearLayout
@@ -39,7 +39,7 @@
                     android:layout_height="wrap_content"
                     android:text="ТОЧНОСТЬ ДАННЫХ"
                     android:textColor="@color/text_dim"
-                    android:textSize="12sp"
+                    android:textSize="15sp"
                     android:letterSpacing="0.05" />
 
                 <TextView
@@ -48,7 +48,7 @@
                     android:layout_height="wrap_content"
                     android:text="—"
                     android:textColor="@color/text_main"
-                    android:textSize="34sp" />
+                    android:textSize="44sp" />
 
                 <TextView
                     android:id="@+id/accuracyHint"
@@ -56,7 +56,7 @@
                     android:layout_height="wrap_content"
                     android:text=""
                     android:textColor="@color/text_dim"
-                    android:textSize="13sp"
+                    android:textSize="17sp"
                     android:lineSpacingExtra="2dp"
                     android:layout_marginTop="4dp" />
             </LinearLayout>
@@ -68,7 +68,7 @@
             android:layout_height="wrap_content"
             android:text=""
             android:textColor="@color/accent_red_bright"
-            android:textSize="14sp"
+            android:textSize="18sp"
             android:lineSpacingExtra="2dp"
             android:visibility="gone"
             android:layout_marginTop="14dp" />
@@ -93,7 +93,7 @@
             android:layout_height="wrap_content"
             android:text="Калибровка постепенно устаревает: меняется обувь, вес, техника ходьбы. Раз в месяц имеет смысл перепройти — точность вернётся к 100%."
             android:textColor="@color/text_dim"
-            android:textSize="13sp"
+            android:textSize="17sp"
             android:lineSpacingExtra="2dp"
             android:layout_marginTop="20dp" />
 

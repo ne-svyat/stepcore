@@ -515,8 +515,16 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onPause() {
+        // Экран ушёл - "кипение" линий замирает: в фоне рисовать нечего,
+        // а таймер иначе продолжал бы будить процессор.
+        BoilClock.pause()
+        super.onPause()
+    }
+
     override fun onResume() {
         super.onResume()
+        BoilClock.resume()
         goal = getSharedPreferences(StepService.PREFS, MODE_PRIVATE).getInt("p_goal", 10000)
         if (::accuracyBadge.isInitialized) refreshAccuracyBadge()
         if (::cargoChip.isInitialized) refreshCargoChip()

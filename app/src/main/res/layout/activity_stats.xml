@@ -15,7 +15,7 @@
             android:layout_height="wrap_content"
             android:text="СТАТИСТИКА"
             android:textColor="@color/accent_red"
-            android:textSize="26sp"
+            android:textSize="33sp"
             android:letterSpacing="0.05" />
 
     </LinearLayout>

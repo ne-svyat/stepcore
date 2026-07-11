@@ -14,7 +14,7 @@
             android:layout_height="wrap_content"
             android:text="TIMELINE"
             android:textColor="@color/accent_red"
-            android:textSize="26sp"
+            android:textSize="33sp"
             android:letterSpacing="0.05" />
 
         <HorizontalScrollView
@@ -36,7 +36,7 @@
             android:layout_height="wrap_content"
             android:text=""
             android:textColor="@color/text_main"
-            android:textSize="14sp"
+            android:textSize="18sp"
             android:lineSpacingExtra="3dp"
             android:background="@drawable/card_period"
             android:paddingStart="16dp"
@@ -59,17 +59,17 @@
                 <TextView android:id="@+id/axisMax"
                     android:layout_width="match_parent" android:layout_height="0dp"
                     android:layout_weight="1" android:text=""
-                    android:textColor="@color/axis_dim" android:textSize="10sp"
+                    android:textColor="@color/axis_dim" android:textSize="13sp"
                     android:gravity="end|top" android:paddingEnd="4dp" />
                 <TextView android:id="@+id/axisMid"
                     android:layout_width="match_parent" android:layout_height="0dp"
                     android:layout_weight="1" android:text=""
-                    android:textColor="@color/axis_dim" android:textSize="10sp"
+                    android:textColor="@color/axis_dim" android:textSize="13sp"
                     android:gravity="end|top" android:paddingEnd="4dp" />
                 <TextView
                     android:layout_width="match_parent" android:layout_height="0dp"
                     android:layout_weight="1" android:text="0"
-                    android:textColor="@color/axis_dim" android:textSize="10sp"
+                    android:textColor="@color/axis_dim" android:textSize="13sp"
                     android:gravity="end|bottom" android:paddingEnd="4dp" />
             </LinearLayout>
 
@@ -91,7 +91,7 @@
             android:layout_height="wrap_content"
             android:text="Нажми на столбец для деталей"
             android:textColor="@color/text_main"
-            android:textSize="14sp"
+            android:textSize="18sp"
             android:lineSpacingExtra="3dp"
             android:background="@drawable/card_column"
             android:paddingStart="16dp"
@@ -111,13 +111,13 @@
                 android:background="@color/accent_blue" />
             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
                 android:text="ходьба" android:textColor="@color/text_dim"
-                android:textSize="12sp" android:layout_marginStart="4dp"
+                android:textSize="15sp" android:layout_marginStart="4dp"
                 android:layout_marginEnd="14dp" />
             <View android:layout_width="10dp" android:layout_height="10dp"
                 android:background="@color/accent_red" />
             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
                 android:text="бег" android:textColor="@color/text_dim"
-                android:textSize="12sp" android:layout_marginStart="4dp" />
+                android:textSize="15sp" android:layout_marginStart="4dp" />
         </LinearLayout>
 
         <TextView
@@ -126,7 +126,7 @@
             android:layout_height="wrap_content"
             android:text=""
             android:textColor="@color/text_dim"
-            android:textSize="12sp"
+            android:textSize="15sp"
             android:layout_marginTop="12dp" />
 
     </LinearLayout>

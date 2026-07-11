@@ -29,14 +29,14 @@
                     android:textColor="@color/accent_red"
                     android:textStyle="bold"
                     android:letterSpacing="0.08"
-                    android:textSize="15sp" />
+                    android:textSize="19sp" />
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Северная тайга. Мир живёт от твоих шагов."
                     android:textColor="@color/text_dim"
-                    android:textSize="13sp"
+                    android:textSize="17sp"
                     android:layout_marginTop="4dp" />
 
                 <TextView
@@ -44,7 +44,7 @@
                     android:layout_height="wrap_content"
                     android:text="Сезон старта"
                     android:textColor="@color/text_dim"
-                    android:textSize="13sp"
+                    android:textSize="17sp"
                     android:layout_marginTop="20dp" />
 
                 <LinearLayout
@@ -74,7 +74,7 @@
                     android:layout_height="wrap_content"
                     android:text="План, дней мира"
                     android:textColor="@color/text_dim"
-                    android:textSize="13sp"
+                    android:textSize="17sp"
                     android:layout_marginTop="12dp" />
 
                 <LinearLayout
@@ -100,7 +100,7 @@
                     android:layout_height="wrap_content"
                     android:text="Темп: шагов на один день мира"
                     android:textColor="@color/text_dim"
-                    android:textSize="13sp"
+                    android:textSize="17sp"
                     android:layout_marginTop="12dp" />
 
                 <LinearLayout
@@ -130,7 +130,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:textColor="@color/text_dim"
-                    android:textSize="13sp"
+                    android:textSize="17sp"
                     android:layout_marginTop="8dp" />
 
                 <Button
@@ -148,7 +148,7 @@
                     android:textColor="@color/accent_red"
                     android:textStyle="bold"
                     android:letterSpacing="0.08"
-                    android:textSize="15sp"
+                    android:textSize="19sp"
                     android:layout_marginTop="28dp" />
 
                 <LinearLayout
@@ -183,14 +183,14 @@
                     android:layout_height="wrap_content"
                     android:textColor="@color/text_main"
                     android:textStyle="bold"
-                    android:textSize="20sp" />
+                    android:textSize="26sp" />
 
                 <TextView
                     android:id="@+id/expPassportText"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:textColor="@color/text_dim"
-                    android:textSize="13sp"
+                    android:textSize="17sp"
                     android:layout_marginTop="4dp" />
 
                 <TextView
@@ -198,7 +198,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:textColor="@color/text_main"
-                    android:textSize="16sp"
+                    android:textSize="20sp"
                     android:layout_marginTop="14dp" />
 
                 <TextView
@@ -206,7 +206,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:textColor="@color/text_dim"
-                    android:textSize="13sp"
+                    android:textSize="17sp"
                     android:layout_marginTop="4dp" />
 
                 <TextView
@@ -214,7 +214,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:textColor="@color/accent_blue"
-                    android:textSize="13sp"
+                    android:textSize="17sp"
                     android:layout_marginTop="8dp"
                     android:visibility="gone" />
 
@@ -242,7 +242,7 @@
                     android:textColor="@color/accent_red"
                     android:textStyle="bold"
                     android:letterSpacing="0.08"
-                    android:textSize="15sp"
+                    android:textSize="19sp"
                     android:layout_marginTop="20dp" />
 
                 <LinearLayout
@@ -266,7 +266,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:textColor="@color/text_main"
-                    android:textSize="15sp"
+                    android:textSize="19sp"
                     android:lineSpacingExtra="6dp"
                     android:layout_marginTop="8dp" />
 

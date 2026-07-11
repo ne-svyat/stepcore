@@ -23,7 +23,7 @@
                 android:layout_height="wrap_content"
                 android:text="Покой"
                 android:textColor="@color/text_main"
-                android:textSize="14sp"
+                android:textSize="18sp"
                 android:letterSpacing="0.08"
                 android:paddingLeft="16dp"
                 android:paddingRight="16dp"
@@ -39,7 +39,7 @@
                 android:layout_height="wrap_content"
                 android:text="Груз выкл"
                 android:textColor="@color/text_dim"
-                android:textSize="12sp"
+                android:textSize="15sp"
                 android:paddingLeft="12dp"
                 android:paddingRight="12dp"
                 android:paddingTop="6dp"
@@ -82,7 +82,7 @@
                     android:layout_height="wrap_content"
                     android:text=""
                     android:textColor="@color/accent_blue"
-                    android:textSize="12sp"
+                    android:textSize="15sp"
                     android:visibility="gone"
                     android:layout_marginBottom="4dp" />
 
@@ -92,7 +92,7 @@
                     android:layout_height="wrap_content"
                     android:text="0"
                     android:textColor="@color/text_main"
-                    android:textSize="34sp" />
+                    android:textSize="44sp" />
 
                 <TextView
                     android:id="@+id/goalText"
@@ -100,7 +100,7 @@
                     android:layout_height="wrap_content"
                     android:text="0% · цель 10 000"
                     android:textColor="@color/text_dim"
-                    android:textSize="12sp"
+                    android:textSize="15sp"
                     android:layout_marginBottom="8dp" />
 
                 <LinearLayout
@@ -116,7 +116,7 @@
                         android:layout_height="wrap_content"
                         android:text="0 ходьба"
                         android:textColor="@color/text_dim"
-                        android:textSize="12sp"
+                        android:textSize="15sp"
                         android:layout_marginStart="6dp" />
                 </LinearLayout>
 
@@ -135,7 +135,7 @@
                         android:layout_height="wrap_content"
                         android:text="0 бег"
                         android:textColor="@color/text_dim"
-                        android:textSize="12sp"
+                        android:textSize="15sp"
                         android:layout_marginStart="6dp" />
                 </LinearLayout>
 
@@ -145,7 +145,7 @@
                     android:layout_height="wrap_content"
                     android:text=""
                     android:textColor="@color/text_dim"
-                    android:textSize="14sp" />
+                    android:textSize="18sp" />
             </LinearLayout>
         </LinearLayout>
 
@@ -165,10 +165,10 @@
                 <TextView
                     android:id="@+id/distanceValueText"
                     android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:text="0.00 км" android:textColor="@color/text_main" android:textSize="14sp" />
+                    android:text="0.00 км" android:textColor="@color/text_main" android:textSize="18sp" />
                 <TextView
                     android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:text="дистанция" android:textColor="@color/text_dim" android:textSize="10sp" />
+                    android:text="дистанция" android:textColor="@color/text_dim" android:textSize="13sp" />
             </LinearLayout>
 
             <LinearLayout
@@ -181,10 +181,10 @@
                 <TextView
                     android:id="@+id/activeTimeText"
                     android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:text="" android:textColor="@color/text_main" android:textSize="14sp" />
+                    android:text="" android:textColor="@color/text_main" android:textSize="18sp" />
                 <TextView
                     android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:text="активное время" android:textColor="@color/text_dim" android:textSize="10sp" />
+                    android:text="активное время" android:textColor="@color/text_dim" android:textSize="13sp" />
             </LinearLayout>
 
             <LinearLayout
@@ -197,10 +197,10 @@
                 <TextView
                     android:id="@+id/activeKcalValueText"
                     android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:text="0 ккал" android:textColor="@color/text_main" android:textSize="14sp" />
+                    android:text="0 ккал" android:textColor="@color/text_main" android:textSize="18sp" />
                 <TextView
                     android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:text="активные" android:textColor="@color/text_dim" android:textSize="10sp" />
+                    android:text="активные" android:textColor="@color/text_dim" android:textSize="13sp" />
             </LinearLayout>
 
             <LinearLayout
@@ -213,10 +213,10 @@
                 <TextView
                     android:id="@+id/totalKcalValueText"
                     android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:text="0 ккал" android:textColor="@color/text_main" android:textSize="14sp" />
+                    android:text="0 ккал" android:textColor="@color/text_main" android:textSize="18sp" />
                 <TextView
                     android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:text="всего за день" android:textColor="@color/text_dim" android:textSize="10sp" />
+                    android:text="всего за день" android:textColor="@color/text_dim" android:textSize="13sp" />
             </LinearLayout>
         </GridLayout>
 
@@ -227,7 +227,7 @@
             android:layout_gravity="center_horizontal"
             android:text=""
             android:textColor="@color/text_dim"
-            android:textSize="12sp"
+            android:textSize="15sp"
             android:padding="6dp"
             android:layout_marginTop="4dp" />
 
@@ -257,13 +257,13 @@
                     <TextView
                         android:layout_width="wrap_content" android:layout_height="wrap_content"
                         android:text="ВЧЕРА" android:textColor="@color/accent_violet_bright"
-                        android:letterSpacing="0.08" android:textSize="15sp" />
+                        android:letterSpacing="0.08" android:textSize="19sp" />
 
                     <TextView
                         android:id="@+id/ySteps"
                         android:layout_width="wrap_content" android:layout_height="wrap_content"
                         android:text="нет данных" android:textColor="@color/text_main"
-                        android:textSize="24sp" android:layout_marginTop="2dp" />
+                        android:textSize="31sp" android:layout_marginTop="2dp" />
 
                     <LinearLayout
                         android:id="@+id/yesterdayDetailsGroup"
@@ -272,21 +272,21 @@
 
                         <TextView android:id="@+id/yKm" android:layout_width="wrap_content"
                             android:layout_height="wrap_content" android:text=""
-                            android:textColor="@color/accent_violet_bright" android:textSize="16sp"
+                            android:textColor="@color/accent_violet_bright" android:textSize="20sp"
                             android:layout_marginTop="8dp" />
                         <TextView android:id="@+id/yTime" android:layout_width="wrap_content"
                             android:layout_height="wrap_content" android:text=""
-                            android:textColor="@color/accent_violet_bright" android:textSize="16sp" />
+                            android:textColor="@color/accent_violet_bright" android:textSize="20sp" />
                         <TextView android:id="@+id/yTotalKcal" android:layout_width="wrap_content"
                             android:layout_height="wrap_content" android:text=""
-                            android:textColor="@color/accent_violet_bright" android:textSize="16sp" />
+                            android:textColor="@color/accent_violet_bright" android:textSize="20sp" />
                         <TextView android:id="@+id/yBreakdown" android:layout_width="wrap_content"
                             android:layout_height="wrap_content" android:text=""
-                            android:textColor="@color/text_dim" android:textSize="13sp"
+                            android:textColor="@color/text_dim" android:textSize="17sp"
                             android:layout_marginTop="4dp" />
                         <TextView android:id="@+id/yDiff" android:layout_width="wrap_content"
                             android:layout_height="wrap_content" android:text=""
-                            android:textColor="@color/text_main" android:textSize="14sp"
+                            android:textColor="@color/text_main" android:textSize="18sp"
                             android:layout_marginTop="4dp" />
                     </LinearLayout>
                 </LinearLayout>
@@ -312,31 +312,31 @@
                     <TextView
                         android:layout_width="wrap_content" android:layout_height="wrap_content"
                         android:text="СЕГОДНЯ" android:textColor="@color/accent_teal_bright"
-                        android:letterSpacing="0.08" android:textSize="15sp" />
+                        android:letterSpacing="0.08" android:textSize="19sp" />
 
                     <TextView
                         android:id="@+id/tSteps"
                         android:layout_width="wrap_content" android:layout_height="wrap_content"
                         android:text="0" android:textColor="@color/text_main"
-                        android:textSize="24sp" android:layout_marginTop="2dp" />
+                        android:textSize="31sp" android:layout_marginTop="2dp" />
 
                     <TextView android:id="@+id/tKm" android:layout_width="wrap_content"
                         android:layout_height="wrap_content" android:text=""
-                        android:textColor="@color/accent_teal_bright" android:textSize="16sp"
+                        android:textColor="@color/accent_teal_bright" android:textSize="20sp"
                         android:layout_marginTop="8dp" />
                     <TextView android:id="@+id/tTime" android:layout_width="wrap_content"
                         android:layout_height="wrap_content" android:text=""
-                        android:textColor="@color/accent_teal_bright" android:textSize="16sp" />
+                        android:textColor="@color/accent_teal_bright" android:textSize="20sp" />
                     <TextView android:id="@+id/tTotalKcal" android:layout_width="wrap_content"
                         android:layout_height="wrap_content" android:text=""
-                        android:textColor="@color/accent_teal_bright" android:textSize="16sp" />
+                        android:textColor="@color/accent_teal_bright" android:textSize="20sp" />
                     <TextView android:id="@+id/tBreakdown" android:layout_width="wrap_content"
                         android:layout_height="wrap_content" android:text=""
-                        android:textColor="@color/text_dim" android:textSize="13sp"
+                        android:textColor="@color/text_dim" android:textSize="17sp"
                         android:layout_marginTop="4dp" />
                     <TextView android:id="@+id/tToGoal" android:layout_width="wrap_content"
                         android:layout_height="wrap_content" android:text=""
-                        android:textColor="@color/accent_amber_bright" android:textSize="14sp"
+                        android:textColor="@color/accent_amber_bright" android:textSize="18sp"
                         android:layout_marginTop="4dp" />
                 </LinearLayout>
             </FrameLayout>
@@ -348,7 +348,7 @@
             android:layout_height="wrap_content"
             android:text="Остановлено"
             android:textColor="@color/text_dim"
-            android:textSize="13sp"
+            android:textSize="17sp"
             android:layout_marginTop="12dp" />
 
         <Button
@@ -356,7 +356,7 @@
             android:layout_width="match_parent"
             android:layout_height="56dp"
             android:text="Старт"
-            android:textSize="17sp"
+            android:textSize="22sp"
             android:layout_marginTop="12dp" />
 
         <FrameLayout
@@ -396,7 +396,7 @@
                     android:text="ЭКСПЕДИЦИЯ"
                     android:textColor="@color/accent_amber_bright"
                     android:letterSpacing="0.06"
-                    android:textSize="11sp" />
+                    android:textSize="14sp" />
 
                 <TextView
                     android:id="@+id/expeditionDayText"
@@ -404,7 +404,7 @@
                     android:layout_height="wrap_content"
                     android:text="Нет активной экспедиции"
                     android:textColor="@color/text_main"
-                    android:textSize="16sp"
+                    android:textSize="20sp"
                     android:layout_marginTop="2dp" />
 
                 <TextView
@@ -413,7 +413,7 @@
                     android:layout_height="wrap_content"
                     android:text="Начать →"
                     android:textColor="@color/accent_amber"
-                    android:textSize="14sp"
+                    android:textSize="18sp"
                     android:layout_marginTop="2dp" />
             </LinearLayout>
         </LinearLayout>
@@ -435,11 +435,11 @@
                 android:layout_marginEnd="5dp">
                 <TextView
                     android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:text="Профиль" android:textColor="@color/text_main" android:textSize="15sp" />
+                    android:text="Профиль" android:textColor="@color/text_main" android:textSize="19sp" />
                 <TextView
                     android:layout_width="wrap_content" android:layout_height="wrap_content"
                     android:text="вес, рост, груз" android:textColor="@color/accent_blue_bright"
-                    android:textSize="11sp" android:layout_marginTop="2dp" />
+                    android:textSize="14sp" android:layout_marginTop="2dp" />
             </LinearLayout>
 
             <LinearLayout
@@ -459,11 +459,11 @@
                     android:paddingTop="10dp" android:paddingBottom="8dp">
                     <TextView
                         android:layout_width="wrap_content" android:layout_height="wrap_content"
-                        android:text="Аналитика" android:textColor="@color/text_main" android:textSize="15sp" />
+                        android:text="Аналитика" android:textColor="@color/text_main" android:textSize="19sp" />
                     <TextView
                         android:layout_width="wrap_content" android:layout_height="wrap_content"
                         android:text="статистика" android:textColor="@color/accent_teal_bright"
-                        android:textSize="11sp" android:layout_marginTop="2dp" />
+                        android:textSize="14sp" android:layout_marginTop="2dp" />
                 </LinearLayout>
 
                 <View
@@ -480,11 +480,11 @@
                     android:paddingTop="8dp" android:paddingBottom="10dp">
                     <TextView
                         android:layout_width="wrap_content" android:layout_height="wrap_content"
-                        android:text="Timeline" android:textColor="@color/text_main" android:textSize="13sp" />
+                        android:text="Timeline" android:textColor="@color/text_main" android:textSize="17sp" />
                     <TextView
                         android:layout_width="wrap_content" android:layout_height="wrap_content"
                         android:text="лента дня" android:textColor="@color/accent_teal_bright"
-                        android:textSize="10sp" android:layout_marginTop="1dp" />
+                        android:textSize="13sp" android:layout_marginTop="1dp" />
                 </LinearLayout>
             </LinearLayout>
         </LinearLayout>
@@ -504,12 +504,12 @@
                 android:layout_marginEnd="5dp">
                 <TextView
                     android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:text="Калибровка" android:textColor="@color/text_main" android:textSize="13sp" />
+                    android:text="Калибровка" android:textColor="@color/text_main" android:textSize="17sp" />
                 <TextView
                     android:id="@+id/calibrationAccuracyText"
                     android:layout_width="wrap_content" android:layout_height="wrap_content"
                     android:text="" android:textColor="@color/accent_violet_bright"
-                    android:textSize="10sp" android:layout_marginTop="2dp" />
+                    android:textSize="13sp" android:layout_marginTop="2dp" />
             </LinearLayout>
 
             <LinearLayout
@@ -521,7 +521,7 @@
                 android:layout_marginStart="5dp">
                 <TextView
                     android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:text="История" android:textColor="@color/text_dim" android:textSize="13sp" />
+                    android:text="История" android:textColor="@color/text_dim" android:textSize="17sp" />
             </LinearLayout>
         </LinearLayout>
 
@@ -531,7 +531,7 @@
             android:layout_height="wrap_content"
             android:text="Вибрация на шаг"
             android:textColor="@color/text_main"
-            android:textSize="15sp"
+            android:textSize="19sp"
             android:layout_marginTop="16dp" />
 
         <TextView
@@ -540,7 +540,7 @@
             android:layout_height="wrap_content"
             android:text="⚙  Инструменты  ▾"
             android:textColor="@color/text_dim"
-            android:textSize="14sp"
+            android:textSize="18sp"
             android:letterSpacing="0.05"
             android:paddingTop="18dp"
             android:paddingBottom="10dp" />
@@ -557,7 +557,7 @@
                 android:layout_height="wrap_content"
                 android:text="Калибровки перенесены на отдельный экран — кнопка «Калибровка» выше."
                 android:textColor="@color/text_dim"
-                android:textSize="12sp"
+                android:textSize="15sp"
                 android:layout_marginBottom="10dp" />
 
             <androidx.appcompat.widget.SwitchCompat
@@ -566,7 +566,7 @@
                 android:layout_height="wrap_content"
                 android:text="Детальный лог (диагностика)"
                 android:textColor="@color/text_main"
-                android:textSize="14sp"
+                android:textSize="18sp"
                 android:layout_marginTop="12dp" />
 
             <Button
@@ -583,7 +583,7 @@
                 android:text=""
                 android:textColor="@color/text_dim"
                 android:fontFamily="monospace"
-                android:textSize="11sp"
+                android:textSize="14sp"
                 android:layout_marginTop="12dp" />
         </LinearLayout>
 

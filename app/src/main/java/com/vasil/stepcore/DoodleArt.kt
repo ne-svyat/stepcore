@@ -7,6 +7,8 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.drawable.Drawable
+import android.os.Handler
+import android.os.Looper
 import android.graphics.PixelFormat
 import android.util.AttributeSet
 import android.view.View
@@ -28,6 +30,70 @@ import kotlin.math.sin
  * Вся математика этого файла сначала отрисована в PNG и проверена
  * глазами, и только потом портирована сюда - координаты 1:1.
  */
+
+/**
+ * Такт "кипящей линии" (line boil) - приём классической рисованной
+ * мультипликации: один и тот же кадр рисуют 2-3 раза чуть по-разному и
+ * крутят по кругу, отчего контур будто дышит и рисунок оживает.
+ *
+ * Почему это дёшево: варианты контура считаются ОДИН раз при изменении
+ * размера, дальше на каждом такте просто выбирается уже готовый Path.
+ * Никакой математики в кадре - только отрисовка, которая была бы и так.
+ *
+ * Такт ОДИН на всё приложение, поэтому все элементы кипят синхронно (как
+ * в настоящем мультфильме, где перерисовывается весь кадр целиком), и
+ * тикает он, только пока есть хоть один живой подписчик: ушёл экран -
+ * таймер сам остановился, батарея не тратится в фоне.
+ */
+internal object BoilClock {
+    const val FRAMES = 3
+    private const val PERIOD_MS = 140L  // ~7 кадров/с: живо, но не рябит
+
+    @Volatile var frame = 0
+        private set
+
+    private val listeners = LinkedHashSet<() -> Unit>()
+    private val handler = Handler(Looper.getMainLooper())
+
+    private val tick = object : Runnable {
+        override fun run() {
+            frame = (frame + 1) % FRAMES
+            // копия: подписчик может отписаться прямо в обработчике
+            for (l in ArrayList(listeners)) l()
+            if (listeners.isNotEmpty()) handler.postDelayed(this, PERIOD_MS)
+        }
+    }
+
+    private var paused = false
+
+    fun register(l: () -> Unit) {
+        val wasIdle = listeners.isEmpty()
+        listeners.add(l)
+        if (wasIdle && !paused) handler.postDelayed(tick, PERIOD_MS)
+    }
+
+    fun unregister(l: () -> Unit) {
+        listeners.remove(l)
+        if (listeners.isEmpty()) handler.removeCallbacks(tick)
+    }
+
+    /**
+     * Экран ушёл из виду - такт ОБЯЗАН замереть. View при уходе из
+     * приложения НЕ отсоединяются от окна, поэтому одной отпиской в
+     * onDetachedFromWindow не обойтись: без явной паузы таймер продолжал
+     * бы будить процессор 7 раз в секунду в фоне вечно. Для приложения,
+     * которое живёт в фоне целыми сутками, это была бы дыра в батарее.
+     */
+    fun pause() {
+        paused = true
+        handler.removeCallbacks(tick)
+    }
+
+    fun resume() {
+        paused = false
+        if (listeners.isNotEmpty()) handler.postDelayed(tick, PERIOD_MS)
+    }
+}
 
 /** Тот же SplitMix64, что в движке Survival: быстрый, детерминированный. */
 internal class Wobble(seed: Long) {
@@ -242,24 +308,47 @@ class DoodleBorderDrawable(
         color = fillColor
     }
     private val d = density
-    private val path = Path()
+    /** Готовые варианты контура - по одному на кадр "кипения". */
+    private val frames = Array(BoilClock.FRAMES) { Path() }
     private var builtFor = Rect()
+    private val onTick: () -> Unit = { invalidateSelf() }
+    private var subscribed = false
 
     override fun onBoundsChange(bounds: Rect) {
         super.onBoundsChange(bounds)
         if (bounds == builtFor || bounds.isEmpty) return
         builtFor = Rect(bounds)
-        val w = Wobble(seed)
-        path.reset()
         val inset = 2f * d
-        Doodle.roundRect(path, inset, inset,
-            bounds.width() - 2 * inset, bounds.height() - 2 * inset,
-            14f * d, 1.5f * d, w)
+        // Каждый кадр - СВОЙ сид: контур тот же, дрожь другая. Вся
+        // математика делается здесь, один раз, а не на каждом кадре.
+        for (i in frames.indices) {
+            val w = Wobble(seed * 31L + i)
+            frames[i].reset()
+            Doodle.roundRect(frames[i], inset, inset,
+                bounds.width() - 2 * inset, bounds.height() - 2 * inset,
+                14f * d, 1.5f * d, w)
+        }
+    }
+
+    /**
+     * View сам вызывает setVisible при уходе/появлении окна - это и есть
+     * честный жизненный цикл для Drawable. Подписка только на видимое:
+     * невидимая карточка не заставляет таймер крутиться.
+     */
+    override fun setVisible(visible: Boolean, restart: Boolean): Boolean {
+        val changed = super.setVisible(visible, restart)
+        if (visible && !subscribed) {
+            BoilClock.register(onTick); subscribed = true
+        } else if (!visible && subscribed) {
+            BoilClock.unregister(onTick); subscribed = false
+        }
+        return changed
     }
 
     override fun draw(canvas: Canvas) {
-        if (fillColor != Color.TRANSPARENT) canvas.drawPath(path, fillPaint)
-        canvas.drawPath(path, strokePaint)
+        val p = frames[BoilClock.frame]
+        if (fillColor != Color.TRANSPARENT) canvas.drawPath(p, fillPaint)
+        canvas.drawPath(p, strokePaint)
     }
 
     override fun setAlpha(alpha: Int) { strokePaint.alpha = alpha }
@@ -290,6 +379,17 @@ class DoodleSceneView @JvmOverloads constructor(
 
     private var scene = HEADER
     private val d = resources.displayMetrics.density
+    private val onTick: () -> Unit = { invalidate() }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        BoilClock.register(onTick)
+    }
+
+    override fun onDetachedFromWindow() {
+        BoilClock.unregister(onTick)
+        super.onDetachedFromWindow()
+    }
 
     private val violet = ContextCompat.getColor(context, R.color.accent_violet)
     private val violetBr = ContextCompat.getColor(context, R.color.accent_violet_bright)
@@ -318,9 +418,9 @@ class DoodleSceneView @JvmOverloads constructor(
         val w = width.toFloat()
         val h = height.toFloat()
         if (w <= 0f || h <= 0f) return
-        // Сид зависит от сцены -> каждая сцена кривится по-своему, но
-        // стабильно между перерисовками.
-        val rng = Wobble(9001L + scene * 733L)
+        // Сид зависит от сцены И от кадра кипения: сцена кривится по-своему,
+        // но в пределах кадра стабильна - значит "дышит", а не дрожит хаотично.
+        val rng = Wobble(9001L + scene * 733L + BoilClock.frame * 97L)
         when (scene) {
             HEADER -> drawHeader(canvas, w, h, rng)
             NIGHT -> drawNight(canvas, w, h, rng)
