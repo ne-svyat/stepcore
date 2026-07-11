@@ -56,8 +56,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var expeditionSeasonView: com.vasil.stepcore.survival.SeasonDiamondView
     private lateinit var expeditionDayText: TextView
     private lateinit var expeditionSubText: TextView
-    private lateinit var analyticsFront: View
-    private lateinit var analyticsBack: View
     private lateinit var calibrationAccuracyText: TextView
 
     private var yWalk = 0
@@ -157,21 +155,17 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(this, ProfileActivity::class.java))
         }
 
-        // Аналитика (V13.0, фаза 3): одна плитка, два лица. Тап по лицу -
-        // переход на соответствующий экран; тап по маленькой подписи
-        // "⟲" в углу - переворот БЕЗ перехода. Состояние переворота не
-        // сохраняется между открытиями экрана - каждый заход начинается
-        // с лица "Статистика" (см. flipAnalytics).
-        analyticsFront = findViewById(R.id.analyticsFront)
-        analyticsBack = findViewById(R.id.analyticsBack)
-        analyticsFront.setOnClickListener {
+        // Аналитика (V13.0.1): исправление после полевого теста - тап по
+        // "⟲" на устройстве не срабатывал (переворот не воспроизвести в
+        // песочнице без Android SDK, гипотеза не подтвердилась). Вместо
+        // анимации - одна плитка с двумя ВСЕГДА видимыми зонами, каждая
+        // ведёт на свой экран напрямую. Ноль анимационного риска.
+        findViewById<View>(R.id.analyticsStatsRow).setOnClickListener {
             startActivity(Intent(this, StatsActivity::class.java))
         }
-        analyticsBack.setOnClickListener {
+        findViewById<View>(R.id.analyticsTimelineRow).setOnClickListener {
             startActivity(Intent(this, TimelineActivity::class.java))
         }
-        findViewById<View>(R.id.analyticsFrontFlipBtn).setOnClickListener { flipAnalytics(true) }
-        findViewById<View>(R.id.analyticsBackFlipBtn).setOnClickListener { flipAnalytics(false) }
 
         toolsToggle.setOnClickListener {
             val open = toolsContainer.visibility == View.VISIBLE
@@ -275,27 +269,6 @@ class MainActivity : AppCompatActivity() {
             m > 0 -> "$m мин"
             else -> "$sec сек"
         }
-    }
-
-    /**
-     * Переворот плитки Аналитики (V13.0, фаза 3). Стандартный Android-
-     * паттерн: уходящее лицо поворачивается до -90° (видно ребром),
-     * скрывается, входящее лицо стартует с +90° и доворачивается до 0°.
-     * cameraDistance увеличен, иначе перспектива на маленькой плитке
-     * выглядит непропорционально сплющенной.
-     */
-    private fun flipAnalytics(toBack: Boolean) {
-        val scale = resources.displayMetrics.density
-        analyticsFront.cameraDistance = 8000f * scale
-        analyticsBack.cameraDistance = 8000f * scale
-        val outView = if (toBack) analyticsFront else analyticsBack
-        val inView = if (toBack) analyticsBack else analyticsFront
-        outView.animate().rotationY(-90f).setDuration(150).withEndAction {
-            outView.visibility = View.GONE
-            inView.rotationY = 90f
-            inView.visibility = View.VISIBLE
-            inView.animate().rotationY(0f).setDuration(150).start()
-        }.start()
     }
 
     /** Бейдж точности данных -> ведёт на экран Калибровки (V10). */
