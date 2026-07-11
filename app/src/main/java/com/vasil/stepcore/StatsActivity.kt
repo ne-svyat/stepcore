@@ -50,7 +50,7 @@ class StatsActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_stats)
         // V14.3: дудл-стиль (карточки статистики идут из UiKit — они уже в рамках).
-        findViewById<DoodleSceneView>(R.id.doodleHeader).setScene(DoodleSceneView.HEADER)
+        findViewById<DoodleSceneView>(R.id.doodleHeader).setScene(DoodleSceneView.STATS)
         val root = findViewById<LinearLayout>(R.id.statsRoot)
 
         lifecycleScope.launch {

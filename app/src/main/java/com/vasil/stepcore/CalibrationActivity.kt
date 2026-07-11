@@ -47,7 +47,7 @@ class CalibrationActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_calibration)
         // V14.3: дудл-стиль.
-        findViewById<DoodleSceneView>(R.id.doodleHeader).setScene(DoodleSceneView.HEADER)
+        findViewById<DoodleSceneView>(R.id.doodleHeader).setScene(DoodleSceneView.CALIBRATION)
         DoodleUi.frame(findViewById(R.id.calCard), R.color.accent_violet, R.color.surface, 401L)
         accuracyValue = findViewById(R.id.accuracyValue)
         accuracyHint = findViewById(R.id.accuracyHint)

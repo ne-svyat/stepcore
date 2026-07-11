@@ -18,7 +18,7 @@ class ProfileActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_profile)
         // V14.3: дудл-стиль — лагерь в шапке, рамки "от руки" на карточках.
-        findViewById<DoodleSceneView>(R.id.doodleHeader).setScene(DoodleSceneView.EXPEDITION)
+        findViewById<DoodleSceneView>(R.id.doodleHeader).setScene(DoodleSceneView.PROFILE)
         DoodleUi.frame(findViewById(R.id.dataContainer), R.color.accent_violet, R.color.surface, 201L)
         DoodleUi.frame(findViewById(R.id.passportContainer), R.color.accent_blue, R.color.surface, 202L)
 

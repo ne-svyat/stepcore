@@ -227,9 +227,20 @@ class MainActivity : AppCompatActivity() {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 // Дёшево - можно на каждый шаг: число и кристалл, без БД.
                 launch {
+                    var prev = -1
                     StepsState.steps.collect { s ->
                         stepsView.text = s.toString()
                         refreshRing(s)
+                        // Число ТОЛКАЕТСЯ на каждом приросте: видно, что счётчик
+                        // живой, без единой лишней надписи. Толчок короткий и
+                        // мелкий - не отвлекает, но глаз его ловит.
+                        if (prev in 0 until s) {
+                            stepsView.animate().cancel()
+                            stepsView.scaleX = 1.10f; stepsView.scaleY = 1.10f
+                            stepsView.animate().scaleX(1f).scaleY(1f)
+                                .setDuration(160).start()
+                        }
+                        prev = s
                     }
                 }
                 launch {

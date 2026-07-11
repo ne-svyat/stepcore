@@ -47,29 +47,34 @@ import kotlin.math.sin
  */
 internal object BoilClock {
     const val FRAMES = 3
-    private const val PERIOD_MS = 140L  // ~7 кадров/с: живо, но не рябит
+    private const val TICK_MS = 50L        // 20 кадров/с - плавное движение
+    private const val BOIL_EVERY = 3       // кипение линии медленнее: ~7 к/с
 
     @Volatile var frame = 0
         private set
+    /** Непрерывная фаза в секундах: для плавных петель (облака, мерцание). */
+    @Volatile var phase = 0f
+        private set
 
+    private var ticks = 0L
     private val listeners = LinkedHashSet<() -> Unit>()
     private val handler = Handler(Looper.getMainLooper())
+    private var paused = false
 
     private val tick = object : Runnable {
         override fun run() {
-            frame = (frame + 1) % FRAMES
-            // копия: подписчик может отписаться прямо в обработчике
+            ticks++
+            phase = (ticks * TICK_MS).toFloat() / 1000f
+            if (ticks % BOIL_EVERY == 0L) frame = (frame + 1) % FRAMES
             for (l in ArrayList(listeners)) l()
-            if (listeners.isNotEmpty()) handler.postDelayed(this, PERIOD_MS)
+            if (listeners.isNotEmpty() && !paused) handler.postDelayed(this, TICK_MS)
         }
     }
-
-    private var paused = false
 
     fun register(l: () -> Unit) {
         val wasIdle = listeners.isEmpty()
         listeners.add(l)
-        if (wasIdle && !paused) handler.postDelayed(tick, PERIOD_MS)
+        if (wasIdle && !paused) handler.postDelayed(tick, TICK_MS)
     }
 
     fun unregister(l: () -> Unit) {
@@ -78,11 +83,10 @@ internal object BoilClock {
     }
 
     /**
-     * Экран ушёл из виду - такт ОБЯЗАН замереть. View при уходе из
-     * приложения НЕ отсоединяются от окна, поэтому одной отпиской в
-     * onDetachedFromWindow не обойтись: без явной паузы таймер продолжал
-     * бы будить процессор 7 раз в секунду в фоне вечно. Для приложения,
-     * которое живёт в фоне целыми сутками, это была бы дыра в батарее.
+     * Экран ушёл - механизм ОБЯЗАН замереть. View при выходе из приложения
+     * НЕ отсоединяются от окна, поэтому одной отпиской не обойтись: без
+     * явной паузы таймер будил бы процессор 20 раз в секунду в фоне вечно.
+     * Для приложения, живущего в фоне сутками, это дыра в батарее.
      */
     fun pause() {
         paused = true
@@ -91,7 +95,7 @@ internal object BoilClock {
 
     fun resume() {
         paused = false
-        if (listeners.isNotEmpty()) handler.postDelayed(tick, PERIOD_MS)
+        if (listeners.isNotEmpty()) handler.postDelayed(tick, TICK_MS)
     }
 }
 
@@ -266,6 +270,87 @@ internal object Doodle {
         }
     }
 
+    /** Шестерня: зубчатый контур + втулка. Угол задаётся снаружи -> крутится. */
+    fun gear(p: Path, cx: Float, cy: Float, r: Float, teeth: Int, rotDeg: Float, w: Wobble) {
+        val n = teeth * 4
+        for (k in 0..n) {
+            val a = Math.toRadians((rotDeg + 360.0 * k / n))
+            val rr = if (k % 4 < 2) r else r * 0.78f
+            val x = cx + rr * cos(a).toFloat() + w.j(0.8f)
+            val y = cy + rr * sin(a).toFloat() + w.j(0.8f)
+            if (k == 0) p.moveTo(x, y) else p.lineTo(x, y)
+        }
+        p.close()
+        for (k in 0..12) {
+            val a = Math.toRadians(360.0 * k / 12)
+            val x = cx + r * 0.30f * cos(a).toFloat()
+            val y = cy + r * 0.30f * sin(a).toFloat()
+            if (k == 0) p.moveTo(x, y) else p.lineTo(x, y)
+        }
+    }
+
+    /** Песочные часы: рама (контур) + песок (заливка), fill 1..0 - пересыпается. */
+    fun hourglass(frame: Path, sand: Path, cx: Float, cy: Float, ww: Float, hh: Float,
+                  fill: Float, w: Wobble) {
+        val top = cy - hh / 2f; val bot = cy + hh / 2f
+        line(frame, cx - ww / 2, top, cx + ww / 2, top, 1.0f, 6, w)
+        line(frame, cx - ww / 2, bot, cx + ww / 2, bot, 1.0f, 6, w)
+        line(frame, cx - ww / 2, top, cx + ww / 2, bot, 1.2f, 8, w)
+        line(frame, cx + ww / 2, top, cx - ww / 2, bot, 1.2f, 8, w)
+        val half = hh / 2f
+        val fh = half * fill
+        if (fh > 2f) {
+            val tw = (ww / 2f) * (fh / half)
+            sand.moveTo(cx - tw, top + (half - fh))
+            sand.lineTo(cx + tw, top + (half - fh))
+            sand.lineTo(cx, cy); sand.close()
+        }
+        val bh = half * (1f - fill)
+        if (bh > 2f) {
+            val bw = (ww / 2f) * (bh / half)
+            sand.moveTo(cx - bw, bot); sand.lineTo(cx + bw, bot)
+            sand.lineTo(cx, bot - bh); sand.close()
+        }
+        line(frame, cx, cy + 2f, cx, cy + half * 0.6f, 0.6f, 3, w)  // струйка
+    }
+
+    /** Дорожный указатель. */
+    fun signpost(p: Path, x: Float, baseY: Float, h: Float, w: Wobble) {
+        line(p, x, baseY, x, baseY - h, 1.0f, 6, w)
+        for ((dx, yy) in listOf(30f to 0.75f, -28f to 0.55f)) {
+            val y = baseY - h * yy
+            val tip = if (dx > 0) dx + 6f else dx - 6f
+            poly(p, floatArrayOf(x, y - 7f, x + dx, y - 7f, x + tip, y, x + dx, y + 7f, x, y + 7f),
+                0.8f, 4, w, true)
+        }
+    }
+
+    /** Извилистая река. */
+    fun river(p: Path, x0: Float, y0: Float, x1: Float, y1: Float, w: Wobble) {
+        val n = 22
+        for (k in 0..n) {
+            val t = k.toFloat() / n
+            val x = x0 + (x1 - x0) * t + w.j(1f)
+            val y = y0 + (y1 - y0) * t + 18f * sin(t * Math.PI * 2.4).toFloat() + w.j(1f)
+            if (k == 0) p.moveTo(x, y) else p.lineTo(x, y)
+        }
+    }
+
+    /** Тетрадь со страницами и пружиной - для Истории. */
+    fun notebook(p: Path, cx: Float, cy: Float, ww: Float, hh: Float, w: Wobble) {
+        for (off in intArrayOf(6, 0)) {
+            roundRect(p, cx - ww / 2 + off, cy - hh / 2 - off, ww, hh, 4f, 1.0f, w)
+        }
+        for (i in 0 until 3) {
+            val y = cy - hh / 4f + i * (hh / 5f)
+            line(p, cx - ww / 2 + 8f, y, cx + ww / 2 - 10f, y, 0.8f, 5, w)
+        }
+        for (i in 0 until 4) {
+            val y = cy - hh / 2f + 6f + i * (hh / 5f)
+            arc(p, cx - ww / 2f, y, 5f, 90f, 270f, 0.5f, w)
+        }
+    }
+
     /** Костёр: поленья + языки пламени. */
     fun fire(logs: Path, flame: Path, cx: Float, baseY: Float, s: Float, w: Wobble) {
         line(logs, cx - s, baseY, cx + s, baseY - s * 0.35f, 1.0f, 5, w)
@@ -381,12 +466,18 @@ class DoodleSceneView @JvmOverloads constructor(
 ) : View(context, attrs, defStyle) {
 
     companion object {
-        const val HEADER = 0      // горы, ёлки, луна, облака, звёзды
-        const val NIGHT = 1       // луна + звёзды (карточка ВЧЕРА)
-        const val DAY = 2         // солнце + ёлки (карточка СЕГОДНЯ)
-        const val EXPEDITION = 3  // палатка, костёр, лес, горы, тропа
+        // У КАЖДОГО экрана своя сцена и свой оттенок - вкладку видно,
+        // не читая заголовок.
+        const val HEADER = 0       // Главный: горный кряж, луна (фиолет+бирюза)
+        const val NIGHT = 1        // Карточка ВЧЕРА: луна, звёзды (фиолет)
+        const val DAY = 2          // Карточка СЕГОДНЯ: солнце, ёлки (бирюза)
+        const val EXPEDITION = 3   // Экспедиция: лагерь, живой костёр (янтарь)
+        const val PROFILE = 4      // Профиль: стоянка, дым, поросль (бирюза)
+        const val STATS = 5        // Статистика: пики и река (синий)
+        const val TIMELINE = 6     // Timeline: солнце, указатель, облака (янтарь)
+        const val CALIBRATION = 7  // Калибровка: шестерни, песочные часы (фиолет)
+        const val HISTORY = 8      // История: тетради, страницы (серый)
 
-        /** Прозрачность декора: читаемость текста важнее насыщенности. */
         private const val DECOR_ALPHA = 130
     }
 
@@ -404,22 +495,34 @@ class DoodleSceneView @JvmOverloads constructor(
         super.onDetachedFromWindow()
     }
 
+    override fun onWindowVisibilityChanged(visibility: Int) {
+        super.onWindowVisibilityChanged(visibility)
+        // Окно скрылось - механизм замирает даже если View ещё привязана.
+        if (visibility == VISIBLE) BoilClock.resume() else BoilClock.pause()
+    }
+
     private val violet = ContextCompat.getColor(context, R.color.accent_violet)
     private val violetBr = ContextCompat.getColor(context, R.color.accent_violet_bright)
     private val teal = ContextCompat.getColor(context, R.color.accent_teal)
     private val tealBr = ContextCompat.getColor(context, R.color.accent_teal_bright)
     private val amber = ContextCompat.getColor(context, R.color.accent_amber)
     private val amberBr = ContextCompat.getColor(context, R.color.accent_amber_bright)
+    private val blue = ContextCompat.getColor(context, R.color.accent_blue)
     private val blueBr = ContextCompat.getColor(context, R.color.accent_blue_bright)
+    private val gray = ContextCompat.getColor(context, R.color.axis_dim)
+    private val ember = 0xFF966E46.toInt()
 
     /**
-     * Декор ПОЛУПРОЗРАЧЕН намеренно. Первая версия рисовала сцены в полную
-     * силу - луна и ёлки перекрывали цифры, экран стало невозможно читать.
-     * Декор - это фон, а не контент: он обязан уступать тексту.
+     * Декор ПОЛУПРОЗРАЧЕН намеренно: он фон, а не контент, и обязан уступать
+     * тексту. Первая версия рисовала в полную силу - цифры стало не прочесть.
      */
-    private fun stroke(c: Int, wpx: Float) = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE; color = c; alpha = DECOR_ALPHA
-        strokeWidth = wpx * d; strokeJoin = Paint.Join.ROUND; strokeCap = Paint.Cap.ROUND
+    private fun stroke(c: Int, wpx: Float, a: Int = DECOR_ALPHA) =
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE; color = c; alpha = a
+            strokeWidth = wpx * d; strokeJoin = Paint.Join.ROUND; strokeCap = Paint.Cap.ROUND
+        }
+    private fun fill(c: Int, a: Int = DECOR_ALPHA) = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL; color = c; alpha = a
     }
     private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL; alpha = DECOR_ALPHA
@@ -427,76 +530,94 @@ class DoodleSceneView @JvmOverloads constructor(
 
     fun setScene(s: Int) { scene = s; invalidate() }
 
+    /** Мерцание: 0..1, у каждой звезды свой сдвиг фазы -> мигают вразнобой. */
+    private fun twinkle(off: Float): Float {
+        val ph = BoilClock.phase * 1.7f + off
+        return 0.45f + 0.55f * (0.5f + 0.5f * sin(ph.toDouble()).toFloat())
+    }
+
+    /** Петля 0..1 по времени: облако проходит экран и заходит снова. */
+    private fun loop(periodSec: Float, off: Float): Float {
+        val t = (BoilClock.phase / periodSec + off)
+        return t - kotlin.math.floor(t)
+    }
+
     override fun onDraw(canvas: Canvas) {
-        val w = width.toFloat()
-        val h = height.toFloat()
+        val w = width.toFloat(); val h = height.toFloat()
         if (w <= 0f || h <= 0f) return
-        // Сид зависит от сцены И от кадра кипения: сцена кривится по-своему,
-        // но в пределах кадра стабильна - значит "дышит", а не дрожит хаотично.
-        val rng = Wobble(9001L + scene * 733L + BoilClock.frame * 97L)
+        // Сид от сцены И кадра кипения: контур "дышит", но в пределах кадра
+        // стабилен - иначе рябило бы в глазах.
+        val r = Wobble(9001L + scene * 733L + BoilClock.frame * 97L)
         when (scene) {
-            HEADER -> drawHeader(canvas, w, h, rng)
-            NIGHT -> drawNight(canvas, w, h, rng)
-            DAY -> drawDay(canvas, w, h, rng)
-            EXPEDITION -> drawExpedition(canvas, w, h, rng)
+            HEADER -> drawHeader(canvas, w, h, r)
+            NIGHT -> drawNight(canvas, w, h, r)
+            DAY -> drawDay(canvas, w, h, r)
+            EXPEDITION -> drawCamp(canvas, w, h, r, amber, amberBr)
+            PROFILE -> drawCamp(canvas, w, h, r, teal, tealBr)
+            STATS -> drawStats(canvas, w, h, r)
+            TIMELINE -> drawTimeline(canvas, w, h, r)
+            CALIBRATION -> drawCalibration(canvas, w, h, r)
+            HISTORY -> drawHistory(canvas, w, h, r)
         }
     }
 
-    /**
-     * Полоса-пейзаж НАД кристаллом (не слой под цифрами, как было в
-     * первой версии - там горы перечёркивали текст). В границах этой
-     * View текста нет вообще, поэтому перекрывать нечего.
-     */
+    /** Облака, плывущие по петле: ушло за правый край - вошло слева. */
+    private fun drifting(c: Canvas, w: Float, h: Float, r: Wobble, color: Int,
+                         specs: List<Triple<Float, Float, Float>>) {
+        val sky = Path()
+        for ((yFrac, sizeFrac, period) in specs) {
+            val margin = w * 0.25f
+            val x = -margin + (w + 2 * margin) * loop(period, yFrac)
+            Doodle.cloud(sky, x, h * yFrac, h * sizeFrac, r)
+        }
+        c.drawPath(sky, stroke(color, 2f))
+    }
+
+    private fun stars(c: Canvas, color: Int, pts: List<Triple<Float, Float, Float>>,
+                      w: Float, h: Float, r: Wobble) {
+        for ((i, p) in pts.withIndex()) {
+            val (xf, yf, rf) = p
+            val k = twinkle(i * 1.9f)
+            val path = Path()
+            Doodle.star(path, w * xf, h * yf, h * rf * k, r)
+            c.drawPath(path, stroke(color, 2f, (DECOR_ALPHA * k).toInt()))
+        }
+    }
+
     private fun drawHeader(c: Canvas, w: Float, h: Float, r: Wobble) {
         val base = h * 0.95f
         val mt = Path(); val snow = Path()
         Doodle.mountains(mt, snow, w * 0.30f, base, w * 0.40f, h * 0.62f, r)
-        c.drawPath(mt, stroke(violet, 2f))
-        c.drawPath(snow, stroke(violetBr, 1f))
+        c.drawPath(mt, stroke(violet, 2f)); c.drawPath(snow, stroke(violetBr, 1f))
         val trees = Path()
         Doodle.fir(trees, w * 0.06f, base, h * 0.52f, r)
         Doodle.fir(trees, w * 0.14f, base, h * 0.40f, r)
         Doodle.fir(trees, w * 0.72f, base, h * 0.45f, r)
         Doodle.fir(trees, w * 0.78f, base, h * 0.34f, r)
         c.drawPath(trees, stroke(teal, 2f))
-        val sky = Path()
-        Doodle.cloud(sky, w * 0.24f, h * 0.22f, h * 0.13f, r)
-        Doodle.cloud(sky, w * 0.60f, h * 0.16f, h * 0.10f, r)
-        c.drawPath(sky, stroke(violet, 2f))
+        drifting(c, w, h, r, violet, listOf(
+            Triple(0.22f, 0.13f, 26f), Triple(0.14f, 0.09f, 34f)))
         val mn = Path()
-        Doodle.moon(mn, w * 0.92f, h * 0.28f, h * 0.16f, r)
+        Doodle.moon(mn, w * 0.92f, h * 0.26f, h * 0.16f, r)
         c.drawPath(mn, stroke(amberBr, 2f))
-        val st = Path()
-        Doodle.star(st, w * 0.42f, h * 0.18f, h * 0.08f, r)
-        Doodle.star(st, w * 0.86f, h * 0.68f, h * 0.06f, r)
-        c.drawPath(st, stroke(blueBr, 2f))
-        dotPaint.color = amber
-        c.drawCircle(w * 0.52f, h * 0.30f, 2f * d, dotPaint)
-        dotPaint.color = tealBr
-        c.drawCircle(w * 0.18f, h * 0.62f, 2f * d, dotPaint)
+        stars(c, blueBr, listOf(Triple(0.44f, 0.18f, 0.08f), Triple(0.86f, 0.70f, 0.06f)), w, h, r)
     }
 
-    /**
-     * NIGHT/DAY рисуются в ПРАВОМ ВЕРХНЕМ углу карточки - единственной
-     * зоне, свободной от текста (цифры и подписи идут слева вниз).
-     * В первой версии луна и солнце сидели по центру прямо на цифрах.
-     */
     private fun drawNight(c: Canvas, w: Float, h: Float, r: Wobble) {
         val mn = Path()
         Doodle.moon(mn, w * 0.80f, h * 0.16f, h * 0.11f, r)
         c.drawPath(mn, stroke(violetBr, 2f))
-        val st = Path()
-        Doodle.star(st, w * 0.68f, h * 0.09f, h * 0.045f, r)
-        Doodle.star(st, w * 0.92f, h * 0.36f, h * 0.04f, r)
-        c.drawPath(st, stroke(blueBr, 2f))
+        stars(c, blueBr, listOf(Triple(0.68f, 0.09f, 0.045f), Triple(0.92f, 0.36f, 0.04f)), w, h, r)
         dotPaint.color = violetBr
         c.drawCircle(w * 0.70f, h * 0.30f, 1.8f * d, dotPaint)
     }
 
+    /** Солнце СИЯЕТ: лучи мерно удлиняются и укорачиваются. */
     private fun drawDay(c: Canvas, w: Float, h: Float, r: Wobble) {
+        val k = 0.9f + 0.18f * sin((BoilClock.phase * 1.3f).toDouble()).toFloat()
         val sn = Path()
-        Doodle.sun(sn, w * 0.82f, h * 0.15f, h * 0.06f, r)
-        c.drawPath(sn, stroke(amber, 2f))
+        Doodle.sun(sn, w * 0.82f, h * 0.15f, h * 0.06f * k, r)
+        c.drawPath(sn, stroke(amber, 2f, (DECOR_ALPHA * (0.8f + 0.2f * k)).toInt()))
         val trees = Path()
         Doodle.fir(trees, w * 0.93f, h * 0.98f, h * 0.20f, r)
         c.drawPath(trees, stroke(tealBr, 2f))
@@ -504,33 +625,111 @@ class DoodleSceneView @JvmOverloads constructor(
         c.drawCircle(w * 0.62f, h * 0.10f, 1.8f * d, dotPaint)
     }
 
-    /**
-     * Лагерь живёт в ПРАВОЙ части карточки: слева ромб сезона и текст.
-     * В первой версии палатка стояла прямо на ромбе и на заголовке.
-     */
-    private fun drawExpedition(c: Canvas, w: Float, h: Float, r: Wobble) {
+    /** Лагерь: живой костёр (пламя дышит), палатка, лес, горы. */
+    private fun drawCamp(c: Canvas, w: Float, h: Float, r: Wobble, tint: Int, tintBr: Int) {
         val base = h * 0.90f
         val tn = Path()
         Doodle.tent(tn, w * 0.62f, base, w * 0.13f, h * 0.42f, r)
         c.drawPath(tn, stroke(violetBr, 2f))
+        // Пламя живёт: высота гуляет двумя несинхронными волнами, поэтому
+        // не выглядит механическим маятником.
+        val ph = BoilClock.phase
+        val flick = 1f + 0.30f * sin((ph * 5.1f).toDouble()).toFloat() +
+                    0.16f * sin((ph * 8.7f + 1.3f).toDouble()).toFloat()
         val logs = Path(); val flame = Path()
-        Doodle.fire(logs, flame, w * 0.72f, base, h * 0.09f, r)
-        c.drawPath(logs, stroke(0xFF966E46.toInt(), 2f))
-        c.drawPath(flame, stroke(amber, 2f))
+        Doodle.fire(logs, flame, w * 0.72f, base, h * 0.09f * flick, r)
+        c.drawPath(logs, stroke(ember, 2f))
+        c.drawPath(flame, stroke(amber, 2f, (DECOR_ALPHA * (0.75f + 0.25f * flick)).toInt()))
+        // искры над костром
+        for (i in 0 until 3) {
+            val t = loop(2.2f, i * 0.33f)
+            val sx = w * 0.72f + (i - 1) * 5f * d
+            val sy = base - h * 0.14f - t * h * 0.30f
+            dotPaint.color = amberBr
+            dotPaint.alpha = (DECOR_ALPHA * (1f - t)).toInt()
+            c.drawCircle(sx, sy, 1.6f * d, dotPaint)
+        }
+        dotPaint.alpha = DECOR_ALPHA
         val trees = Path()
         Doodle.fir(trees, w * 0.55f, base, h * 0.30f, r)
         Doodle.fir(trees, w * 0.97f, base, h * 0.28f, r)
         c.drawPath(trees, stroke(teal, 2f))
         val mt = Path(); val snow = Path()
         Doodle.mountains(mt, snow, w * 0.78f, base, w * 0.18f, h * 0.36f, r)
-        c.drawPath(mt, stroke(amberBr, 2f))
-        c.drawPath(snow, stroke(amberBr, 1f))
+        c.drawPath(mt, stroke(tint, 2f)); c.drawPath(snow, stroke(tintBr, 1f))
         val trail = Path()
         Doodle.line(trail, w * 0.66f, base + 3f * d, w * 0.74f, base - 2f * d, 1.2f, 6, r)
         Doodle.line(trail, w * 0.74f, base - 2f * d, w * 0.80f, base + 2f * d, 1.2f, 6, r)
-        c.drawPath(trail, stroke(amber, 1f))
-        val st = Path()
-        Doodle.star(st, w * 0.88f, h * 0.16f, h * 0.10f, r)
-        c.drawPath(st, stroke(amberBr, 2f))
+        c.drawPath(trail, stroke(tint, 1f))
+        stars(c, tintBr, listOf(Triple(0.88f, 0.16f, 0.10f)), w, h, r)
+    }
+
+    /** Статистика: острые пики и река - синий оттенок. */
+    private fun drawStats(c: Canvas, w: Float, h: Float, r: Wobble) {
+        val base = h * 0.92f
+        val mt = Path(); val snow = Path()
+        Doodle.mountains(mt, snow, w * 0.46f, base, w * 0.46f, h * 0.72f, r)
+        c.drawPath(mt, stroke(blue, 2f)); c.drawPath(snow, stroke(blueBr, 1f))
+        val rv = Path()
+        Doodle.river(rv, w * 0.05f, h * 0.72f, w * 0.60f, base, r)
+        c.drawPath(rv, stroke(blueBr, 2f))
+        val trees = Path()
+        Doodle.fir(trees, w * 0.14f, base, h * 0.36f, r)
+        Doodle.fir(trees, w * 0.90f, base, h * 0.42f, r)
+        c.drawPath(trees, stroke(teal, 2f))
+        drifting(c, w, h, r, violet, listOf(Triple(0.16f, 0.10f, 30f)))
+        stars(c, blueBr, listOf(Triple(0.32f, 0.20f, 0.09f), Triple(0.70f, 0.12f, 0.06f)), w, h, r)
+    }
+
+    /** Timeline: солнце сияет, облака плывут, указатель на распутье. */
+    private fun drawTimeline(c: Canvas, w: Float, h: Float, r: Wobble) {
+        val base = h * 0.92f
+        val k = 0.9f + 0.2f * sin((BoilClock.phase * 1.1f).toDouble()).toFloat()
+        val sn = Path()
+        Doodle.sun(sn, w * 0.60f, h * 0.26f, h * 0.13f * k, r)
+        c.drawPath(sn, stroke(amber, 2f, (DECOR_ALPHA * (0.8f + 0.2f * k)).toInt()))
+        drifting(c, w, h, r, violet, listOf(
+            Triple(0.20f, 0.12f, 22f), Triple(0.34f, 0.09f, 31f)))
+        val sp = Path()
+        Doodle.signpost(sp, w * 0.86f, base, h * 0.50f, r)
+        c.drawPath(sp, stroke(amberBr, 2f))
+        val trees = Path()
+        Doodle.fir(trees, w * 0.10f, base, h * 0.48f, r)
+        Doodle.fir(trees, w * 0.20f, base, h * 0.36f, r)
+        Doodle.fir(trees, w * 0.72f, base, h * 0.40f, r)
+        c.drawPath(trees, stroke(teal, 2f))
+        stars(c, amberBr, listOf(Triple(0.44f, 0.14f, 0.07f)), w, h, r)
+    }
+
+    /** Калибровка: точность - это механизм. Шестерни КРУТЯТСЯ, песок сыплется. */
+    private fun drawCalibration(c: Canvas, w: Float, h: Float, r: Wobble) {
+        val ph = BoilClock.phase
+        val g1 = Path()
+        Doodle.gear(g1, w * 0.16f, h * 0.46f, h * 0.30f, 8, ph * 22f, r)
+        c.drawPath(g1, stroke(violet, 2f))
+        // Вторая шестерня крутится В ОБРАТНУЮ сторону и быстрее - так и
+        // работает зубчатая передача: меньше колесо - выше обороты.
+        val g2 = Path()
+        Doodle.gear(g2, w * 0.34f, h * 0.72f, h * 0.19f, 6, -ph * 33f, r)
+        c.drawPath(g2, stroke(violetBr, 2f))
+        // Песок пересыпается за 8 с и переворачивается заново.
+        val sandFill = 1f - loop(8f, 0f)
+        val frame = Path(); val sand = Path()
+        Doodle.hourglass(frame, sand, w * 0.62f, h * 0.50f, h * 0.34f, h * 0.62f, sandFill, r)
+        c.drawPath(sand, fill(amber, 90))
+        c.drawPath(frame, stroke(amberBr, 2f))
+        stars(c, blueBr, listOf(Triple(0.86f, 0.24f, 0.11f), Triple(0.94f, 0.66f, 0.07f)), w, h, r)
+        dotPaint.color = violetBr
+        c.drawCircle(w * 0.48f, h * 0.20f, 1.8f * d, dotPaint)
+    }
+
+    /** История: стопка тетрадей - нейтральный серый, экран архивный. */
+    private fun drawHistory(c: Canvas, w: Float, h: Float, r: Wobble) {
+        val nb = Path()
+        Doodle.notebook(nb, w * 0.18f, h * 0.52f, w * 0.16f, h * 0.60f, r)
+        Doodle.notebook(nb, w * 0.40f, h * 0.56f, w * 0.14f, h * 0.50f, r)
+        c.drawPath(nb, stroke(gray, 2f))
+        stars(c, gray, listOf(Triple(0.70f, 0.30f, 0.10f), Triple(0.88f, 0.62f, 0.07f)), w, h, r)
+        drifting(c, w, h, r, gray, listOf(Triple(0.20f, 0.10f, 38f)))
     }
 }

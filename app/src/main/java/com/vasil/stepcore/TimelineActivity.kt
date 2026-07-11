@@ -29,7 +29,7 @@ class TimelineActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_timeline)
         // V14.3: дудл-стиль.
-        findViewById<DoodleSceneView>(R.id.doodleHeader).setScene(DoodleSceneView.HEADER)
+        findViewById<DoodleSceneView>(R.id.doodleHeader).setScene(DoodleSceneView.TIMELINE)
         DoodleUi.frame(findViewById(R.id.timelineSummary), R.color.accent_blue, R.color.surface, 301L)
         DoodleUi.frame(findViewById(R.id.chartCard), R.color.accent_violet, R.color.surface, 302L)
         timeline = findViewById(R.id.timeline)
