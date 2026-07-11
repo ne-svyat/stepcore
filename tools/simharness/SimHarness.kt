@@ -56,6 +56,7 @@ fun main(args: Array<String>) {
     run {
         var events = 0L; var days = 0L
         var weather = 0L; var ambient = 0L; var milestones = 0L
+        var digests = 0L
         var stormDaysTotal = 0L
         var holes = 0
         val perDayMax = HashMap<Int, Int>()
@@ -76,6 +77,7 @@ fun main(args: Array<String>) {
                     "weather" -> weather++
                     "ambient" -> ambient++
                     "milestone" -> milestones++
+                    "digest" -> digests++
                 }
                 if (e.key == "wx.snow_first") expFirstSnowEvent = true
                 perDay[e.tick] = (perDay[e.tick] ?: 0) + 1
@@ -96,7 +98,7 @@ fun main(args: Array<String>) {
 
         val perDayRate = events.toDouble() / days
         println("события/день = " + String.format("%.3f", perDayRate) +
-            "  (погода " + weather + " · зарисовки " + ambient + " · вехи " + milestones + ")")
+            "  (погода " + weather + " · сводки " + digests + " · зарисовки " + ambient + " · вехи " + milestones + ")")
         println("бурь: " + String.format("%.1f", stormDaysTotal * 100.0 / days) + " проц. дней")
         println("температуры по сезонам (мин..макс): зима " + tempMin[0] + ".." + tempMax[0] +
             " · весна " + tempMin[1] + ".." + tempMax[1] +
@@ -104,8 +106,13 @@ fun main(args: Array<String>) {
             " · осень " + tempMin[3] + ".." + tempMax[3])
         println("первый снег: осень " + autumnFirstSnow + "/" + autumnRuns)
 
-        check("rate.per_day_in_band", perDayRate in 0.30..0.65, "" + perDayRate)
-        check("rate.max_two_per_day", (perDayMax.values.maxOrNull() ?: 0) <= 2)
+        // каждый тик = событие или сводка, плюс редкий ambient сверху
+        check("rate.per_day_min_one", perDayRate >= 1.0, "" + perDayRate)
+        check("rate.per_day_not_spammy", perDayRate <= 1.30, "" + perDayRate)
+        // событий-погоды (без сводок) — прежняя редкость, мир не сорит драмой
+        val wxRate = weather.toDouble() / days
+        check("rate.weather_events_rare", wxRate in 0.10..0.55, "" + wxRate)
+        check("rate.max_three_per_day", (perDayMax.values.maxOrNull() ?: 0) <= 3)
         check("corpus.no_holes", holes == 0)
         // границы учитывают дрейф сезона: старт зимой за 100 дней доходит
         // до середины весны (до ~+20), старт летом — до осенних холодов (~-18)
@@ -176,6 +183,7 @@ fun main(args: Array<String>) {
             "wx.sleet_start", "wx.snow_first", "wx.snow_start", "wx.snow_stop",
             "wx.blizzard", "wx.storm", "wx.cold_snap", "wx.thaw", "wx.heat",
             "wx.clear_streak", "wx.fog", "wx.wind_strong", "ambient",
+            "digest",
             "end.success", "end.voluntary",
             "final.summary", "final.first_snow", "final.storms",
         )

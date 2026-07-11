@@ -245,6 +245,22 @@
                     android:textSize="15sp"
                     android:layout_marginTop="20dp" />
 
+                <LinearLayout
+                    android:id="@+id/journalActions"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginTop="4dp">
+                    <Button android:id="@+id/copyBtn" style="?android:attr/buttonBarButtonStyle"
+                        android:layout_width="0dp" android:layout_weight="1"
+                        android:layout_height="wrap_content" android:text="Скопировать"
+                        android:textColor="@color/text_main" />
+                    <Button android:id="@+id/shareBtn" style="?android:attr/buttonBarButtonStyle"
+                        android:layout_width="0dp" android:layout_weight="1"
+                        android:layout_height="wrap_content" android:text="Поделиться"
+                        android:textColor="@color/text_main" />
+                </LinearLayout>
+
                 <TextView
                     android:id="@+id/journalText"
                     android:layout_width="match_parent"

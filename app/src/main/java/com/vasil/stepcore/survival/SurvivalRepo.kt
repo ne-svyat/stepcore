@@ -49,6 +49,41 @@ class SurvivalRepo(private val context: Context) {
     suspend fun archive(): List<Expedition> = db.dao().archive()
     suspend fun events(id: Long): List<ExpeditionEvent> = db.dao().eventsOf(id)
 
+    /**
+     * Полный текст экспедиции для копирования/шаринга: шапка, журнал в
+     * ХРОНОЛОГИЧЕСКОМ порядке (в отличие от экрана, где новое сверху —
+     * для чтения «истории» естественнее от старта к финалу) и, если
+     * экспедиция завершена, итоговая строка уже лежит в журнале.
+     *
+     * Спека: завершённая экспедиция — это «полный отчёт», который человек
+     * изучает и хранит. Этот текст и есть такой отчёт в переносимом виде.
+     */
+    suspend fun exportText(id: Long): String {
+        val e = db.dao().byId(id) ?: return ""
+        val evs = db.dao().eventsOf(id).sortedBy { it.id } // eventsOf идёт DESC — разворачиваем
+        val sb = StringBuilder()
+        sb.append("Экспедиция №").append(e.id).append('\n')
+        sb.append("Северная тайга · старт: ")
+            .append(SurvivalEngine.SEASON_RU[e.startSeason])
+            .append(" · план ").append(e.plannedDays).append(' ')
+            .append(SurvivalEngine.daysWord(e.plannedDays))
+            .append(" · темп ").append(e.stepsPerTick).append(" шаг/день").append('\n')
+        val statusLine = when (e.status) {
+            "done_success" -> "Завершена по плану на " + e.ticksDone + " " +
+                SurvivalEngine.daysWord(e.ticksDone) + " мира"
+            "done_voluntary" -> "Прервана на " + e.ticksDone + " " +
+                SurvivalEngine.daysWord(e.ticksDone) + " мира"
+            else -> "В процессе · день " + e.ticksDone + " из " + e.plannedDays
+        }
+        sb.append(statusLine).append("\n\n")
+        sb.append("— ЖУРНАЛ —\n")
+        for (ev in evs) {
+            val prefix = if (ev.tick == 0) "Старт" else "Д" + ev.tick
+            sb.append(prefix).append(" · ").append(ev.text).append('\n')
+        }
+        return sb.toString().trimEnd()
+    }
+
     /** Средний шаг за последние 7 закрытых дней — подсказка выбора темпа. */
     suspend fun avgDailySteps(): Int {
         val today = LocalDate.now().toString()

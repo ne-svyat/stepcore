@@ -131,8 +131,19 @@ class SurvivalEngine(
 
         if (key != null) {
             sink(WorldEvent(t, "weather", key, rng.nextLong(), mapOf("temp" to fmtTemp(st.tempC))))
-        } else if (rng.nextDouble() < AMBIENT_P) {
-            sink(WorldEvent(t, "ambient", "ambient", rng.nextLong()))
+        } else {
+            // Тихий день: сводка радиостанции из ЖИВЫХ данных (небо/ветер/темп
+            // каждый день разные — стены одинаковых строк не возникает).
+            // Спека: наблюдательная сеть передаёт состояние каждый цикл.
+            sink(WorldEvent(t, "digest", "digest", rng.nextLong(), mapOf(
+                "sky" to skyWord(st.cloud, st.fog),
+                "wind" to windWord(st.wind),
+                "temp" to fmtTemp(st.tempC),
+            )))
+            // Редкая бытовая зарисовка ПОВЕРХ сводки — приправа, не замена.
+            if (rng.nextDouble() < AMBIENT_P) {
+                sink(WorldEvent(t, "ambient", "ambient", rng.nextLong()))
+            }
         }
     }
 
@@ -162,6 +173,22 @@ class SurvivalEngine(
         fun startOffsetFrom(seed: Long): Int = 10 + SplitMix64.forTick(seed, 0).nextInt(41)
 
         fun fmtTemp(t: Int): String = if (t > 0) "+" + t else t.toString()
+
+        /** Словесное небо для сводки дня. Туман приоритетнее облачности. */
+        fun skyWord(cloud: Int, fog: Boolean): String = when {
+            fog -> "туманно"
+            cloud == 0 -> "ясно"
+            cloud == 1 -> "переменная облачность"
+            else -> "пасмурно"
+        }
+
+        /** Словесный ветер для сводки дня. */
+        fun windWord(wind: Int): String = when (wind) {
+            0 -> "тихо"
+            1 -> "ветрено"
+            2 -> "сильный ветер"
+            else -> "буря"
+        }
 
         /** Русское склонение: 1 день - 2 дня - 5 дней - 11 дней - 21 день. */
         fun daysWord(n: Int): String {

@@ -1,5 +1,9 @@
 package com.vasil.stepcore.survival
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
 import android.os.Bundle
 import android.view.View
 import android.widget.Button
@@ -44,6 +48,10 @@ class SurvivalActivity : AppCompatActivity() {
     /** id экспедиции из архива, открытой на просмотр; -1 = не в архиве. */
     private var viewingId = -1L
 
+    /** id экспедиции, которая СЕЙЧАС на экране (активная или архивная).
+     *  Кнопки копирования/шаринга работают с ней. -1 = форма старта. */
+    private var shownId = -1L
+
     private lateinit var startBox: LinearLayout
     private lateinit var activeBox: LinearLayout
     private lateinit var archiveBox: LinearLayout
@@ -61,6 +69,9 @@ class SurvivalActivity : AppCompatActivity() {
     private lateinit var refreshBtn: Button
     private lateinit var finishBtn: Button
     private lateinit var backBtn: Button
+    private lateinit var copyBtn: Button
+    private lateinit var shareBtn: Button
+    private lateinit var journalActions: LinearLayout
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -81,6 +92,9 @@ class SurvivalActivity : AppCompatActivity() {
         refreshBtn = findViewById(R.id.refreshBtn)
         finishBtn = findViewById(R.id.finishBtn)
         backBtn = findViewById(R.id.backBtn)
+        copyBtn = findViewById(R.id.copyBtn)
+        shareBtn = findViewById(R.id.shareBtn)
+        journalActions = findViewById(R.id.journalActions)
 
         seasonBtns = listOf(
             findViewById(R.id.seasonWinterBtn), findViewById(R.id.seasonSpringBtn),
@@ -142,6 +156,31 @@ class SurvivalActivity : AppCompatActivity() {
         backBtn.setOnClickListener {
             viewingId = -1L
             lifecycleScope.launch { refreshUi(runSync = false) }
+        }
+
+        copyBtn.setOnClickListener {
+            val id = shownId
+            if (id < 0) return@setOnClickListener
+            lifecycleScope.launch {
+                val text = repo.exportText(id)
+                val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                cm.setPrimaryClip(ClipData.newPlainText("Экспедиция №" + id, text))
+                android.widget.Toast.makeText(this@SurvivalActivity,
+                    "Журнал скопирован", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+        shareBtn.setOnClickListener {
+            val id = shownId
+            if (id < 0) return@setOnClickListener
+            lifecycleScope.launch {
+                val text = repo.exportText(id)
+                val send = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_SUBJECT, "Экспедиция №" + id)
+                    putExtra(Intent.EXTRA_TEXT, text)
+                }
+                startActivity(Intent.createChooser(send, "Поделиться экспедицией"))
+            }
         }
 
         backToList = object : OnBackPressedCallback(false) {
@@ -211,6 +250,8 @@ class SurvivalActivity : AppCompatActivity() {
         } else {
             syncNote.visibility = View.GONE
         }
+        shownId = e.id
+        journalActions.visibility = View.VISIBLE
         journal.text = buildJournal(e.id)
     }
 
@@ -227,6 +268,8 @@ class SurvivalActivity : AppCompatActivity() {
         val label = if (e.status == "done_success") "Завершена по плану" else "Прервана"
         syncNote.text = label + " · " + fmt.format(Date(e.finishedMs))
         syncNote.visibility = View.VISIBLE
+        shownId = e.id
+        journalActions.visibility = View.VISIBLE
         journal.text = buildJournal(e.id)
     }
 
@@ -245,6 +288,8 @@ class SurvivalActivity : AppCompatActivity() {
         activeBox.visibility = View.GONE
         backToList.isEnabled = false
         startBox.visibility = View.VISIBLE
+        shownId = -1L
+        journalActions.visibility = View.GONE
         refreshStartControls()
 
         archiveBox.removeAllViews()
