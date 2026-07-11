@@ -52,6 +52,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var yTotalKcal: TextView
     private lateinit var yBreakdown: TextView
     private lateinit var yDiff: TextView
+    private lateinit var expeditionCard: View
+    private lateinit var expeditionSeasonView: com.vasil.stepcore.survival.SeasonDiamondView
+    private lateinit var expeditionDayText: TextView
+    private lateinit var expeditionSubText: TextView
 
     private var yWalk = 0
     private var yRun = 0
@@ -92,6 +96,13 @@ class MainActivity : AppCompatActivity() {
         yTotalKcal = findViewById(R.id.yTotalKcal)
         yBreakdown = findViewById(R.id.yBreakdown)
         yDiff = findViewById(R.id.yDiff)
+        expeditionCard = findViewById(R.id.expeditionCard)
+        expeditionSeasonView = findViewById(R.id.expeditionSeasonView)
+        expeditionDayText = findViewById(R.id.expeditionDayText)
+        expeditionSubText = findViewById(R.id.expeditionSubText)
+        expeditionCard.setOnClickListener {
+            startActivity(Intent(this, com.vasil.stepcore.survival.SurvivalActivity::class.java))
+        }
 
         accuracyBadge.setOnClickListener {
             startActivity(Intent(this, CalibrationActivity::class.java))
@@ -148,10 +159,6 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(this, TimelineActivity::class.java))
         }
 
-        findViewById<Button>(R.id.survivalButton).setOnClickListener {
-            startActivity(Intent(this, com.vasil.stepcore.survival.SurvivalActivity::class.java))
-        }
-
         toolsToggle.setOnClickListener {
             val open = toolsContainer.visibility == View.VISIBLE
             toolsContainer.visibility = if (open) View.GONE else View.VISIBLE
@@ -169,6 +176,8 @@ class MainActivity : AppCompatActivity() {
             updateStats()
             refreshRing(StepsState.steps.value)
         }
+
+        lifecycleScope.launch { refreshExpeditionCard() }
 
         val diagBtn = findViewById<Button>(R.id.diagButton)
         var diagOn = false
@@ -400,6 +409,42 @@ class MainActivity : AppCompatActivity() {
 
     private fun fmtNumM(n: Int) = "%,d".format(n).replace(',', ' ')
 
+    /**
+     * Карточка экспедиции (V13.0, фаза 2). Читает survival.db ТОЛЬКО НА
+     * ЧТЕНИЕ через тот же публичный SurvivalRepo, что использует сам
+     * режим - никакой отдельной логики чтения здесь нет, один источник
+     * истины. Обёрнуто в try/catch намеренно: принцип изоляции режима
+     * (сбой Survival Mode не должен ронять главный экран шагомера) -
+     * при любой ошибке карточка просто показывает нейтральное состояние
+     * вместо падения.
+     */
+    private suspend fun refreshExpeditionCard() {
+        try {
+            val repo = com.vasil.stepcore.survival.SurvivalRepo(this)
+            val active = repo.active()
+            if (active != null) {
+                // Сезон тем же способом, что и сам экран экспедиции: тик 0 -
+                // стартовый сезон как есть, иначе прогон движка до ticksDone.
+                val season = if (active.ticksDone == 0) active.startSeason
+                    else com.vasil.stepcore.survival.engine.SurvivalEngine(
+                        active.seed, active.startSeason, active.startOffset
+                    ).seasonOf(active.ticksDone)
+                expeditionSeasonView.setSeason(season)
+                expeditionDayText.text = "День ${active.ticksDone} из ${active.plannedDays}"
+                expeditionSubText.text = "Северная тайга · " +
+                    com.vasil.stepcore.survival.engine.SurvivalEngine.SEASON_RU[season]
+            } else {
+                expeditionSeasonView.setSeason(-1)
+                expeditionDayText.text = "Нет активной экспедиции"
+                expeditionSubText.text = "Начать →"
+            }
+        } catch (e: Exception) {
+            expeditionSeasonView.setSeason(-1)
+            expeditionDayText.text = "Экспедиция"
+            expeditionSubText.text = "Открыть"
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         goal = getSharedPreferences(StepService.PREFS, MODE_PRIVATE).getInt("p_goal", 10000)
@@ -407,6 +452,7 @@ class MainActivity : AppCompatActivity() {
         if (::cargoChip.isInitialized) refreshCargoChip()
         if (::ring.isInitialized) refreshRing(StepsState.steps.value)
         updateStats()
+        if (::expeditionCard.isInitialized) lifecycleScope.launch { refreshExpeditionCard() }
     }
 
     private fun startTracking() {

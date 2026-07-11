@@ -334,6 +334,57 @@
             android:layout_marginTop="12dp" />
 
         <LinearLayout
+            android:id="@+id/expeditionCard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="@drawable/card_asym_amber"
+            android:padding="14dp"
+            android:layout_marginTop="14dp">
+
+            <com.vasil.stepcore.survival.SeasonDiamondView
+                android:id="@+id/expeditionSeasonView"
+                android:layout_width="52dp"
+                android:layout_height="52dp" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_marginStart="14dp">
+
+                <TextView
+                    android:id="@+id/expeditionLabelText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="ЭКСПЕДИЦИЯ"
+                    android:textColor="@color/accent_amber_bright"
+                    android:letterSpacing="0.06"
+                    android:textSize="11sp" />
+
+                <TextView
+                    android:id="@+id/expeditionDayText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Нет активной экспедиции"
+                    android:textColor="@color/text_main"
+                    android:textSize="16sp"
+                    android:layout_marginTop="2dp" />
+
+                <TextView
+                    android:id="@+id/expeditionSubText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Начать →"
+                    android:textColor="@color/accent_amber"
+                    android:textSize="12sp"
+                    android:layout_marginTop="2dp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
@@ -365,11 +416,6 @@
             <Button android:id="@+id/calibrationButton" style="?android:attr/buttonBarButtonStyle"
                 android:layout_width="0dp" android:layout_weight="1"
                 android:layout_height="wrap_content" android:text="Калибровка"
-                android:textColor="@color/text_main" />
-
-            <Button android:id="@+id/survivalButton" style="?android:attr/buttonBarButtonStyle"
-                android:layout_width="0dp" android:layout_weight="1"
-                android:layout_height="wrap_content" android:text="Экспедиция"
                 android:textColor="@color/text_main" />
         </LinearLayout>
 
