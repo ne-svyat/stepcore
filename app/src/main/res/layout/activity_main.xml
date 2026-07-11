@@ -390,33 +390,111 @@
             android:orientation="horizontal"
             android:layout_marginTop="8dp">
 
-            <Button android:id="@+id/historyButton" style="?android:attr/buttonBarButtonStyle"
+            <LinearLayout
+                android:id="@+id/profileButton"
                 android:layout_width="0dp" android:layout_weight="1"
-                android:layout_height="wrap_content" android:text="История"
-                android:textColor="@color/text_main" />
-            <Button android:id="@+id/statsButton" style="?android:attr/buttonBarButtonStyle"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/card_shard_blue"
+                android:padding="14dp"
+                android:layout_marginEnd="5dp">
+                <TextView
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="Профиль" android:textColor="@color/text_main" android:textSize="15sp" />
+                <TextView
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="вес, рост, груз" android:textColor="@color/accent_blue_bright"
+                    android:textSize="11sp" android:layout_marginTop="2dp" />
+            </LinearLayout>
+
+            <FrameLayout
                 android:layout_width="0dp" android:layout_weight="1"
-                android:layout_height="wrap_content" android:text="Статистика"
-                android:textColor="@color/text_main" />
-            <Button android:id="@+id/timelineButton" style="?android:attr/buttonBarButtonStyle"
-                android:layout_width="0dp" android:layout_weight="1"
-                android:layout_height="wrap_content" android:text="Timeline"
-                android:textColor="@color/text_main" />
+                android:layout_height="wrap_content"
+                android:layout_marginStart="5dp">
+
+                <LinearLayout
+                    android:id="@+id/analyticsFront"
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:background="@drawable/card_shard_teal"
+                    android:padding="14dp">
+                    <TextView
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:text="Аналитика" android:textColor="@color/text_main" android:textSize="15sp" />
+                    <TextView
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:text="статистика" android:textColor="@color/accent_teal_bright"
+                        android:textSize="11sp" android:layout_marginTop="2dp" />
+                    <TextView
+                        android:id="@+id/analyticsFrontFlipBtn"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:layout_gravity="end"
+                        android:text="⟲ timeline"
+                        android:textColor="@color/text_dim" android:textSize="10sp"
+                        android:padding="4dp" android:layout_marginTop="4dp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/analyticsBack"
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:background="@drawable/card_shard_teal"
+                    android:padding="14dp"
+                    android:visibility="gone">
+                    <TextView
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:text="Timeline" android:textColor="@color/text_main" android:textSize="15sp" />
+                    <TextView
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:text="лента дня" android:textColor="@color/accent_teal_bright"
+                        android:textSize="11sp" android:layout_marginTop="2dp" />
+                    <TextView
+                        android:id="@+id/analyticsBackFlipBtn"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:layout_gravity="end"
+                        android:text="⟲ статистика"
+                        android:textColor="@color/text_dim" android:textSize="10sp"
+                        android:padding="4dp" android:layout_marginTop="4dp" />
+                </LinearLayout>
+            </FrameLayout>
         </LinearLayout>
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal">
+            android:orientation="horizontal"
+            android:layout_marginTop="8dp">
 
-            <Button android:id="@+id/profileButton" style="?android:attr/buttonBarButtonStyle"
+            <LinearLayout
+                android:id="@+id/calibrationButton"
                 android:layout_width="0dp" android:layout_weight="1"
-                android:layout_height="wrap_content" android:text="Профиль"
-                android:textColor="@color/text_main" />
-            <Button android:id="@+id/calibrationButton" style="?android:attr/buttonBarButtonStyle"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/card_shard_violet"
+                android:padding="12dp"
+                android:layout_marginEnd="5dp">
+                <TextView
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="Калибровка" android:textColor="@color/text_main" android:textSize="13sp" />
+                <TextView
+                    android:id="@+id/calibrationAccuracyText"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="" android:textColor="@color/accent_violet_bright"
+                    android:textSize="10sp" android:layout_marginTop="2dp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/historyButton"
                 android:layout_width="0dp" android:layout_weight="1"
-                android:layout_height="wrap_content" android:text="Калибровка"
-                android:textColor="@color/text_main" />
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/card_shard_gray"
+                android:padding="12dp"
+                android:layout_marginStart="5dp">
+                <TextView
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="История" android:textColor="@color/text_dim" android:textSize="13sp" />
+            </LinearLayout>
         </LinearLayout>
 
         <androidx.appcompat.widget.SwitchCompat

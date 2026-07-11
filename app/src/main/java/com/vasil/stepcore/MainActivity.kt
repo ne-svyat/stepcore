@@ -56,6 +56,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var expeditionSeasonView: com.vasil.stepcore.survival.SeasonDiamondView
     private lateinit var expeditionDayText: TextView
     private lateinit var expeditionSubText: TextView
+    private lateinit var analyticsFront: View
+    private lateinit var analyticsBack: View
+    private lateinit var calibrationAccuracyText: TextView
 
     private var yWalk = 0
     private var yRun = 0
@@ -104,14 +107,15 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(this, com.vasil.stepcore.survival.SurvivalActivity::class.java))
         }
 
+        calibrationAccuracyText = findViewById(R.id.calibrationAccuracyText)
         accuracyBadge.setOnClickListener {
             startActivity(Intent(this, CalibrationActivity::class.java))
         }
-        findViewById<Button>(R.id.calibrationButton).setOnClickListener {
+        findViewById<View>(R.id.calibrationButton).setOnClickListener {
             startActivity(Intent(this, CalibrationActivity::class.java))
         }
         val toggleBtn = findViewById<Button>(R.id.toggleButton)
-        val historyBtn = findViewById<Button>(R.id.historyButton)
+        val historyBtn = findViewById<View>(R.id.historyButton)
         val hapticSwitch = findViewById<SwitchCompat>(R.id.hapticSwitch)
         val detailLogSwitch = findViewById<SwitchCompat>(R.id.detailLogSwitch)
         val toolsToggle = findViewById<TextView>(R.id.toolsToggle)
@@ -149,15 +153,25 @@ class MainActivity : AppCompatActivity() {
         historyBtn.setOnClickListener {
             startActivity(Intent(this, HistoryActivity::class.java))
         }
-        findViewById<Button>(R.id.profileButton).setOnClickListener {
+        findViewById<View>(R.id.profileButton).setOnClickListener {
             startActivity(Intent(this, ProfileActivity::class.java))
         }
-        findViewById<Button>(R.id.statsButton).setOnClickListener {
+
+        // Аналитика (V13.0, фаза 3): одна плитка, два лица. Тап по лицу -
+        // переход на соответствующий экран; тап по маленькой подписи
+        // "⟲" в углу - переворот БЕЗ перехода. Состояние переворота не
+        // сохраняется между открытиями экрана - каждый заход начинается
+        // с лица "Статистика" (см. flipAnalytics).
+        analyticsFront = findViewById(R.id.analyticsFront)
+        analyticsBack = findViewById(R.id.analyticsBack)
+        analyticsFront.setOnClickListener {
             startActivity(Intent(this, StatsActivity::class.java))
         }
-        findViewById<Button>(R.id.timelineButton).setOnClickListener {
+        analyticsBack.setOnClickListener {
             startActivity(Intent(this, TimelineActivity::class.java))
         }
+        findViewById<View>(R.id.analyticsFrontFlipBtn).setOnClickListener { flipAnalytics(true) }
+        findViewById<View>(R.id.analyticsBackFlipBtn).setOnClickListener { flipAnalytics(false) }
 
         toolsToggle.setOnClickListener {
             val open = toolsContainer.visibility == View.VISIBLE
@@ -263,10 +277,34 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Переворот плитки Аналитики (V13.0, фаза 3). Стандартный Android-
+     * паттерн: уходящее лицо поворачивается до -90° (видно ребром),
+     * скрывается, входящее лицо стартует с +90° и доворачивается до 0°.
+     * cameraDistance увеличен, иначе перспектива на маленькой плитке
+     * выглядит непропорционально сплющенной.
+     */
+    private fun flipAnalytics(toBack: Boolean) {
+        val scale = resources.displayMetrics.density
+        analyticsFront.cameraDistance = 8000f * scale
+        analyticsBack.cameraDistance = 8000f * scale
+        val outView = if (toBack) analyticsFront else analyticsBack
+        val inView = if (toBack) analyticsBack else analyticsFront
+        outView.animate().rotationY(-90f).setDuration(150).withEndAction {
+            outView.visibility = View.GONE
+            inView.rotationY = 90f
+            inView.visibility = View.VISIBLE
+            inView.animate().rotationY(0f).setDuration(150).start()
+        }.start()
+    }
+
     /** Бейдж точности данных -> ведёт на экран Калибровки (V10). */
     private fun refreshAccuracyBadge() {
         val pct = CalibrationRegistry.overallPercent(this)
         accuracyBadge.text = "Точность данных $pct% · настроить"
+        // V13.0 фаза 3: та же цифра, короткая подпись прямо на плитке -
+        // одно вычисление, два места отображения, расхождения быть не может.
+        calibrationAccuracyText.text = "точность $pct%"
     }
 
     /** Груз-чип (V13.0): всегда на виду, чтобы не забыть включённым/выключенным. */

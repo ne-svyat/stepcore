@@ -6,6 +6,14 @@
     <color name="accent_red">#E23636</color>
     <color name="accent_red_bright">#FF3B3B</color>
     <color name="accent_blue">#3D7EFF</color>
+    <color name="accent_blue_bright">#85B7EB</color>
+    <color name="surface_blue">#0F1E38</color>
+    <color name="accent_teal">#1D9E75</color>
+    <color name="accent_teal_bright">#5DCAA5</color>
+    <color name="surface_teal">#0C2A22</color>
+    <color name="accent_violet">#7F77DD</color>
+    <color name="accent_violet_bright">#AFA9EC</color>
+    <color name="surface_violet">#1A1830</color>
     <color name="accent_amber">#EF9F27</color>
     <color name="accent_amber_bright">#FAC775</color>
     <color name="surface_amber">#241A08</color>
