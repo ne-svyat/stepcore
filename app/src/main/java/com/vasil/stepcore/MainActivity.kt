@@ -463,6 +463,13 @@ class MainActivity : AppCompatActivity() {
         frame(findViewById(R.id.profileButton), R.color.accent_blue, R.color.surface_blue, 44L)
         frame(findViewById(R.id.calibrationButton), R.color.accent_violet, R.color.surface_violet, 55L)
         frame(findViewById(R.id.historyButton), R.color.axis_dim, R.color.surface, 66L)
+        frame(findViewById(R.id.analyticsTile), R.color.accent_teal, R.color.surface_teal, 77L)
+        // Чипы дня - тот же язык, цвет по смыслу: путь синий, время
+        // бирюзовое, горение янтарное, суммарный расход фиолетовый.
+        frame(findViewById(R.id.distanceChip), R.color.accent_blue, R.color.surface, 101L)
+        frame(findViewById(R.id.activeTimeChip), R.color.accent_teal, R.color.surface, 102L)
+        frame(findViewById(R.id.activeKcalChip), R.color.accent_amber, R.color.surface, 103L)
+        frame(findViewById(R.id.totalKcalChip), R.color.accent_violet, R.color.surface, 104L)
 
         findViewById<DoodleSceneView>(R.id.headerScene).setScene(DoodleSceneView.HEADER)
         findViewById<DoodleSceneView>(R.id.nightScene).setScene(DoodleSceneView.NIGHT)

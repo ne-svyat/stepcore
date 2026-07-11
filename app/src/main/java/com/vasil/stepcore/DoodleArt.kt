@@ -283,6 +283,9 @@ class DoodleSceneView @JvmOverloads constructor(
         const val NIGHT = 1       // луна + звёзды (карточка ВЧЕРА)
         const val DAY = 2         // солнце + ёлки (карточка СЕГОДНЯ)
         const val EXPEDITION = 3  // палатка, костёр, лес, горы, тропа
+
+        /** Прозрачность декора: читаемость текста важнее насыщенности. */
+        private const val DECOR_ALPHA = 130
     }
 
     private var scene = HEADER
@@ -296,11 +299,18 @@ class DoodleSceneView @JvmOverloads constructor(
     private val amberBr = ContextCompat.getColor(context, R.color.accent_amber_bright)
     private val blueBr = ContextCompat.getColor(context, R.color.accent_blue_bright)
 
+    /**
+     * Декор ПОЛУПРОЗРАЧЕН намеренно. Первая версия рисовала сцены в полную
+     * силу - луна и ёлки перекрывали цифры, экран стало невозможно читать.
+     * Декор - это фон, а не контент: он обязан уступать тексту.
+     */
     private fun stroke(c: Int, wpx: Float) = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE; color = c
+        style = Paint.Style.STROKE; color = c; alpha = DECOR_ALPHA
         strokeWidth = wpx * d; strokeJoin = Paint.Join.ROUND; strokeCap = Paint.Cap.ROUND
     }
-    private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL; alpha = DECOR_ALPHA
+    }
 
     fun setScene(s: Int) { scene = s; invalidate() }
 
@@ -319,88 +329,95 @@ class DoodleSceneView @JvmOverloads constructor(
         }
     }
 
+    /**
+     * Полоса-пейзаж НАД кристаллом (не слой под цифрами, как было в
+     * первой версии - там горы перечёркивали текст). В границах этой
+     * View текста нет вообще, поэтому перекрывать нечего.
+     */
     private fun drawHeader(c: Canvas, w: Float, h: Float, r: Wobble) {
-        val base = h * 0.92f
+        val base = h * 0.95f
         val mt = Path(); val snow = Path()
-        Doodle.mountains(mt, snow, w * 0.02f, base, w * 0.62f, h * 0.60f, r)
+        Doodle.mountains(mt, snow, w * 0.30f, base, w * 0.40f, h * 0.62f, r)
         c.drawPath(mt, stroke(violet, 2f))
         c.drawPath(snow, stroke(violetBr, 1f))
         val trees = Path()
-        Doodle.fir(trees, w * 0.10f, base, h * 0.30f, r)
-        Doodle.fir(trees, w * 0.18f, base, h * 0.23f, r)
-        Doodle.fir(trees, w * 0.60f, base, h * 0.26f, r)
-        Doodle.fir(trees, w * 0.68f, base, h * 0.20f, r)
+        Doodle.fir(trees, w * 0.06f, base, h * 0.52f, r)
+        Doodle.fir(trees, w * 0.14f, base, h * 0.40f, r)
+        Doodle.fir(trees, w * 0.72f, base, h * 0.45f, r)
+        Doodle.fir(trees, w * 0.78f, base, h * 0.34f, r)
         c.drawPath(trees, stroke(teal, 2f))
         val sky = Path()
-        Doodle.cloud(sky, w * 0.42f, h * 0.20f, h * 0.10f, r)
-        Doodle.cloud(sky, w * 0.72f, h * 0.30f, h * 0.13f, r)
+        Doodle.cloud(sky, w * 0.24f, h * 0.22f, h * 0.13f, r)
+        Doodle.cloud(sky, w * 0.60f, h * 0.16f, h * 0.10f, r)
         c.drawPath(sky, stroke(violet, 2f))
         val mn = Path()
-        Doodle.moon(mn, w * 0.90f, h * 0.22f, h * 0.11f, r)
+        Doodle.moon(mn, w * 0.92f, h * 0.28f, h * 0.16f, r)
         c.drawPath(mn, stroke(amberBr, 2f))
         val st = Path()
-        Doodle.star(st, w * 0.34f, h * 0.15f, h * 0.05f, r)
-        Doodle.star(st, w * 0.80f, h * 0.52f, h * 0.04f, r)
-        Doodle.star(st, w * 0.05f, h * 0.30f, h * 0.035f, r)
+        Doodle.star(st, w * 0.42f, h * 0.18f, h * 0.08f, r)
+        Doodle.star(st, w * 0.86f, h * 0.68f, h * 0.06f, r)
         c.drawPath(st, stroke(blueBr, 2f))
         dotPaint.color = amber
-        c.drawCircle(w * 0.26f, h * 0.42f, 2f * d, dotPaint)
-        c.drawCircle(w * 0.55f, h * 0.10f, 2f * d, dotPaint)
+        c.drawCircle(w * 0.52f, h * 0.30f, 2f * d, dotPaint)
         dotPaint.color = tealBr
-        c.drawCircle(w * 0.88f, h * 0.62f, 2f * d, dotPaint)
+        c.drawCircle(w * 0.18f, h * 0.62f, 2f * d, dotPaint)
     }
 
+    /**
+     * NIGHT/DAY рисуются в ПРАВОМ ВЕРХНЕМ углу карточки - единственной
+     * зоне, свободной от текста (цифры и подписи идут слева вниз).
+     * В первой версии луна и солнце сидели по центру прямо на цифрах.
+     */
     private fun drawNight(c: Canvas, w: Float, h: Float, r: Wobble) {
         val mn = Path()
-        Doodle.moon(mn, w * 0.72f, h * 0.42f, h * 0.30f, r)
+        Doodle.moon(mn, w * 0.80f, h * 0.16f, h * 0.11f, r)
         c.drawPath(mn, stroke(violetBr, 2f))
         val st = Path()
-        Doodle.star(st, w * 0.30f, h * 0.28f, h * 0.14f, r)
-        Doodle.star(st, w * 0.94f, h * 0.78f, h * 0.11f, r)
+        Doodle.star(st, w * 0.68f, h * 0.09f, h * 0.045f, r)
+        Doodle.star(st, w * 0.92f, h * 0.36f, h * 0.04f, r)
         c.drawPath(st, stroke(blueBr, 2f))
         dotPaint.color = violetBr
-        c.drawCircle(w * 0.10f, h * 0.70f, 1.8f * d, dotPaint)
+        c.drawCircle(w * 0.70f, h * 0.30f, 1.8f * d, dotPaint)
     }
 
     private fun drawDay(c: Canvas, w: Float, h: Float, r: Wobble) {
         val sn = Path()
-        Doodle.sun(sn, w * 0.70f, h * 0.40f, h * 0.20f, r)
+        Doodle.sun(sn, w * 0.82f, h * 0.15f, h * 0.06f, r)
         c.drawPath(sn, stroke(amber, 2f))
         val trees = Path()
-        Doodle.fir(trees, w * 0.16f, h * 0.95f, h * 0.42f, r)
-        Doodle.fir(trees, w * 0.30f, h * 0.95f, h * 0.32f, r)
+        Doodle.fir(trees, w * 0.93f, h * 0.98f, h * 0.20f, r)
         c.drawPath(trees, stroke(tealBr, 2f))
         dotPaint.color = amberBr
-        c.drawCircle(w * 0.92f, h * 0.20f, 1.8f * d, dotPaint)
+        c.drawCircle(w * 0.62f, h * 0.10f, 1.8f * d, dotPaint)
     }
 
+    /**
+     * Лагерь живёт в ПРАВОЙ части карточки: слева ромб сезона и текст.
+     * В первой версии палатка стояла прямо на ромбе и на заголовке.
+     */
     private fun drawExpedition(c: Canvas, w: Float, h: Float, r: Wobble) {
-        val base = h * 0.88f
+        val base = h * 0.90f
         val tn = Path()
-        Doodle.tent(tn, w * 0.16f, base, w * 0.16f, h * 0.52f, r)
+        Doodle.tent(tn, w * 0.62f, base, w * 0.13f, h * 0.42f, r)
         c.drawPath(tn, stroke(violetBr, 2f))
         val logs = Path(); val flame = Path()
-        Doodle.fire(logs, flame, w * 0.30f, base, h * 0.10f, r)
+        Doodle.fire(logs, flame, w * 0.72f, base, h * 0.09f, r)
         c.drawPath(logs, stroke(0xFF966E46.toInt(), 2f))
         c.drawPath(flame, stroke(amber, 2f))
         val trees = Path()
-        Doodle.fir(trees, w * 0.05f, base, h * 0.36f, r)
-        Doodle.fir(trees, w * 0.40f, base, h * 0.30f, r)
-        Doodle.fir(trees, w * 0.46f, base, h * 0.40f, r)
-        Doodle.fir(trees, w * 0.93f, base, h * 0.33f, r)
+        Doodle.fir(trees, w * 0.55f, base, h * 0.30f, r)
+        Doodle.fir(trees, w * 0.97f, base, h * 0.28f, r)
         c.drawPath(trees, stroke(teal, 2f))
         val mt = Path(); val snow = Path()
-        Doodle.mountains(mt, snow, w * 0.62f, base, w * 0.26f, h * 0.44f, r)
+        Doodle.mountains(mt, snow, w * 0.78f, base, w * 0.18f, h * 0.36f, r)
         c.drawPath(mt, stroke(amberBr, 2f))
         c.drawPath(snow, stroke(amberBr, 1f))
-        // тропинка от лагеря к горам
         val trail = Path()
-        Doodle.line(trail, w * 0.36f, base + 4f * d, w * 0.46f, base - 2f * d, 1.2f, 6, r)
-        Doodle.line(trail, w * 0.46f, base - 2f * d, w * 0.56f, base + 3f * d, 1.2f, 6, r)
-        Doodle.line(trail, w * 0.56f, base + 3f * d, w * 0.64f, base - 1f * d, 1.2f, 6, r)
+        Doodle.line(trail, w * 0.66f, base + 3f * d, w * 0.74f, base - 2f * d, 1.2f, 6, r)
+        Doodle.line(trail, w * 0.74f, base - 2f * d, w * 0.80f, base + 2f * d, 1.2f, 6, r)
         c.drawPath(trail, stroke(amber, 1f))
         val st = Path()
-        Doodle.star(st, w * 0.75f, h * 0.18f, h * 0.09f, r)
+        Doodle.star(st, w * 0.88f, h * 0.16f, h * 0.10f, r)
         c.drawPath(st, stroke(amberBr, 2f))
     }
 }
