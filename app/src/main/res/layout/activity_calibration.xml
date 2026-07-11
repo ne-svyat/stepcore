@@ -18,14 +18,21 @@
             android:textSize="31sp"
             android:letterSpacing="0.05" />
 
+        <com.vasil.stepcore.DoodleSceneView
+            android:id="@+id/doodleHeader"
+            android:layout_width="match_parent"
+            android:layout_height="76dp"
+            android:layout_marginTop="6dp"
+            android:layout_marginBottom="4dp" />
+
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:background="@drawable/card_period"
             android:layout_marginTop="16dp">
 
             <LinearLayout
+                android:id="@+id/calCard"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"

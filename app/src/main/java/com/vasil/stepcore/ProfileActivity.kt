@@ -17,6 +17,10 @@ class ProfileActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_profile)
+        // V14.3: дудл-стиль — лагерь в шапке, рамки "от руки" на карточках.
+        findViewById<DoodleSceneView>(R.id.doodleHeader).setScene(DoodleSceneView.EXPEDITION)
+        DoodleUi.frame(findViewById(R.id.dataContainer), R.color.accent_violet, R.color.surface, 201L)
+        DoodleUi.frame(findViewById(R.id.passportContainer), R.color.accent_blue, R.color.surface, 202L)
 
         val prefs = getSharedPreferences(StepService.PREFS, MODE_PRIVATE)
         val weightIn = findViewById<EditText>(R.id.weightInput)

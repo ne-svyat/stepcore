@@ -1,6 +1,5 @@
 package com.vasil.stepcore
 
-import android.graphics.Typeface
 import android.os.Bundle
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -29,6 +28,10 @@ class TimelineActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_timeline)
+        // V14.3: дудл-стиль.
+        findViewById<DoodleSceneView>(R.id.doodleHeader).setScene(DoodleSceneView.HEADER)
+        DoodleUi.frame(findViewById(R.id.timelineSummary), R.color.accent_blue, R.color.surface, 301L)
+        DoodleUi.frame(findViewById(R.id.chartCard), R.color.accent_violet, R.color.surface, 302L)
         timeline = findViewById(R.id.timeline)
         summary = findViewById(R.id.timelineSummary)
         hint = findViewById(R.id.timelineHint)
@@ -133,7 +136,6 @@ class TimelineActivity : AppCompatActivity() {
     private fun scaleChip(sc: Scale): TextView = TextView(this).apply {
         text = sc.label
         textSize = 14f
-        typeface = Typeface.create("sans-serif-condensed", Typeface.NORMAL)
         setPadding(dp(16), dp(8), dp(16), dp(8))
         val lp = LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT

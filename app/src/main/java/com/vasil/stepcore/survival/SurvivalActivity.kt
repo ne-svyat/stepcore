@@ -76,6 +76,9 @@ class SurvivalActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_survival)
+        // V14.3: дудл-стиль — лагерь в шапке экрана экспедиции.
+        findViewById<com.vasil.stepcore.DoodleSceneView>(R.id.doodleHeader)
+            .setScene(com.vasil.stepcore.DoodleSceneView.EXPEDITION)
         repo = SurvivalRepo(this)
 
         startBox = findViewById(R.id.startBox)

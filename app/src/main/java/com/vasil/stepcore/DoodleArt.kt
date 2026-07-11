@@ -359,6 +359,19 @@ class DoodleBorderDrawable(
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 }
 
+/** Общий помощник: одна строка на карточку в любом экране. */
+object DoodleUi {
+    fun frame(v: View, strokeRes: Int, fillRes: Int, seed: Long) {
+        val c = v.context
+        v.background = DoodleBorderDrawable(
+            ContextCompat.getColor(c, strokeRes),
+            ContextCompat.getColor(c, fillRes),
+            seed,
+            c.resources.displayMetrics.density,
+        )
+    }
+}
+
 /**
  * Дудл-сцена: декоративный слой (пейзаж/ночь/день/лагерь). Чисто
  * визуальный, не перехватывает касания - кладётся ПОД контент.

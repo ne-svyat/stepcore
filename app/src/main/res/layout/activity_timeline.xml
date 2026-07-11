@@ -4,6 +4,7 @@
     android:layout_height="match_parent">
 
     <LinearLayout
+            android:id="@+id/chartCard"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
@@ -16,6 +17,13 @@
             android:textColor="@color/accent_red"
             android:textSize="33sp"
             android:letterSpacing="0.05" />
+
+        <com.vasil.stepcore.DoodleSceneView
+            android:id="@+id/doodleHeader"
+            android:layout_width="match_parent"
+            android:layout_height="76dp"
+            android:layout_marginTop="6dp"
+            android:layout_marginBottom="4dp" />
 
         <HorizontalScrollView
             android:layout_width="match_parent"
@@ -38,7 +46,6 @@
             android:textColor="@color/text_main"
             android:textSize="18sp"
             android:lineSpacingExtra="3dp"
-            android:background="@drawable/card_period"
             android:paddingStart="16dp"
             android:paddingEnd="14dp"
             android:paddingTop="12dp"
@@ -93,7 +100,6 @@
             android:textColor="@color/text_main"
             android:textSize="18sp"
             android:lineSpacingExtra="3dp"
-            android:background="@drawable/card_column"
             android:paddingStart="16dp"
             android:paddingEnd="14dp"
             android:paddingTop="12dp"

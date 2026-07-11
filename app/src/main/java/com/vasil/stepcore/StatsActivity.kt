@@ -1,6 +1,5 @@
 package com.vasil.stepcore
 
-import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.view.Gravity
@@ -50,6 +49,8 @@ class StatsActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_stats)
+        // V14.3: дудл-стиль (карточки статистики идут из UiKit — они уже в рамках).
+        findViewById<DoodleSceneView>(R.id.doodleHeader).setScene(DoodleSceneView.HEADER)
         val root = findViewById<LinearLayout>(R.id.statsRoot)
 
         lifecycleScope.launch {
@@ -249,7 +250,6 @@ class StatsActivity : AppCompatActivity() {
     private fun sectionTitle(text: String): TextView = TextView(this).apply {
         this.text = text
         setTextColor(ContextCompat.getColor(this@StatsActivity, R.color.accent_red))
-        typeface = Typeface.create("sans-serif-black", Typeface.NORMAL)
         textSize = 15f
         letterSpacing = 0.08f
         val lp = LinearLayout.LayoutParams(
@@ -289,13 +289,11 @@ class StatsActivity : AppCompatActivity() {
         col.addView(TextView(this).apply {
             text = title.uppercase()
             setTextColor(ContextCompat.getColor(this@StatsActivity, R.color.text_dim))
-            typeface = Typeface.create("sans-serif-condensed", Typeface.NORMAL)
             textSize = 12f; letterSpacing = 0.05f
         })
         col.addView(TextView(this).apply {
             text = value
             setTextColor(ContextCompat.getColor(this@StatsActivity, R.color.text_main))
-            typeface = Typeface.create("sans-serif-black", Typeface.NORMAL)
             textSize = 24f
         })
         col.addView(TextView(this).apply {

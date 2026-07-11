@@ -17,6 +17,13 @@
             android:textSize="33sp"
             android:letterSpacing="0.05" />
 
+        <com.vasil.stepcore.DoodleSceneView
+            android:id="@+id/doodleHeader"
+            android:layout_width="match_parent"
+            android:layout_height="76dp"
+            android:layout_marginTop="6dp"
+            android:layout_marginBottom="4dp" />
+
         <TextView
             android:id="@+id/dataToggle"
             android:layout_width="match_parent"
@@ -33,7 +40,6 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:background="@drawable/card_asym"
             android:padding="16dp"
             android:visibility="gone">
 

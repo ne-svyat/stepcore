@@ -2,7 +2,6 @@ package com.vasil.stepcore
 
 import android.Manifest
 import android.content.Intent
-import android.graphics.Typeface
 import android.os.Bundle
 import android.view.View
 import android.widget.Button
@@ -47,6 +46,9 @@ class CalibrationActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_calibration)
+        // V14.3: дудл-стиль.
+        findViewById<DoodleSceneView>(R.id.doodleHeader).setScene(DoodleSceneView.HEADER)
+        DoodleUi.frame(findViewById(R.id.calCard), R.color.accent_violet, R.color.surface, 401L)
         accuracyValue = findViewById(R.id.accuracyValue)
         accuracyHint = findViewById(R.id.accuracyHint)
         calStatus = findViewById(R.id.calStatus)
@@ -115,7 +117,6 @@ class CalibrationActivity : AppCompatActivity() {
         col.addView(TextView(this).apply {
             text = k.title.uppercase()
             setTextColor(ContextCompat.getColor(this@CalibrationActivity, R.color.text_main))
-            typeface = Typeface.create("sans-serif-condensed", Typeface.BOLD)
             textSize = 15f
             letterSpacing = 0.04f
         })
@@ -140,7 +141,6 @@ class CalibrationActivity : AppCompatActivity() {
             text = "$fresh%"
             setTextColor(ContextCompat.getColor(this@CalibrationActivity,
                 if (done) R.color.accent_blue else R.color.text_dim))
-            typeface = Typeface.create("sans-serif-black", Typeface.NORMAL)
             textSize = 20f
         })
         right.addView(TextView(this).apply {
