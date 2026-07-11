@@ -10,36 +10,76 @@
         android:gravity="center_horizontal"
         android:padding="24dp">
 
-        <TextView
-            android:id="@+id/modeText"
-            android:layout_width="wrap_content"
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Покой"
-            android:textColor="@color/text_main"
-            android:fontFamily="sans-serif-condensed"
-            android:textSize="14sp"
-            android:letterSpacing="0.08"
-            android:paddingLeft="16dp"
-            android:paddingRight="16dp"
-            android:paddingTop="6dp"
-            android:paddingBottom="6dp"
-            android:layout_marginTop="8dp" />
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginTop="4dp">
 
-        <FrameLayout
-            android:layout_width="250dp"
-            android:layout_height="250dp"
-            android:layout_marginTop="20dp">
+            <TextView
+                android:id="@+id/modeText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Покой"
+                android:textColor="@color/text_main"
+                android:fontFamily="sans-serif-condensed"
+                android:textSize="14sp"
+                android:letterSpacing="0.08"
+                android:paddingLeft="16dp"
+                android:paddingRight="16dp"
+                android:paddingTop="6dp"
+                android:paddingBottom="6dp" />
 
-            <com.vasil.stepcore.ProgressRingView
-                android:id="@+id/progressRing"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent" />
+            <View android:layout_width="0dp" android:layout_height="1dp"
+                android:layout_weight="1" />
+
+            <TextView
+                android:id="@+id/cargoChip"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Груз выкл"
+                android:textColor="@color/text_dim"
+                android:textSize="12sp"
+                android:paddingLeft="12dp"
+                android:paddingRight="12dp"
+                android:paddingTop="6dp"
+                android:paddingBottom="6dp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginTop="14dp">
+
+            <FrameLayout
+                android:layout_width="120dp"
+                android:layout_height="188dp">
+
+                <com.vasil.stepcore.CrystalRingView
+                    android:id="@+id/progressRing"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent" />
+            </FrameLayout>
 
             <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:gravity="center">
+                android:layout_marginStart="16dp">
+
+                <TextView
+                    android:id="@+id/lapBadgeText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text=""
+                    android:textColor="@color/accent_blue"
+                    android:textSize="12sp"
+                    android:visibility="gone"
+                    android:layout_marginBottom="4dp" />
 
                 <TextView
                     android:id="@+id/stepsText"
@@ -48,16 +88,7 @@
                     android:text="0"
                     android:textColor="@color/text_main"
                     android:fontFamily="sans-serif-black"
-                    android:textSize="46sp" />
-
-                <TextView
-                    android:id="@+id/activeTimeText"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text=""
-                    android:textColor="@color/accent_blue"
-                    android:textSize="14sp"
-                    android:layout_marginTop="1dp" />
+                    android:textSize="34sp" />
 
                 <TextView
                     android:id="@+id/goalText"
@@ -66,38 +97,126 @@
                     android:text="0% · цель 10 000"
                     android:textColor="@color/text_dim"
                     android:textSize="12sp"
-                    android:layout_marginTop="2dp" />
+                    android:layout_marginBottom="8dp" />
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+                    <View android:layout_width="8dp" android:layout_height="8dp"
+                        android:background="@color/accent_blue" />
+                    <TextView
+                        android:id="@+id/walkShareText"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="0 ходьба"
+                        android:textColor="@color/text_dim"
+                        android:textSize="12sp"
+                        android:layout_marginStart="6dp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginTop="2dp"
+                    android:layout_marginBottom="8dp">
+                    <View android:layout_width="8dp" android:layout_height="8dp"
+                        android:background="@color/accent_red" />
+                    <TextView
+                        android:id="@+id/runShareText"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="0 бег"
+                        android:textColor="@color/text_dim"
+                        android:textSize="12sp"
+                        android:layout_marginStart="6dp" />
+                </LinearLayout>
 
                 <TextView
-                    android:id="@+id/todayKmKcal"
+                    android:id="@+id/heroCompareText"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text=""
-                    android:textColor="@color/text_main"
-                    android:textSize="13sp"
-                    android:layout_marginTop="6dp" />
+                    android:textColor="@color/text_dim"
+                    android:textSize="12sp" />
             </LinearLayout>
-        </FrameLayout>
+        </LinearLayout>
 
-        <LinearLayout
-            android:layout_width="wrap_content"
+        <GridLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
+            android:columnCount="2"
             android:layout_marginTop="14dp">
 
-            <View android:layout_width="10dp" android:layout_height="10dp"
-                android:background="@color/accent_blue" />
-            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-                android:text="ходьба" android:textColor="@color/text_dim"
-                android:textSize="12sp" android:layout_marginStart="4dp"
-                android:layout_marginEnd="14dp" />
-            <View android:layout_width="10dp" android:layout_height="10dp"
-                android:background="@color/accent_red" />
-            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-                android:text="бег" android:textColor="@color/text_dim"
-                android:textSize="12sp" android:layout_marginStart="4dp" />
-        </LinearLayout>
+            <LinearLayout
+                android:layout_width="0dp" android:layout_columnWeight="1"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@color/surface"
+                android:padding="10dp"
+                android:layout_margin="4dp">
+                <TextView
+                    android:id="@+id/distanceValueText"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="0.00 км" android:textColor="@color/text_main" android:textSize="14sp" />
+                <TextView
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="дистанция" android:textColor="@color/text_dim" android:textSize="10sp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="0dp" android:layout_columnWeight="1"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@color/surface"
+                android:padding="10dp"
+                android:layout_margin="4dp">
+                <TextView
+                    android:id="@+id/activeTimeText"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="" android:textColor="@color/text_main" android:textSize="14sp" />
+                <TextView
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="активное время" android:textColor="@color/text_dim" android:textSize="10sp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/activeKcalChip"
+                android:layout_width="0dp" android:layout_columnWeight="1"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@color/surface"
+                android:padding="10dp"
+                android:layout_margin="4dp">
+                <TextView
+                    android:id="@+id/activeKcalValueText"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="0 ккал" android:textColor="@color/text_main" android:textSize="14sp" />
+                <TextView
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="активные" android:textColor="@color/text_dim" android:textSize="10sp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/totalKcalChip"
+                android:layout_width="0dp" android:layout_columnWeight="1"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@color/surface"
+                android:padding="10dp"
+                android:layout_margin="4dp">
+                <TextView
+                    android:id="@+id/totalKcalValueText"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="0 ккал" android:textColor="@color/text_main" android:textSize="14sp" />
+                <TextView
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="всего за день" android:textColor="@color/text_dim" android:textSize="10sp" />
+            </LinearLayout>
+        </GridLayout>
 
         <TextView
             android:id="@+id/accuracyBadge"
@@ -111,27 +230,90 @@
             android:layout_marginTop="4dp" />
 
         <LinearLayout
-            android:id="@+id/statsCard"
+            android:id="@+id/yesterdayCard"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
+            android:orientation="vertical"
             android:background="@drawable/card_asym"
-            android:layout_marginTop="18dp">
+            android:padding="16dp"
+            android:layout_marginTop="10dp">
 
-            <View
-                android:layout_width="4dp"
-                android:layout_height="match_parent"
-                android:background="@color/accent_blue" />
-
-            <TextView
-                android:id="@+id/statsText"
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text=""
-                android:textColor="@color/text_main"
-                android:textSize="14sp"
-                android:lineSpacingExtra="3dp"
-                android:padding="16dp" />
+                android:orientation="horizontal">
+                <TextView
+                    android:layout_width="0dp" android:layout_weight="1"
+                    android:layout_height="wrap_content"
+                    android:text="ВЧЕРА"
+                    android:textColor="@color/text_dim"
+                    android:letterSpacing="0.06"
+                    android:textSize="11sp" />
+                <TextView
+                    android:id="@+id/ySteps"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="нет данных" android:textColor="@color/text_dim" android:textSize="13sp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/yesterdayDetailsGroup"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginTop="8dp">
+                    <LinearLayout
+                        android:layout_width="0dp" android:layout_weight="1"
+                        android:layout_height="wrap_content" android:orientation="vertical">
+                        <TextView android:id="@+id/yKm" android:layout_width="wrap_content"
+                            android:layout_height="wrap_content" android:text=""
+                            android:textColor="@color/text_dim" android:textSize="12sp" />
+                        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:text="дистанция" android:textColor="@color/axis_dim" android:textSize="9sp" />
+                    </LinearLayout>
+                    <LinearLayout
+                        android:layout_width="0dp" android:layout_weight="1"
+                        android:layout_height="wrap_content" android:orientation="vertical">
+                        <TextView android:id="@+id/yTime" android:layout_width="wrap_content"
+                            android:layout_height="wrap_content" android:text=""
+                            android:textColor="@color/text_dim" android:textSize="12sp" />
+                        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:text="активно" android:textColor="@color/axis_dim" android:textSize="9sp" />
+                    </LinearLayout>
+                    <LinearLayout
+                        android:layout_width="0dp" android:layout_weight="1"
+                        android:layout_height="wrap_content" android:orientation="vertical">
+                        <TextView android:id="@+id/yTotalKcal" android:layout_width="wrap_content"
+                            android:layout_height="wrap_content" android:text=""
+                            android:textColor="@color/text_dim" android:textSize="12sp" />
+                        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:text="всего ккал" android:textColor="@color/axis_dim" android:textSize="9sp" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/yBreakdown"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text=""
+                    android:textColor="@color/axis_dim"
+                    android:textSize="11sp"
+                    android:layout_marginTop="8dp" />
+
+                <TextView
+                    android:id="@+id/yDiff"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text=""
+                    android:textColor="@color/text_dim"
+                    android:textSize="12sp"
+                    android:layout_marginTop="4dp" />
+            </LinearLayout>
         </LinearLayout>
 
         <TextView

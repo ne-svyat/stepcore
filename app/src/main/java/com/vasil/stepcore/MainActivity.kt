@@ -30,12 +30,29 @@ class MainActivity : AppCompatActivity() {
             if (result.values.all { it }) startTracking()
         }
 
-    private lateinit var statsView: TextView
-    private lateinit var ring: ProgressRingView
+    private lateinit var ring: CrystalRingView
     private lateinit var goalView: TextView
     private lateinit var activeTimeText: TextView
     private lateinit var accuracyBadge: TextView
-    private lateinit var todayKmKcal: TextView
+    private lateinit var cargoChip: TextView
+    private lateinit var lapBadgeText: TextView
+    private lateinit var walkShareText: TextView
+    private lateinit var runShareText: TextView
+    private lateinit var heroCompareText: TextView
+    private lateinit var distanceValueText: TextView
+    private lateinit var activeKcalValueText: TextView
+    private lateinit var totalKcalValueText: TextView
+    private lateinit var activeKcalChip: View
+    private lateinit var totalKcalChip: View
+    private lateinit var yesterdayCard: View
+    private lateinit var yesterdayDetailsGroup: View
+    private lateinit var ySteps: TextView
+    private lateinit var yKm: TextView
+    private lateinit var yTime: TextView
+    private lateinit var yTotalKcal: TextView
+    private lateinit var yBreakdown: TextView
+    private lateinit var yDiff: TextView
+
     private var yWalk = 0
     private var yRun = 0
     private var yesterdayTotal = -1
@@ -53,18 +70,35 @@ class MainActivity : AppCompatActivity() {
         val stepsView = findViewById<TextView>(R.id.stepsText)
         val statusView = findViewById<TextView>(R.id.statusText)
         val modeView = findViewById<TextView>(R.id.modeText)
-        statsView = findViewById(R.id.statsText)
         ring = findViewById(R.id.progressRing)
         goalView = findViewById(R.id.goalText)
         activeTimeText = findViewById(R.id.activeTimeText)
         accuracyBadge = findViewById(R.id.accuracyBadge)
+        cargoChip = findViewById(R.id.cargoChip)
+        lapBadgeText = findViewById(R.id.lapBadgeText)
+        walkShareText = findViewById(R.id.walkShareText)
+        runShareText = findViewById(R.id.runShareText)
+        heroCompareText = findViewById(R.id.heroCompareText)
+        distanceValueText = findViewById(R.id.distanceValueText)
+        activeKcalValueText = findViewById(R.id.activeKcalValueText)
+        totalKcalValueText = findViewById(R.id.totalKcalValueText)
+        activeKcalChip = findViewById(R.id.activeKcalChip)
+        totalKcalChip = findViewById(R.id.totalKcalChip)
+        yesterdayCard = findViewById(R.id.yesterdayCard)
+        yesterdayDetailsGroup = findViewById(R.id.yesterdayDetailsGroup)
+        ySteps = findViewById(R.id.ySteps)
+        yKm = findViewById(R.id.yKm)
+        yTime = findViewById(R.id.yTime)
+        yTotalKcal = findViewById(R.id.yTotalKcal)
+        yBreakdown = findViewById(R.id.yBreakdown)
+        yDiff = findViewById(R.id.yDiff)
+
         accuracyBadge.setOnClickListener {
             startActivity(Intent(this, CalibrationActivity::class.java))
         }
         findViewById<Button>(R.id.calibrationButton).setOnClickListener {
             startActivity(Intent(this, CalibrationActivity::class.java))
         }
-        todayKmKcal = findViewById(R.id.todayKmKcal)
         val toggleBtn = findViewById<Button>(R.id.toggleButton)
         val historyBtn = findViewById<Button>(R.id.historyButton)
         val hapticSwitch = findViewById<SwitchCompat>(R.id.hapticSwitch)
@@ -77,6 +111,7 @@ class MainActivity : AppCompatActivity() {
             StepsState.steps.value = prefs.getInt(StepService.KEY_STEPS, 0)
         }
         goal = prefs.getInt("p_goal", 10000)
+        refreshCargoChip()
 
         hapticSwitch.isChecked = prefs.getBoolean("haptic", false)
         StepsState.hapticEnabled.value = hapticSwitch.isChecked
@@ -132,6 +167,7 @@ class MainActivity : AppCompatActivity() {
                 yesterdayTotal = d.walkSteps + d.runSteps
             }
             updateStats()
+            refreshRing(StepsState.steps.value)
         }
 
         val diagBtn = findViewById<Button>(R.id.diagButton)
@@ -157,7 +193,7 @@ class MainActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                // Дёшево - можно на каждый шаг: число и кольцо, без БД.
+                // Дёшево - можно на каждый шаг: число и кристалл, без БД.
                 launch {
                     StepsState.steps.collect { s ->
                         stepsView.text = s.toString()
@@ -208,7 +244,6 @@ class MainActivity : AppCompatActivity() {
         view.setTextColor(ContextCompat.getColor(this, colorRes))
     }
 
-    /** Кольцо ходьба/бег + число% + км/ккал внутри круга. */
     /** Секунды -> "1 ч 52 мин" / "34 мин". */
     private fun fmtDur(sec: Long): String {
         val h = sec / 3600; val m = (sec % 3600) / 60
@@ -225,39 +260,75 @@ class MainActivity : AppCompatActivity() {
         accuracyBadge.text = "Точность данных $pct% · настроить"
     }
 
-    private fun refreshRing(steps: Int) {
-        val (walk, run) = todayWalkRun()
-        ring.setData(walk, run, goal)
-        val pct = steps * 100 / goal
-        // Бейдж ×N убран: слои теперь показывают точки в кольце (V9.13).
-        goalView.text = "$pct% · цель ${"%,d".format(goal).replace(',', ' ')}"
+    /** Груз-чип (V13.0): всегда на виду, чтобы не забыть включённым/выключенным. */
+    private fun refreshCargoChip() {
+        val load = getSharedPreferences(StepService.PREFS, MODE_PRIVATE).getFloat("p_load", 0f)
+        if (load > 0f) {
+            cargoChip.text = "Груз %.1f кг".format(load)
+            cargoChip.setTextColor(ContextCompat.getColor(this, R.color.accent_red))
+        } else {
+            cargoChip.text = "Груз выкл"
+            cargoChip.setTextColor(ContextCompat.getColor(this, R.color.text_dim))
+        }
     }
 
     /**
-     * Км/ккал/активное время за сегодня - СЕГМЕНТИРОВАННО (V11.1): каждый
-     * прошедший час считается с профилем, который действовал в тот час
-     * (груз, вес, калибровка). Смена груза больше не переписывает прошлое.
-     * Ходит в БД - поэтому по таймеру, а не на каждый шаг.
+     * Кристалл + производные текстовые поля вокруг него (V13.0). Виток
+     * (currentLap) читается из самого кристалла - единственный источник
+     * подсчёта, бейдж не пересчитывает его заново.
+     */
+    private fun refreshRing(steps: Int) {
+        val (walk, run) = todayWalkRun()
+        ring.setData(walk, run, goal, yesterdayTotal)
+        val pct = steps * 100 / goal
+        goalView.text = "$pct% · цель ${"%,d".format(goal).replace(',', ' ')}"
+        walkShareText.text = "${fmtNumM(walk)} ходьба"
+        runShareText.text = "${fmtNumM(run)} бег"
+
+        val lap = ring.currentLap()
+        if (lap >= 1) {
+            lapBadgeText.text = "⚡ ×$lap цели"
+            lapBadgeText.visibility = View.VISIBLE
+        } else {
+            lapBadgeText.visibility = View.GONE
+        }
+
+        heroCompareText.text = when {
+            yesterdayTotal < 0 -> ""
+            steps >= yesterdayTotal -> "▲ выше вчерашнего уровня"
+            else -> "▼ ниже вчерашнего уровня"
+        }
+    }
+
+    /**
+     * Дистанция/ккал/активное время за сегодня - СЕГМЕНТИРОВАННО (V11.1):
+     * каждый прошедший час считается с профилем, который действовал в тот
+     * час (груз, вес, калибровка). Смена груза больше не переписывает
+     * прошлое. Ходит в БД - поэтому по таймеру, а не на каждый шаг.
+     *
+     * V13.0: раньше эти три числа теснились ОДНОЙ строкой внутри кольца и
+     * переполняли его при росте значений. Теперь три раздельных чипа вне
+     * кристалла - переполнение физически невозможно, там просто нет
+     * ограниченного контура.
      */
     private suspend fun refreshTodayEnergy() {
         val (walk, run) = todayWalkRun()
         val activeSec = Stats.activeSeconds(this, walk, run)
-        // Показываем при любой активности (>0), не только >=60 c - иначе
-        // вечером при малом числе шагов строка была пустой (V9.14).
-        activeTimeText.text = if (activeSec > 0) "\u23f1 ${fmtDur(activeSec)}" else ""
+        activeTimeText.text = if (activeSec > 0) fmtDur(activeSec) else "0 мин"
         val (active, distM) = Stats.segmentedActiveAndDistance(
             this, java.time.LocalDate.now().toString())
         val km = distM / 1000f
         val total = active + Stats.kcalBasalToday(this)
         // Active = расход на движение; Total = Active + базовый обмен (BMR)
-        // за прошедшую часть суток. Тап по строке -> объяснение (V9.10).
-        todayKmKcal.text = if (km > 0 || active > 0)
-            "%.2f км · %d актив · %d всего ккал  \u24d8".format(km, active, total)
-        else ""
-        todayKmKcal.setOnClickListener { showCalorieInfo(active, total) }
+        // за прошедшую часть суток. Тап по чипу -> объяснение (V9.10).
+        distanceValueText.text = "%.2f км".format(km)
+        activeKcalValueText.text = "$active ккал"
+        totalKcalValueText.text = "$total ккал"
+        val openInfo = View.OnClickListener { showCalorieInfo(active, total) }
+        activeKcalChip.setOnClickListener(openInfo)
+        totalKcalChip.setOnClickListener(openInfo)
     }
 
-    /** Диалог-объяснение Active/Basal/Total (V9.10). */
     /** Диалог-объяснение Active/Basal/Total. */
     private fun showCalorieInfo(active: Int, total: Int) {
         val basal = total - active
@@ -293,36 +364,38 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Нижняя карточка: вчерашний день. Калории и дистанция читаются из
-     * СНАПШОТА закрытого дня (заморожены с параметрами того дня), а не
-     * пересчитываются по текущему профилю - иначе смена веса переписала
-     * бы вчерашнюю статистику (V9.18).
+     * Карточка «ВЧЕРА» (V13.0): те же данные, что были в статичной строке
+     * ДО этого релиза (шаги, км, время, актив/покой/всего ккал, сравнение
+     * с сегодня) - просто разложены по отдельным полям вместо одного
+     * абзаца. Калории и дистанция читаются из СНАПШОТА закрытого дня
+     * (заморожены с параметрами того дня), а не пересчитываются по
+     * текущему профилю - иначе смена веса переписала бы вчерашнюю
+     * статистику (V9.18).
      */
     private fun updateStats() {
         val (walk, run) = todayWalkRun()
         val rec = yRec
         if (yesterdayTotal < 0 || rec == null) {
-            statsView.text = "Вчера нет данных"
-            statsView.setOnClickListener(null)
+            ySteps.text = "нет данных"
+            yesterdayDetailsGroup.visibility = View.GONE
+            yesterdayCard.setOnClickListener(null)
             return
         }
         val (yActive, yBasal) = Stats.kcalOfDay(this, rec)
-        val yKm = Stats.distanceOfDayKm(this, rec)
+        val yKmVal = Stats.distanceOfDayKm(this, rec)
         // V11.9: время вчера - из СНАПШОТА, как калории. Не пересчитывается
         // текущей калибровкой.
         val ySec = Stats.activeSecOfDay(this, rec)
-        val sb = StringBuilder()
-        sb.append("ВЧЕРА · ${fmtNumM(yesterdayTotal)} шагов")
-        sb.append("\n")
-        sb.append("%.2f км · ⏱ ${fmtDur(ySec)}".format(yKm))
-        sb.append("\n")
-        sb.append("Активные $yActive · Покой $yBasal · Всего ${yActive + yBasal} ккал")
+        ySteps.text = "${fmtNumM(yesterdayTotal)} шагов"
+        yKm.text = "%.2f км".format(yKmVal)
+        yTime.text = fmtDur(ySec)
+        yTotalKcal.text = "${yActive + yBasal} ккал"
+        yBreakdown.text = "актив $yActive · покой $yBasal ккал"
         val diff = (walk + run) - yesterdayTotal
-        sb.append("\n")
-        sb.append(if (diff >= 0) "сегодня уже +${fmtNumM(diff)} к вчера"
-                  else "до вчера ещё ${fmtNumM(-diff)} шагов")
-        statsView.text = sb.toString()
-        statsView.setOnClickListener { showCalorieInfo(yActive, yActive + yBasal) }
+        yDiff.text = if (diff >= 0) "сегодня уже +${fmtNumM(diff)} к вчера"
+                     else "до вчера ещё ${fmtNumM(-diff)} шагов"
+        yesterdayDetailsGroup.visibility = View.VISIBLE
+        yesterdayCard.setOnClickListener { showCalorieInfo(yActive, yActive + yBasal) }
     }
 
     private fun fmtNumM(n: Int) = "%,d".format(n).replace(',', ' ')
@@ -331,8 +404,9 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         goal = getSharedPreferences(StepService.PREFS, MODE_PRIVATE).getInt("p_goal", 10000)
         if (::accuracyBadge.isInitialized) refreshAccuracyBadge()
+        if (::cargoChip.isInitialized) refreshCargoChip()
         if (::ring.isInitialized) refreshRing(StepsState.steps.value)
-        if (::statsView.isInitialized) updateStats()
+        updateStats()
     }
 
     private fun startTracking() {
