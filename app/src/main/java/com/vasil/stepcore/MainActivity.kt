@@ -56,6 +56,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var expeditionSeasonView: com.vasil.stepcore.survival.SeasonDiamondView
     private lateinit var expeditionDayText: TextView
     private lateinit var expeditionSubText: TextView
+    private lateinit var todayCard: View
+    private lateinit var tSteps: TextView
+    private lateinit var tKm: TextView
+    private lateinit var tTime: TextView
+    private lateinit var tTotalKcal: TextView
+    private lateinit var tBreakdown: TextView
+    private lateinit var tToGoal: TextView
     private lateinit var calibrationAccuracyText: TextView
 
     private var yWalk = 0
@@ -101,6 +108,14 @@ class MainActivity : AppCompatActivity() {
         expeditionSeasonView = findViewById(R.id.expeditionSeasonView)
         expeditionDayText = findViewById(R.id.expeditionDayText)
         expeditionSubText = findViewById(R.id.expeditionSubText)
+        todayCard = findViewById(R.id.todayCard)
+        tSteps = findViewById(R.id.tSteps)
+        tKm = findViewById(R.id.tKm)
+        tTime = findViewById(R.id.tTime)
+        tTotalKcal = findViewById(R.id.tTotalKcal)
+        tBreakdown = findViewById(R.id.tBreakdown)
+        tToGoal = findViewById(R.id.tToGoal)
+        applyDoodleStyle()
         expeditionCard.setOnClickListener {
             startActivity(Intent(this, com.vasil.stepcore.survival.SurvivalActivity::class.java))
         }
@@ -344,6 +359,17 @@ class MainActivity : AppCompatActivity() {
         distanceValueText.text = "%.2f км".format(km)
         activeKcalValueText.text = "$active ккал"
         totalKcalValueText.text = "$total ккал"
+        // Карточка СЕГОДНЯ - те же посчитанные цифры, второго расчёта нет.
+        val basal = total - active
+        tSteps.text = "${fmtNumM(walk + run)} шагов"
+        tKm.text = "%.2f км".format(km)
+        tTime.text = if (activeSec > 0) fmtDur(activeSec) else "0 мин"
+        tTotalKcal.text = "$total ккал всего"
+        tBreakdown.text = "актив $active · покой $basal"
+        val left = goal - (walk + run)
+        tToGoal.text = if (left > 0) "ещё ${fmtNumM(left)} до цели"
+                       else "цель взята"
+        todayCard.setOnClickListener { showCalorieInfo(active, total) }
         val openInfo = View.OnClickListener { showCalorieInfo(active, total) }
         activeKcalChip.setOnClickListener(openInfo)
         totalKcalChip.setOnClickListener(openInfo)
@@ -416,6 +442,32 @@ class MainActivity : AppCompatActivity() {
                      else "до вчера ещё ${fmtNumM(-diff)} шагов"
         yesterdayDetailsGroup.visibility = View.VISIBLE
         yesterdayCard.setOnClickListener { showCalorieInfo(yActive, yActive + yBasal) }
+    }
+
+    /**
+     * Дудл-оформление (V14.0): рамки "от руки" вместо ровных shape-drawable
+     * и декоративные сцены. Ставится из кода, а не в разметке, потому что
+     * у каждой рамки свой сид - иначе все карточки кривились бы ОДИНАКОВО,
+     * что мгновенно выдаёт машину. Разные сиды = как нарисовано от руки
+     * несколько раз.
+     */
+    private fun applyDoodleStyle() {
+        val d = resources.displayMetrics.density
+        fun col(id: Int) = ContextCompat.getColor(this, id)
+        fun frame(v: View, stroke: Int, fill: Int, seed: Long) {
+            v.background = DoodleBorderDrawable(col(stroke), col(fill), seed, d)
+        }
+        frame(findViewById(R.id.yesterdayCard), R.color.accent_violet, R.color.surface_violet, 11L)
+        frame(todayCard, R.color.accent_teal, R.color.surface_teal, 22L)
+        frame(expeditionCard, R.color.accent_amber, R.color.surface_amber, 33L)
+        frame(findViewById(R.id.profileButton), R.color.accent_blue, R.color.surface_blue, 44L)
+        frame(findViewById(R.id.calibrationButton), R.color.accent_violet, R.color.surface_violet, 55L)
+        frame(findViewById(R.id.historyButton), R.color.axis_dim, R.color.surface, 66L)
+
+        findViewById<DoodleSceneView>(R.id.headerScene).setScene(DoodleSceneView.HEADER)
+        findViewById<DoodleSceneView>(R.id.nightScene).setScene(DoodleSceneView.NIGHT)
+        findViewById<DoodleSceneView>(R.id.dayScene).setScene(DoodleSceneView.DAY)
+        findViewById<DoodleSceneView>(R.id.expeditionScene).setScene(DoodleSceneView.EXPEDITION)
     }
 
     private fun fmtNumM(n: Int) = "%,d".format(n).replace(',', ' ')

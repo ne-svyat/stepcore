@@ -23,7 +23,6 @@
                 android:layout_height="wrap_content"
                 android:text="Покой"
                 android:textColor="@color/text_main"
-                android:fontFamily="sans-serif-condensed"
                 android:textSize="14sp"
                 android:letterSpacing="0.08"
                 android:paddingLeft="16dp"
@@ -47,12 +46,22 @@
                 android:paddingBottom="6dp" />
         </LinearLayout>
 
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp">
+
+            <com.vasil.stepcore.DoodleSceneView
+                android:id="@+id/headerScene"
+                android:layout_width="match_parent"
+                android:layout_height="200dp"
+                android:layout_gravity="end" />
+
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:layout_marginTop="14dp">
+            android:gravity="center_vertical">
 
             <FrameLayout
                 android:layout_width="120dp"
@@ -87,7 +96,6 @@
                     android:layout_height="wrap_content"
                     android:text="0"
                     android:textColor="@color/text_main"
-                    android:fontFamily="sans-serif-black"
                     android:textSize="34sp" />
 
                 <TextView
@@ -141,9 +149,10 @@
                     android:layout_height="wrap_content"
                     android:text=""
                     android:textColor="@color/text_dim"
-                    android:textSize="12sp" />
+                    android:textSize="14sp" />
             </LinearLayout>
         </LinearLayout>
+        </FrameLayout>
 
         <GridLayout
             android:layout_width="match_parent"
@@ -230,90 +239,114 @@
             android:layout_marginTop="4dp" />
 
         <LinearLayout
-            android:id="@+id/yesterdayCard"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:background="@drawable/card_asym"
-            android:padding="16dp"
+            android:orientation="horizontal"
             android:layout_marginTop="10dp">
 
-            <LinearLayout
-                android:layout_width="match_parent"
+            <FrameLayout
+                android:id="@+id/yesterdayCard"
+                android:layout_width="0dp" android:layout_weight="1"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal">
-                <TextView
-                    android:layout_width="0dp" android:layout_weight="1"
-                    android:layout_height="wrap_content"
-                    android:text="ВЧЕРА"
-                    android:textColor="@color/text_dim"
-                    android:letterSpacing="0.06"
-                    android:textSize="11sp" />
-                <TextView
-                    android:id="@+id/ySteps"
-                    android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:text="нет данных" android:textColor="@color/text_dim" android:textSize="13sp" />
-            </LinearLayout>
+                android:layout_marginEnd="5dp">
 
-            <LinearLayout
-                android:id="@+id/yesterdayDetailsGroup"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:visibility="gone">
+                <com.vasil.stepcore.DoodleSceneView
+                    android:id="@+id/nightScene"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent" />
 
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:layout_marginTop="8dp">
+                    android:orientation="vertical"
+                    android:padding="14dp">
+
+                    <TextView
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:text="ВЧЕРА" android:textColor="@color/accent_violet_bright"
+                        android:letterSpacing="0.08" android:textSize="15sp" />
+
+                    <TextView
+                        android:id="@+id/ySteps"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:text="нет данных" android:textColor="@color/text_main"
+                        android:textSize="24sp" android:layout_marginTop="2dp" />
+
                     <LinearLayout
-                        android:layout_width="0dp" android:layout_weight="1"
-                        android:layout_height="wrap_content" android:orientation="vertical">
+                        android:id="@+id/yesterdayDetailsGroup"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="vertical" android:visibility="gone">
+
                         <TextView android:id="@+id/yKm" android:layout_width="wrap_content"
                             android:layout_height="wrap_content" android:text=""
-                            android:textColor="@color/text_dim" android:textSize="12sp" />
-                        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-                            android:text="дистанция" android:textColor="@color/axis_dim" android:textSize="9sp" />
-                    </LinearLayout>
-                    <LinearLayout
-                        android:layout_width="0dp" android:layout_weight="1"
-                        android:layout_height="wrap_content" android:orientation="vertical">
+                            android:textColor="@color/accent_violet_bright" android:textSize="16sp"
+                            android:layout_marginTop="8dp" />
                         <TextView android:id="@+id/yTime" android:layout_width="wrap_content"
                             android:layout_height="wrap_content" android:text=""
-                            android:textColor="@color/text_dim" android:textSize="12sp" />
-                        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-                            android:text="активно" android:textColor="@color/axis_dim" android:textSize="9sp" />
-                    </LinearLayout>
-                    <LinearLayout
-                        android:layout_width="0dp" android:layout_weight="1"
-                        android:layout_height="wrap_content" android:orientation="vertical">
+                            android:textColor="@color/accent_violet_bright" android:textSize="16sp" />
                         <TextView android:id="@+id/yTotalKcal" android:layout_width="wrap_content"
                             android:layout_height="wrap_content" android:text=""
-                            android:textColor="@color/text_dim" android:textSize="12sp" />
-                        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-                            android:text="всего ккал" android:textColor="@color/axis_dim" android:textSize="9sp" />
+                            android:textColor="@color/accent_violet_bright" android:textSize="16sp" />
+                        <TextView android:id="@+id/yBreakdown" android:layout_width="wrap_content"
+                            android:layout_height="wrap_content" android:text=""
+                            android:textColor="@color/text_dim" android:textSize="13sp"
+                            android:layout_marginTop="4dp" />
+                        <TextView android:id="@+id/yDiff" android:layout_width="wrap_content"
+                            android:layout_height="wrap_content" android:text=""
+                            android:textColor="@color/text_main" android:textSize="14sp"
+                            android:layout_marginTop="4dp" />
                     </LinearLayout>
                 </LinearLayout>
+            </FrameLayout>
 
-                <TextView
-                    android:id="@+id/yBreakdown"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text=""
-                    android:textColor="@color/axis_dim"
-                    android:textSize="11sp"
-                    android:layout_marginTop="8dp" />
+            <FrameLayout
+                android:id="@+id/todayCard"
+                android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="5dp">
 
-                <TextView
-                    android:id="@+id/yDiff"
-                    android:layout_width="wrap_content"
+                <com.vasil.stepcore.DoodleSceneView
+                    android:id="@+id/dayScene"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text=""
-                    android:textColor="@color/text_dim"
-                    android:textSize="12sp"
-                    android:layout_marginTop="4dp" />
-            </LinearLayout>
+                    android:orientation="vertical"
+                    android:padding="14dp">
+
+                    <TextView
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:text="СЕГОДНЯ" android:textColor="@color/accent_teal_bright"
+                        android:letterSpacing="0.08" android:textSize="15sp" />
+
+                    <TextView
+                        android:id="@+id/tSteps"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:text="0" android:textColor="@color/text_main"
+                        android:textSize="24sp" android:layout_marginTop="2dp" />
+
+                    <TextView android:id="@+id/tKm" android:layout_width="wrap_content"
+                        android:layout_height="wrap_content" android:text=""
+                        android:textColor="@color/accent_teal_bright" android:textSize="16sp"
+                        android:layout_marginTop="8dp" />
+                    <TextView android:id="@+id/tTime" android:layout_width="wrap_content"
+                        android:layout_height="wrap_content" android:text=""
+                        android:textColor="@color/accent_teal_bright" android:textSize="16sp" />
+                    <TextView android:id="@+id/tTotalKcal" android:layout_width="wrap_content"
+                        android:layout_height="wrap_content" android:text=""
+                        android:textColor="@color/accent_teal_bright" android:textSize="16sp" />
+                    <TextView android:id="@+id/tBreakdown" android:layout_width="wrap_content"
+                        android:layout_height="wrap_content" android:text=""
+                        android:textColor="@color/text_dim" android:textSize="13sp"
+                        android:layout_marginTop="4dp" />
+                    <TextView android:id="@+id/tToGoal" android:layout_width="wrap_content"
+                        android:layout_height="wrap_content" android:text=""
+                        android:textColor="@color/accent_amber_bright" android:textSize="14sp"
+                        android:layout_marginTop="4dp" />
+                </LinearLayout>
+            </FrameLayout>
         </LinearLayout>
 
         <TextView
@@ -333,15 +366,23 @@
             android:textSize="17sp"
             android:layout_marginTop="12dp" />
 
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp">
+
+            <com.vasil.stepcore.DoodleSceneView
+                android:id="@+id/expeditionScene"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent" />
+
         <LinearLayout
             android:id="@+id/expeditionCard"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
             android:gravity="center_vertical"
-            android:background="@drawable/card_asym_amber"
-            android:padding="14dp"
-            android:layout_marginTop="14dp">
+            android:padding="16dp">
 
             <com.vasil.stepcore.survival.SeasonDiamondView
                 android:id="@+id/expeditionSeasonView"
@@ -379,10 +420,11 @@
                     android:layout_height="wrap_content"
                     android:text="Начать →"
                     android:textColor="@color/accent_amber"
-                    android:textSize="12sp"
+                    android:textSize="14sp"
                     android:layout_marginTop="2dp" />
             </LinearLayout>
         </LinearLayout>
+        </FrameLayout>
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -508,7 +550,6 @@
             android:layout_height="wrap_content"
             android:text="⚙  Инструменты  ▾"
             android:textColor="@color/text_dim"
-            android:fontFamily="sans-serif-condensed"
             android:textSize="14sp"
             android:letterSpacing="0.05"
             android:paddingTop="18dp"

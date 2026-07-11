@@ -15,7 +15,6 @@
             android:layout_height="wrap_content"
             android:text="КАЛИБРОВКА"
             android:textColor="@color/text_main"
-            android:fontFamily="sans-serif-black"
             android:textSize="24sp"
             android:letterSpacing="0.05" />
 
@@ -40,7 +39,6 @@
                     android:layout_height="wrap_content"
                     android:text="ТОЧНОСТЬ ДАННЫХ"
                     android:textColor="@color/text_dim"
-                    android:fontFamily="sans-serif-condensed"
                     android:textSize="12sp"
                     android:letterSpacing="0.05" />
 
@@ -50,7 +48,6 @@
                     android:layout_height="wrap_content"
                     android:text="—"
                     android:textColor="@color/text_main"
-                    android:fontFamily="sans-serif-black"
                     android:textSize="34sp" />
 
                 <TextView

@@ -14,7 +14,6 @@
             android:layout_height="wrap_content"
             android:text="ПРОФИЛЬ"
             android:textColor="@color/accent_red"
-            android:fontFamily="sans-serif-black"
             android:textSize="26sp"
             android:letterSpacing="0.05" />
 
@@ -24,7 +23,6 @@
             android:layout_height="wrap_content"
             android:text="ДАННЫЕ  ▾"
             android:textColor="@color/text_dim"
-            android:fontFamily="sans-serif-condensed"
             android:textSize="14sp"
             android:letterSpacing="0.05"
             android:paddingTop="18dp"
@@ -40,48 +38,42 @@
             android:visibility="gone">
 
             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-                android:text="ВЕС, КГ" android:textColor="@color/text_dim"
-                android:fontFamily="sans-serif-condensed" android:textSize="12sp"
+                android:text="ВЕС, КГ" android:textColor="@color/text_dim" android:textSize="12sp"
                 android:letterSpacing="0.05" />
             <EditText android:id="@+id/weightInput" android:layout_width="match_parent"
                 android:layout_height="wrap_content" android:inputType="numberDecimal"
                 android:textColor="@color/text_main" />
 
             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-                android:text="ГРУЗ, КГ (рюкзак и т.п., 0 = нет)" android:textColor="@color/text_dim"
-                android:fontFamily="sans-serif-condensed" android:textSize="12sp"
+                android:text="ГРУЗ, КГ (рюкзак и т.п., 0 = нет)" android:textColor="@color/text_dim" android:textSize="12sp"
                 android:letterSpacing="0.05" android:layout_marginTop="8dp" />
             <EditText android:id="@+id/loadInput" android:layout_width="match_parent"
                 android:layout_height="wrap_content" android:inputType="numberDecimal"
                 android:textColor="@color/text_main" />
 
             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-                android:text="РОСТ, СМ" android:textColor="@color/text_dim"
-                android:fontFamily="sans-serif-condensed" android:textSize="12sp"
+                android:text="РОСТ, СМ" android:textColor="@color/text_dim" android:textSize="12sp"
                 android:letterSpacing="0.05" android:layout_marginTop="8dp" />
             <EditText android:id="@+id/heightInput" android:layout_width="match_parent"
                 android:layout_height="wrap_content" android:inputType="number"
                 android:textColor="@color/text_main" />
 
             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-                android:text="ВОЗРАСТ" android:textColor="@color/text_dim"
-                android:fontFamily="sans-serif-condensed" android:textSize="12sp"
+                android:text="ВОЗРАСТ" android:textColor="@color/text_dim" android:textSize="12sp"
                 android:letterSpacing="0.05" android:layout_marginTop="8dp" />
             <EditText android:id="@+id/ageInput" android:layout_width="match_parent"
                 android:layout_height="wrap_content" android:inputType="number"
                 android:textColor="@color/text_main" />
 
             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-                android:text="ЦЕЛЬ ШАГОВ В ДЕНЬ" android:textColor="@color/text_dim"
-                android:fontFamily="sans-serif-condensed" android:textSize="12sp"
+                android:text="ЦЕЛЬ ШАГОВ В ДЕНЬ" android:textColor="@color/text_dim" android:textSize="12sp"
                 android:letterSpacing="0.05" android:layout_marginTop="8dp" />
             <EditText android:id="@+id/goalInput" android:layout_width="match_parent"
                 android:layout_height="wrap_content" android:inputType="number"
                 android:textColor="@color/text_main" />
 
             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-                android:text="ПОЛ" android:textColor="@color/text_dim"
-                android:fontFamily="sans-serif-condensed" android:textSize="12sp"
+                android:text="ПОЛ" android:textColor="@color/text_dim" android:textSize="12sp"
                 android:letterSpacing="0.05" android:layout_marginTop="12dp" />
             <RadioGroup android:id="@+id/sexGroup" android:layout_width="wrap_content"
                 android:layout_height="wrap_content" android:orientation="horizontal"
@@ -104,7 +96,6 @@
             android:layout_height="wrap_content"
             android:text="ПАСПОРТ"
             android:textColor="@color/accent_red"
-            android:fontFamily="sans-serif-black"
             android:textSize="15sp"
             android:letterSpacing="0.08"
             android:layout_marginTop="28dp"

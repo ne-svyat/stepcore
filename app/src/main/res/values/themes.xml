@@ -12,5 +12,11 @@
         <item name="android:statusBarColor">@color/bg</item>
         <item name="android:navigationBarColor">@color/bg</item>
         <item name="android:windowLightStatusBar">false</item>
+        <!-- V14.0: рукописный шрифт (Caveat, OFL, кириллица полная) на всё
+             приложение. Явные fontFamily в разметке сняты, иначе они бы
+             перекрыли тему. Исключение - monospace в диагностике: там
+             моноширинность несёт смысл (колонки чисел). -->
+        <item name="android:fontFamily">@font/caveat</item>
+        <item name="fontFamily">@font/caveat</item>
     </style>
 </resources>

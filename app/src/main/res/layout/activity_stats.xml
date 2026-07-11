@@ -15,7 +15,6 @@
             android:layout_height="wrap_content"
             android:text="СТАТИСТИКА"
             android:textColor="@color/accent_red"
-            android:fontFamily="sans-serif-black"
             android:textSize="26sp"
             android:letterSpacing="0.05" />
 
