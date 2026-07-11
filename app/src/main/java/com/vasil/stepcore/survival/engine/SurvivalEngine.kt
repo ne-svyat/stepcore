@@ -162,5 +162,17 @@ class SurvivalEngine(
         fun startOffsetFrom(seed: Long): Int = 10 + SplitMix64.forTick(seed, 0).nextInt(41)
 
         fun fmtTemp(t: Int): String = if (t > 0) "+" + t else t.toString()
+
+        /** Русское склонение: 1 день - 2 дня - 5 дней - 11 дней - 21 день. */
+        fun daysWord(n: Int): String {
+            val m10 = n % 10
+            val m100 = n % 100
+            return when {
+                m100 in 11..14 -> "дней"
+                m10 == 1 -> "день"
+                m10 in 2..4 -> "дня"
+                else -> "дней"
+            }
+        }
     }
 }

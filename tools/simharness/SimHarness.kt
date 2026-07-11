@@ -182,6 +182,17 @@ fun main(args: Array<String>) {
         for (k in need) check("corpus.key." + k, corpus.has(k))
     }
 
+    // --- 6. Склонение дней ---
+    run {
+        val cases = mapOf(1 to "день", 2 to "дня", 4 to "дня", 5 to "дней",
+            11 to "дней", 14 to "дней", 21 to "день", 22 to "дня",
+            30 to "дней", 100 to "дней", 104 to "дня", 111 to "дней")
+        for ((n, w) in cases) {
+            check("plural." + n, SurvivalEngine.daysWord(n) == w,
+                SurvivalEngine.daysWord(n))
+        }
+    }
+
     if (failures == 0) {
         println("OK: все инварианты выдержаны")
     } else {

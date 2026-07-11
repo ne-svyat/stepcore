@@ -5,6 +5,7 @@ import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -35,6 +36,10 @@ class SurvivalActivity : AppCompatActivity() {
     private var durDays = 60
     private var tempo = 5000
     private var avgSteps = 0
+
+    /** Системный «назад» из просмотра архива возвращает к списку,
+     *  а не выбрасывает на главный экран. Включается только в архиве. */
+    private lateinit var backToList: OnBackPressedCallback
 
     /** id экспедиции из архива, открытой на просмотр; -1 = не в архиве. */
     private var viewingId = -1L
@@ -139,6 +144,14 @@ class SurvivalActivity : AppCompatActivity() {
             lifecycleScope.launch { refreshUi(runSync = false) }
         }
 
+        backToList = object : OnBackPressedCallback(false) {
+            override fun handleOnBackPressed() {
+                viewingId = -1L
+                lifecycleScope.launch { refreshUi(runSync = false) }
+            }
+        }
+        onBackPressedDispatcher.addCallback(this, backToList)
+
         lifecycleScope.launch {
             avgSteps = repo.avgDailySteps()
             refreshStartControls()
@@ -164,7 +177,7 @@ class SurvivalActivity : AppCompatActivity() {
             val o = repo.sync()
             if (o != null) {
                 if (o.newDays > 0) {
-                    note = "+" + o.newDays + " " + daysWord(o.newDays) +
+                    note = "+" + o.newDays + " " + SurvivalEngine.daysWord(o.newDays) +
                         " мира · " + o.consumedSteps + " шагов"
                 }
                 if (o.completed) {
@@ -185,6 +198,7 @@ class SurvivalActivity : AppCompatActivity() {
         startBox.visibility = View.GONE
         activeBox.visibility = View.VISIBLE
         backBtn.visibility = View.GONE
+        backToList.isEnabled = false
         actionRow.visibility = View.VISIBLE
         expCountdown.visibility = View.VISIBLE
 
@@ -204,6 +218,7 @@ class SurvivalActivity : AppCompatActivity() {
         startBox.visibility = View.GONE
         activeBox.visibility = View.VISIBLE
         backBtn.visibility = View.VISIBLE
+        backToList.isEnabled = true
         actionRow.visibility = View.GONE
         expCountdown.visibility = View.GONE
 
@@ -228,6 +243,7 @@ class SurvivalActivity : AppCompatActivity() {
 
     private suspend fun renderStartForm() {
         activeBox.visibility = View.GONE
+        backToList.isEnabled = false
         startBox.visibility = View.VISIBLE
         refreshStartControls()
 
@@ -278,7 +294,7 @@ class SurvivalActivity : AppCompatActivity() {
             val est = (durDays.toLong() * tempo + avgSteps - 1) / avgSteps
             sb.append("Твой средний темп ~").append(avgSteps)
                 .append(" шагов/день. Этот план: примерно ").append(est)
-                .append(" ").append(daysWord(est.toInt())).append(" реальной ходьбы.")
+                .append(" ").append(SurvivalEngine.daysWord(est.toInt())).append(" реальной ходьбы.")
         } else {
             sb.append("Темп мира не зависит от скорости ходьбы — только от числа шагов.")
         }
@@ -302,16 +318,6 @@ class SurvivalActivity : AppCompatActivity() {
     }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
-
-    private fun daysWord(n: Int): String {
-        val m10 = n % 10; val m100 = n % 100
-        return when {
-            m100 in 11..14 -> "дней"
-            m10 == 1 -> "день"
-            m10 in 2..4 -> "дня"
-            else -> "дней"
-        }
-    }
 
     companion object {
         private fun defaultSeason(): Int = when (LocalDate.now().monthValue) {

@@ -138,7 +138,10 @@ class SurvivalRepo(private val context: Context) {
             fresh.add(ExpeditionEvent(
                 expeditionId = e.id, tick = newTicksDone, realTimeMs = now,
                 category = "milestone",
-                text = corpus.render(endKey, roll, mapOf("days" to newTicksDone.toString())),
+                text = corpus.render(endKey, roll, mapOf(
+                    "days" to newTicksDone.toString(),
+                    "daysW" to SurvivalEngine.daysWord(newTicksDone),
+                )),
             ))
             if (newTicksDone > 0) {
                 fresh.add(ExpeditionEvent(
@@ -177,6 +180,7 @@ class SurvivalRepo(private val context: Context) {
         val sb = StringBuilder()
         sb.append(corpus.render("final.summary", 0L, mapOf(
             "days" to s.days.toString(),
+            "daysW" to SurvivalEngine.daysWord(s.days),
             "rain" to s.rainDays.toString(),
             "snow" to s.snowDays.toString(),
             "tmin" to SurvivalEngine.fmtTemp(s.minTemp),
