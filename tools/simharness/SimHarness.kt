@@ -105,7 +105,7 @@ fun main(args: Array<String>) {
         var badTrackNoSnow = 0
         var badTrackInSnowfall = 0
         var badBear = 0
-        var coverDaysSeen = 0L
+        var badSky = 0
         var stormDaysTotal = 0L
         var holes = 0
         var lies = 0
@@ -133,6 +133,8 @@ fun main(args: Array<String>) {
                     e.category == "ambient" -> ambient++
                     e.category == "milestone" -> milestones++
                 }
+                val pc = e.ctx["precip"] ?: 0
+                if ((pc == 2 || pc == 4) && (e.ctx["cloud"] ?: 0) < 2) badSky++
                 if (e.category == "track") {
                     val cm = e.ctx["snowcm"] ?: 0
                     val pr = e.ctx["precip"] ?: 0
@@ -205,6 +207,7 @@ fun main(args: Array<String>) {
         check("track.never_in_snowfall", badTrackInSnowfall == 0, "" + badTrackInSnowfall)
         check("track.no_bear_in_hard_frost", badBear == 0, "" + badBear)
         check("track.exists", tracks > 0, "" + tracks)
+        check("sky.heavy_precip_needs_overcast", badSky == 0, "" + badSky)
         check("corpus.no_holes", holes == 0)
         check("corpus.no_broken_conditions", corpus.problems().isEmpty(),
             corpus.problems().joinToString("; "))
@@ -251,6 +254,40 @@ fun main(args: Array<String>) {
         check("ground.snow_accumulates", maxCm in 20..130, "" + maxCm)
         check("ground.cover_reasonable", coverDays * 100 / days in 15..60,
             "" + (coverDays * 100 / days))
+    }
+
+    // --- 3b2. ВЕСНА ОБЯЗАНА ПРИХОДИТЬ ---
+    //     Реальный журнал показал: река стояла подо льдом при +4 и дожде,
+    //     потому что вскрытие требовало четырёх ТЁПЛЫХ ДНЕЙ ПОДРЯД, а один
+    //     нулевой день обнулял счётчик. Теперь лёд считает градусо-дни,
+    //     и эти проверки не дадут регрессу вернуться.
+    run {
+        var absurdIce = 0
+        var springsWithSnow = 0
+        var springsTotal = 0
+        var iceLingering = 0
+        for (i in 0 until 300) {
+            val seed = 700000L + i * 13L
+            val eng = SurvivalEngine(seed, 1, SurvivalEngine.startOffsetFrom(seed), 2) // старт весной
+            val snaps = eng.daySnapshots(120)
+            springsTotal++
+            var warmRun = 0
+            var iceAtEnd = 0
+            var snowAtEnd = 0
+            for (d in snaps) {
+                if (d.riverIce > 0 && d.tempC >= 15) absurdIce++
+                warmRun = if (d.tempC >= 5) warmRun + 1 else 0
+                // две недели устойчивого тепла — лёд обязан уйти
+                if (warmRun >= 14 && d.riverIce > 0) iceLingering++
+                iceAtEnd = d.riverIce
+                snowAtEnd = d.snowCm
+            }
+            if (snowAtEnd > 0) springsWithSnow++
+        }
+        println("весна: лёд при +15 — " + absurdIce + " дн. · лёд после 2 недель тепла — " + iceLingering + " дн.")
+        check("spring.no_ice_in_warmth", absurdIce == 0, "" + absurdIce)
+        check("spring.ice_breaks_up", iceLingering == 0, "" + iceLingering)
+        check("spring.snow_melts", springsWithSnow == 0, "" + springsWithSnow + "/" + springsTotal)
     }
 
     // --- 3c. Версия 1 жива: старые экспедиции доигрываются старым миром ---

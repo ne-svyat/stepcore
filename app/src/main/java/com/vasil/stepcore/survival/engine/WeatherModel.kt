@@ -34,6 +34,7 @@ data class WeatherState(
     val snowAgeDays: Int = 0,  // сколько дней прошло с последнего снегопада
     val coldStreak: Int = 0,   // подряд дней с t <= -5
     val thawStreak: Int = 0,   // подряд дней с t >= +2
+    val iceSum: Int = 0,       // накопленный холод реки: градусо-дни льда
     val winterSet: Boolean = false, // зима фактически встала (снег лежит, мороз держится)
 )
 
@@ -89,10 +90,15 @@ object WeatherModel {
     /** Зима встала: покров не меньше 10 см и мороз держится 4 дня подряд. */
     private const val WINTER_SNOW_CM = 10
     private const val WINTER_COLD_DAYS = 4
-    /** Ледостав: 6 морозных дней подряд. Забереги: 3. Вскрытие: 4 дня оттепели. */
-    private const val ICE_FULL_DAYS = 6
-    private const val ICE_EDGE_DAYS = 3
-    private const val ICE_OPEN_DAYS = 4
+    /**
+     * Градусо-дни льда. Ледостав — 60 накопленных градусов мороза
+     * (примерно неделя при -10). Забереги — 25. Вскрытие — когда сумма
+     * упала почти до нуля: при +4 это около недели.
+     */
+    private const val ICE_FULL_SUM = 60
+    private const val ICE_EDGE_SUM = 25
+    private const val ICE_OPEN_SUM = 6
+    private const val ICE_SUM_MAX = 90
     private const val SNOW_MAX_CM = 130
     /** Испарение покрова в мороз: 2 мм в сутки. */
     private const val SUBLIMATION_MM = 2
@@ -163,6 +169,7 @@ object WeatherModel {
             riverIce = ice,
             coldStreak = if (temp <= FROST_T) 1 else 0,
             thawStreak = if (temp >= THAW_T) 1 else 0,
+            iceSum = if (ice == 2) ICE_SUM_MAX else 0,
             winterSet = winter,
         )
     }
@@ -289,6 +296,11 @@ object WeatherModel {
             0
         }
 
+        // Сильные осадки не сыплются из полуясного неба: снегопад и ливень
+        // требуют сплошной облачности. Морось и мокрый снег из рваных туч —
+        // возможны, поэтому правило касается только сильного.
+        val cloudFinal = if (precip == 2 || precip == 4) maxOf(cloud, 2) else cloud
+
         // 7. Ветер — тоже следствие фронта. Буря без фронта невозможна.
         val wind = sampleWindV2(front, rng.nextDouble())
 
@@ -338,11 +350,21 @@ object WeatherModel {
         val coldStreak = if (temp <= FROST_T) prev.coldStreak + 1 else 0
         val thawStreak = if (temp >= THAW_T) prev.thawStreak + 1 else 0
 
-        // Лёд на реке. Вскрытие важнее замерзания: весна сильнее зимы.
+        // Лёд на реке — НАКОПЛЕННЫЙ холод, а не серия морозных дней.
+        //
+        // Раньше вскрытие требовало четыре тёплых дня ПОДРЯД: один нулевой
+        // день посреди весны обнулял счётчик, и река стояла подо льдом при
+        // +4 и дожде. Лёд так не работает: его растит и ломает сумма тепла
+        // и холода, а не их непрерывность.
+        //
+        // Тепло съедает лёд втрое быстрее, чем мороз его наращивает, —
+        // поэтому ледостав держится всю зиму, но весной сдаётся за неделю.
+        val iceSum = (prev.iceSum + maxOf(0, -temp) - maxOf(0, temp) * 3)
+            .coerceIn(0, ICE_SUM_MAX)
         val ice = when {
-            prev.riverIce > 0 && thawStreak >= ICE_OPEN_DAYS -> 0
-            coldStreak >= ICE_FULL_DAYS -> 2
-            coldStreak >= ICE_EDGE_DAYS -> maxOf(prev.riverIce, 1)
+            iceSum >= ICE_FULL_SUM -> 2
+            iceSum >= ICE_EDGE_SUM -> maxOf(prev.riverIce, 1)
+            iceSum <= ICE_OPEN_SUM -> 0
             else -> prev.riverIce
         }
 
@@ -357,10 +379,10 @@ object WeatherModel {
         }
 
         return WeatherState(
-            airMass = air, tempC = temp, cloud = cloud, wind = wind,
+            airMass = air, tempC = temp, cloud = cloudFinal, wind = wind,
             precip = precip, fog = fog,
             snowSeen = prev.snowSeen || precip >= 3,
-            overcastStreak = if (cloud == 2) prev.overcastStreak + 1 else 0,
+            overcastStreak = if (cloudFinal == 2) prev.overcastStreak + 1 else 0,
             precipStreak = if (precip != 0) prev.precipStreak + 1 else 0,
             dryStreak = if (precip == 0) prev.dryStreak + 1 else 0,
             front = front,
@@ -370,6 +392,7 @@ object WeatherModel {
             riverIce = ice,
             coldStreak = coldStreak,
             thawStreak = thawStreak,
+            iceSum = iceSum,
             winterSet = winter,
         )
     }

@@ -204,7 +204,10 @@ class SurvivalEngine(
         // когда снег лежит и мороз держится, а не когда так решил номер дня.
         val phase: String? = when {
             !prev.winterSet && st.winterSet -> "phase.winter_set"
-            prev.snowCm >= 5 && st.snowCm == 0 -> "phase.snow_gone"
+            // Снег сходит ПЛАВНО: 4 см, 1 см, ноль. Порог «вчера было ≥5»
+            // такое таяние просто перепрыгивало, и веха не выпадала никогда.
+            // Правильный признак — исчезновение зимы как состояния земли.
+            prev.winterSet && !st.winterSet -> "phase.snow_gone"
             prev.riverIce < 2 && st.riverIce == 2 -> "phase.river_freeze"
             prev.riverIce > 0 && st.riverIce == 0 -> "phase.river_open"
             else -> null
