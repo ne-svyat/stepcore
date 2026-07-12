@@ -59,7 +59,27 @@ internal object BoilClock {
     private var ticks = 0L
     private val listeners = LinkedHashSet<() -> Unit>()
     private val handler = Handler(Looper.getMainLooper())
-    private var paused = false
+
+    /**
+     * СЧЁТЧИК живых экранов, а не глобальный флаг паузы.
+     *
+     * Первая версия (v95) держала общий флаг paused и дёргала его из
+     * жизненного цикла КАЖДОГО экрана - и это ломалось при переходе между
+     * вкладками. Android запускает новый экран РАНЬШЕ, чем останавливает
+     * старый, поэтому порядок был такой: новый экран просит "крутись" ->
+     * старый экран командует "замри" (глобально!) -> механизм глох везде.
+     * Возобновлял его только главный экран, поэтому во вкладках анимация
+     * была мёртвой.
+     *
+     * Счётчик неуязвим к этому порядку: при переходе он идёт 1 -> 2 -> 1 и
+     * НИКОГДА не касается нуля. Ноль наступает, только когда закрыт
+     * последний экран - тогда механизм честно замирает и не будит
+     * процессор в фоне.
+     */
+    private var screens = 0
+
+    private val running: Boolean
+        get() = screens > 0 && listeners.isNotEmpty()
 
     private val tick = object : Runnable {
         override fun run() {
@@ -67,35 +87,36 @@ internal object BoilClock {
             phase = (ticks * TICK_MS).toFloat() / 1000f
             if (ticks % BOIL_EVERY == 0L) frame = (frame + 1) % FRAMES
             for (l in ArrayList(listeners)) l()
-            if (listeners.isNotEmpty() && !paused) handler.postDelayed(this, TICK_MS)
+            if (running) handler.postDelayed(this, TICK_MS)
         }
     }
 
+    private fun restartIfNeeded() {
+        handler.removeCallbacks(tick)
+        if (running) handler.postDelayed(tick, TICK_MS)
+    }
+
     fun register(l: () -> Unit) {
-        val wasIdle = listeners.isEmpty()
         listeners.add(l)
-        if (wasIdle && !paused) handler.postDelayed(tick, TICK_MS)
+        restartIfNeeded()
     }
 
     fun unregister(l: () -> Unit) {
         listeners.remove(l)
-        if (listeners.isEmpty()) handler.removeCallbacks(tick)
+        restartIfNeeded()
     }
 
-    /**
-     * Экран ушёл - механизм ОБЯЗАН замереть. View при выходе из приложения
-     * НЕ отсоединяются от окна, поэтому одной отпиской не обойтись: без
-     * явной паузы таймер будил бы процессор 20 раз в секунду в фоне вечно.
-     * Для приложения, живущего в фоне сутками, это дыра в батарее.
-     */
-    fun pause() {
-        paused = true
-        handler.removeCallbacks(tick)
+    /** Экран стал видимым (Activity.onStart). */
+    fun screenStarted() {
+        screens++
+        restartIfNeeded()
     }
 
-    fun resume() {
-        paused = false
-        if (listeners.isNotEmpty()) handler.postDelayed(tick, TICK_MS)
+    /** Экран скрылся (Activity.onStop). */
+    fun screenStopped() {
+        screens--
+        if (screens < 0) screens = 0
+        restartIfNeeded()
     }
 }
 
@@ -493,12 +514,6 @@ class DoodleSceneView @JvmOverloads constructor(
     override fun onDetachedFromWindow() {
         BoilClock.unregister(onTick)
         super.onDetachedFromWindow()
-    }
-
-    override fun onWindowVisibilityChanged(visibility: Int) {
-        super.onWindowVisibilityChanged(visibility)
-        // Окно скрылось - механизм замирает даже если View ещё привязана.
-        if (visibility == VISIBLE) BoilClock.resume() else BoilClock.pause()
     }
 
     private val violet = ContextCompat.getColor(context, R.color.accent_violet)

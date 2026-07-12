@@ -327,4 +327,17 @@ class TimelineActivity : AppCompatActivity() {
             }
         }
     }
+
+    // Механизм дудл-анимации крутится, пока виден хоть один экран.
+    // onStart нового экрана срабатывает РАНЬШЕ onStop старого, поэтому при
+    // переходе между вкладками счётчик не касается нуля и анимация не глохнет.
+    override fun onStart() {
+        super.onStart()
+        BoilClock.screenStarted()
+    }
+
+    override fun onStop() {
+        BoilClock.screenStopped()
+        super.onStop()
+    }
 }

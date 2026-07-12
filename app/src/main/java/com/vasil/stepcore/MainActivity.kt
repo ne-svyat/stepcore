@@ -526,16 +526,8 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    override fun onPause() {
-        // Экран ушёл - "кипение" линий замирает: в фоне рисовать нечего,
-        // а таймер иначе продолжал бы будить процессор.
-        BoilClock.pause()
-        super.onPause()
-    }
-
     override fun onResume() {
         super.onResume()
-        BoilClock.resume()
         goal = getSharedPreferences(StepService.PREFS, MODE_PRIVATE).getInt("p_goal", 10000)
         if (::accuracyBadge.isInitialized) refreshAccuracyBadge()
         if (::cargoChip.isInitialized) refreshCargoChip()
@@ -555,5 +547,18 @@ class MainActivity : AppCompatActivity() {
             )
         }
         startForegroundService(Intent(this, StepService::class.java))
+    }
+
+    // Механизм дудл-анимации крутится, пока виден хоть один экран.
+    // onStart нового экрана срабатывает РАНЬШЕ onStop старого, поэтому при
+    // переходе между вкладками счётчик не касается нуля и анимация не глохнет.
+    override fun onStart() {
+        super.onStart()
+        BoilClock.screenStarted()
+    }
+
+    override fun onStop() {
+        BoilClock.screenStopped()
+        super.onStop()
     }
 }
