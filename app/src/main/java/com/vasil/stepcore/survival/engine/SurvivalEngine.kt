@@ -21,6 +21,24 @@ data class WorldEvent(
     val nth: Int = 0, // какое по счёту срабатывание этого ключа за экспедицию
 )
 
+/**
+ * Состояние одного дня мира для шапки карточки журнала.
+ *
+ * НЕ хранится в базе: мир детерминирован, поэтому день дешевле пересчитать
+ * из seed, чем сериализовать. Отсюда важное следствие — карточки появляются
+ * и у экспедиций, прожитых ДО этого обновления, включая архивные.
+ */
+data class DaySnap(
+    val tick: Int,
+    val tempC: Int,
+    val cloud: Int,
+    val wind: Int,
+    val precip: Int,
+    val fog: Boolean,
+    val snowCm: Int,
+    val riverIce: Int,
+)
+
 /** Сводка по прожитым дням — для финальной истории и архива. */
 data class ExpeditionSummary(
     val days: Int,
@@ -106,6 +124,26 @@ class SurvivalEngine(
             snowCoverDays = coverDays,
             maxSnowCm = maxSnow,
         )
+    }
+
+    /**
+     * Пересчёт состояний дней без эмиссии событий — для шапок карточек.
+     * Дешёво: тик это несколько десятков арифметических операций.
+     */
+    fun daySnapshots(toInclusive: Int): List<DaySnap> {
+        var state = WeatherModel.initial(
+            version, SplitMix64.forTick(seed, 0), yearDay(0), startSeason
+        )
+        val out = ArrayList<DaySnap>(maxOf(toInclusive, 0))
+        for (t in 1..toInclusive) {
+            state = WeatherModel.step(version, state, yearDay(t), SplitMix64.forTick(seed, t))
+            out.add(DaySnap(
+                tick = t, tempC = state.tempC, cloud = state.cloud, wind = state.wind,
+                precip = state.precip, fog = state.fog,
+                snowCm = state.snowCm, riverIce = state.riverIce,
+            ))
+        }
+        return out
     }
 
     /**
@@ -222,16 +260,18 @@ class SurvivalEngine(
                 "snow" to st.snowCm.toString(),
             ), ctx)
         } else {
-            // Тихий день: сводка наблюдательной сети из ЖИВЫХ данных.
-            // Формулировки «день спокойный» отфильтрует корпус: они помечены
-            // условиями (тихо, без осадков, без тумана).
-            fire("digest", "digest", rng.nextLong(), mapOf(
-                "sky" to skyWord(st.cloud, st.fog),
-                "wind" to windWord(st.wind),
-                "temp" to fmtTemp(st.tempC),
-                "snow" to st.snowCm.toString(),
-            ), ctx)
-            // Редкая бытовая зарисовка ПОВЕРХ сводки — приправа, не замена.
+            // Тихий день. Цифры дня (небо, ветер, температура, снег) больше
+            // НЕ печатаются строкой: их несёт шапка карточки. Строка остаётся
+            // только там, где ей есть что добавить сверх цифр, — и то не всегда.
+            // Совсем тихий день имеет право быть совсем тихим.
+            if (rng.nextDouble() < DAY_NOTE_P) {
+                fire("ambient", "day_note", rng.nextLong(), mapOf(
+                    "sky" to skyWord(st.cloud, st.fog),
+                    "wind" to windWord(st.wind),
+                    "temp" to fmtTemp(st.tempC),
+                    "snow" to st.snowCm.toString(),
+                ), ctx)
+            }
             if (rng.nextDouble() < AMBIENT_P) {
                 fire("ambient", "ambient", rng.nextLong(), emptyMap(), ctx)
             }
@@ -256,6 +296,14 @@ class SurvivalEngine(
          */
         const val AMBIENT_P = 0.18
 
+        /**
+         * Вероятность «заметки дня» в тихий день. Заметка выпадает только
+         * если корпус найдёт вариант, которому есть что сказать сверх шапки
+         * (ветер не стихает, река молчит подо льдом, мороз лютый). Гейт 0.5
+         * не даёт этим наблюдениям превратиться в ежедневную мантру.
+         */
+        const val DAY_NOTE_P = 0.5
+
         val SEASON_EN = arrayOf("winter", "spring", "summer", "autumn")
         val SEASON_RU = arrayOf("зима", "весна", "лето", "осень")
 
@@ -279,6 +327,32 @@ class SurvivalEngine(
             cloud == 0 -> "ясно"
             cloud == 1 -> "переменная облачность"
             else -> "пасмурно"
+        }
+
+        /** Словесные осадки для шапки дня. */
+        fun precipWord(precip: Int): String = when (precip) {
+            1 -> "дождь"
+            2 -> "ливень"
+            3 -> "мокрый снег"
+            4 -> "снегопад"
+            else -> ""
+        }
+
+        /**
+         * Шапка дня: одна строка фактов. Ветер называется только когда он
+         * есть, снег — только когда он лежит. Шапка не имеет права молчать
+         * о том, что видно, и не имеет права говорить о том, чего нет.
+         */
+        fun headerOf(d: DaySnap): String {
+            val sb = StringBuilder()
+            sb.append(fmtTemp(d.tempC)).append("°")
+            sb.append(" · ").append(skyWord(d.cloud, d.fog))
+            if (d.precip > 0) sb.append(" · ").append(precipWord(d.precip))
+            if (d.wind > 0) sb.append(" · ").append(windWord(d.wind))
+            if (d.snowCm > 0) sb.append(" · снег ").append(d.snowCm).append(" см")
+            if (d.riverIce == 2) sb.append(" · река подо льдом")
+            else if (d.riverIce == 1) sb.append(" · шуга")
+            return sb.toString()
         }
 
         /** Словесный ветер для сводки дня. */

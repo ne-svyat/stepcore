@@ -8,6 +8,7 @@ import com.vasil.stepcore.survival.engine.Corpus
 import com.vasil.stepcore.survival.engine.ExpeditionSummary
 import com.vasil.stepcore.survival.engine.SplitMix64
 import com.vasil.stepcore.survival.engine.StepLedger
+import com.vasil.stepcore.survival.engine.DaySnap
 import com.vasil.stepcore.survival.engine.SurvivalEngine
 import com.vasil.stepcore.survival.engine.WorldEvent
 import kotlinx.coroutines.sync.Mutex
@@ -51,6 +52,15 @@ class SurvivalRepo(private val context: Context) {
     suspend fun events(id: Long): List<ExpeditionEvent> = db.dao().eventsOf(id)
 
     /**
+     * Состояния дней экспедиции. Не читаются из базы — пересчитываются
+     * из seed по правилам ТОЙ версии движка, на которой экспедиция начата.
+     * Поэтому шапки карточек честны и для старых, уже прожитых миров.
+     */
+    fun days(e: Expedition): List<DaySnap> =
+        SurvivalEngine(e.seed, e.startSeason, e.startOffset, e.engineVersion)
+            .daySnapshots(e.ticksDone)
+
+    /**
      * Полный текст экспедиции для копирования/шаринга: шапка, журнал в
      * ХРОНОЛОГИЧЕСКОМ порядке (в отличие от экрана, где новое сверху —
      * для чтения «истории» естественнее от старта к финалу) и, если
@@ -78,9 +88,26 @@ class SurvivalRepo(private val context: Context) {
         }
         sb.append(statusLine).append("\n\n")
         sb.append("— ЖУРНАЛ —\n")
-        for (ev in evs) {
-            val prefix = if (ev.tick == 0) "Старт" else "Д" + ev.tick
-            sb.append(prefix).append(" · ").append(ev.text).append('\n')
+
+        // Экспорт повторяет экран: день = шапка фактов + строки событий.
+        // Сводки тихого дня, записанные до появления карточки, пропускаются:
+        // они дублировали бы шапку. В базе они остаются — прошлое не трогаем.
+        val byTick = HashMap<Int, MutableList<ExpeditionEvent>>()
+        for (ev in evs) byTick.getOrPut(ev.tick) { mutableListOf() }.add(ev)
+        val heads = days(e).associateBy { it.tick }
+
+        for (t in 0..e.ticksDone) {
+            val evsOfDay = byTick[t]?.filter { it.category != "digest" } ?: emptyList()
+            val head = heads[t]
+            if (evsOfDay.isEmpty() && head == null) continue
+            if (t == 0) {
+                for (ev in evsOfDay) sb.append("Старт · ").append(ev.text).append('\n')
+                continue
+            }
+            sb.append("Д").append(t)
+            if (head != null) sb.append(" · ").append(SurvivalEngine.headerOf(head))
+            sb.append('\n')
+            for (ev in evsOfDay) sb.append("    ").append(ev.text).append('\n')
         }
         return sb.toString().trimEnd()
     }

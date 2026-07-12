@@ -7,6 +7,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.view.View
 import android.widget.Button
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
@@ -68,7 +69,7 @@ class SurvivalActivity : AppCompatActivity() {
     private lateinit var expState: TextView
     private lateinit var expCountdown: TextView
     private lateinit var syncNote: TextView
-    private lateinit var journal: TextView
+    private lateinit var journalBox: LinearLayout
     private lateinit var actionRow: LinearLayout
     private lateinit var refreshBtn: Button
     private lateinit var finishBtn: Button
@@ -94,7 +95,7 @@ class SurvivalActivity : AppCompatActivity() {
         expState = findViewById(R.id.expStateText)
         expCountdown = findViewById(R.id.expCountdownText)
         syncNote = findViewById(R.id.syncNoteText)
-        journal = findViewById(R.id.journalText)
+        journalBox = findViewById(R.id.journalBox)
         actionRow = findViewById(R.id.actionRow)
         refreshBtn = findViewById(R.id.refreshBtn)
         finishBtn = findViewById(R.id.finishBtn)
@@ -289,7 +290,7 @@ class SurvivalActivity : AppCompatActivity() {
         }
         shownId = e.id
         journalActions.visibility = View.VISIBLE
-        journal.text = buildJournal(e.id)
+        renderJournal(e)
     }
 
     private suspend fun renderReadOnly(e: Expedition) {
@@ -307,7 +308,7 @@ class SurvivalActivity : AppCompatActivity() {
         syncNote.visibility = View.VISIBLE
         shownId = e.id
         journalActions.visibility = View.VISIBLE
-        journal.text = buildJournal(e.id)
+        renderJournal(e)
     }
 
     private fun fillHeader(e: Expedition) {
@@ -436,16 +437,90 @@ class SurvivalActivity : AppCompatActivity() {
 
     // ---------- вспомогательное ----------
 
-    private suspend fun buildJournal(expeditionId: Long): String {
-        val events = repo.events(expeditionId)
-        if (events.isEmpty()) return "Журнал пуст."
-        val sb = StringBuilder()
-        for (ev in events) {
-            if (sb.isNotEmpty()) sb.append("\n\n")
-            val prefix = if (ev.tick == 0) "Старт" else "Д" + ev.tick
-            sb.append(prefix).append(" · ").append(ev.text)
+    /**
+     * Журнал карточками: день = шапка фактов + строки событий, окрашенные
+     * по категории (JournalStyle). Новое сверху.
+     *
+     * Шапка берётся не из базы, а из пересчёта мира по seed — поэтому
+     * карточки есть и у экспедиций, прожитых до этого обновления.
+     */
+    private suspend fun renderJournal(e: Expedition) {
+        journalBox.removeAllViews()
+        val events = repo.events(e.id)
+        if (events.isEmpty()) {
+            journalBox.addView(dimRow("Журнал пуст."))
+            return
         }
-        return sb.toString()
+        val byTick = HashMap<Int, MutableList<ExpeditionEvent>>()
+        for (ev in events) byTick.getOrPut(ev.tick) { mutableListOf() }.add(ev)
+        val heads = repo.days(e).associateBy { it.tick }
+
+        val first = maxOf(0, e.ticksDone - MAX_CARDS + 1)
+        for (t in e.ticksDone downTo first) {
+            val dayEvents = byTick[t]
+                ?.filter { JournalStyle.visibleInCard(it.category) }
+                ?.sortedBy { it.id }
+                ?: emptyList()
+            val head = heads[t]
+            if (dayEvents.isEmpty() && head == null) continue
+            journalBox.addView(dayCard(t, head, dayEvents))
+        }
+        if (first > 0) {
+            journalBox.addView(dimRow("Показаны последние " + MAX_CARDS +
+                " дней. Полный журнал — в «Поделиться»."))
+        }
+    }
+
+    private fun dayCard(
+        tick: Int,
+        head: com.vasil.stepcore.survival.engine.DaySnap?,
+        events: List<ExpeditionEvent>,
+    ): View {
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(2), dp(10), dp(2), dp(10))
+        }
+
+        val top = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        if (head != null) {
+            top.addView(ImageView(this).apply {
+                setImageDrawable(SkyGlyphDrawable(
+                    head.cloud, head.wind, head.precip, head.fog,
+                    ContextCompat.getColor(this@SurvivalActivity, R.color.accent_blue_bright),
+                    resources.displayMetrics.density, tick.toLong(),
+                ))
+                layoutParams = LinearLayout.LayoutParams(dp(30), dp(30))
+            })
+        }
+        top.addView(TextView(this).apply {
+            text = if (tick == 0) "Старт" else "Д" + tick
+            textSize = 17f
+            setTextColor(ContextCompat.getColor(this@SurvivalActivity, R.color.accent_red))
+            setPadding(dp(if (head != null) 8 else 0), 0, dp(8), 0)
+        })
+        if (head != null) {
+            top.addView(TextView(this).apply {
+                text = SurvivalEngine.headerOf(head)
+                textSize = 15f
+                setTextColor(ContextCompat.getColor(this@SurvivalActivity, R.color.text_dim))
+            })
+        }
+        card.addView(top)
+
+        for (ev in events) {
+            card.addView(TextView(this).apply {
+                text = JournalStyle.markOf(ev.category) + " " + ev.text
+                textSize = 18f
+                setTextColor(ContextCompat.getColor(
+                    this@SurvivalActivity, JournalStyle.colorRes(ev.category)))
+                setLineSpacing(dp(4).toFloat(), 1f)
+                setPadding(dp(4), dp(4), 0, 0)
+            })
+        }
+        return card
     }
 
     /** Подсветка выбранных кнопок формы + пересчёт подсказки. */
@@ -507,6 +582,10 @@ class SurvivalActivity : AppCompatActivity() {
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
     companion object {
+        /** Сколько последних дней мира показывать карточками. Дальше —
+         *  экспорт: сотни View в одном ScrollView не нужны никому. */
+        private const val MAX_CARDS = 150
+
         private fun defaultSeason(): Int = when (LocalDate.now().monthValue) {
             12, 1, 2 -> 0
             3, 4, 5 -> 1

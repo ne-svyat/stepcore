@@ -2,6 +2,7 @@ package com.vasil.stepcore.survival.harness
 
 import com.vasil.stepcore.survival.engine.BackupCodec
 import com.vasil.stepcore.survival.engine.Corpus
+import com.vasil.stepcore.survival.engine.DaySnap
 import com.vasil.stepcore.survival.engine.StepLedger
 import com.vasil.stepcore.survival.engine.SurvivalEngine
 import com.vasil.stepcore.survival.engine.WorldEvent
@@ -120,24 +121,28 @@ fun main(args: Array<String>) {
             val stormTicks = HashSet<Int>()
             val summary = eng.run(0, 100) { e ->
                 events++
-                when (e.category) {
-                    "weather" -> weather++
-                    "ambient" -> ambient++
-                    "milestone" -> milestones++
-                    "digest" -> digests++
+                when {
+                    e.category == "weather" -> weather++
+                    e.key == "day_note" -> digests++
+                    e.category == "ambient" -> ambient++
+                    e.category == "milestone" -> milestones++
                 }
                 if (e.key == "wx.snow_first") expFirstSnowEvent = true
                 perDay[e.tick] = (perDay[e.tick] ?: 0) + 1
-                val txt = corpus.renderOrNull(e.key, e.roll, e.params, e.ctx)
+                val txt = corpus.renderOrNull(e.key, e.roll, e.params, e.ctx, e.nth)
                 if (txt == null) {
-                    holes++
-                    println("  нет подходящего варианта: " + e.key + " ctx=" + e.ctx)
+                    // day_note — необязательная заметка: если сказать нечего
+                    // сверх шапки карточки, день молчит. Это не дыра.
+                    if (e.key != "day_note") {
+                        holes++
+                        println("  нет подходящего варианта: " + e.key + " ctx=" + e.ctx)
+                    }
                 } else {
                     if (txt.startsWith("[")) { holes++; println("  дыра корпуса: " + e.key) }
                     if (txt.contains("{")) { holes++; println("  сирота-плейсхолдер: " + txt) }
                     val lie = physicalLie(txt, e.ctx)
                     if (lie != null) { lies++; println("  ФИЗИЧЕСКАЯ ЛОЖЬ [" + lie + "] " + e.key + " ctx=" + e.ctx + " :: " + txt) }
-                    if (e.category == "digest" && claimsCalm(txt) &&
+                    if (e.key == "day_note" && claimsCalm(txt) &&
                         !(z(e.ctx, "wind") <= 1 && z(e.ctx, "precip") == 0 && z(e.ctx, "fog") == 0)) {
                         lies++
                         println("  ЛОЖНОЕ СПОКОЙСТВИЕ ctx=" + e.ctx + " :: " + txt)
@@ -171,9 +176,10 @@ fun main(args: Array<String>) {
             " · осень " + tempMin[3] + ".." + tempMax[3])
         println("первый снег: осень " + autumnFirstSnow + "/" + autumnRuns)
 
-        // каждый тик = событие или сводка, плюс редкий ambient сверху
-        check("rate.per_day_min_one", perDayRate >= 1.0, "" + perDayRate)
-        check("rate.per_day_not_spammy", perDayRate <= 1.30, "" + perDayRate)
+        // Цифры дня несёт шапка карточки, поэтому строк стало меньше:
+        // журнал жив, но тишина наконец имеет право быть тишиной.
+        check("rate.per_day_alive", perDayRate >= 0.35, "" + perDayRate)
+        check("rate.per_day_not_spammy", perDayRate <= 1.10, "" + perDayRate)
         // событий-погоды (без сводок) — прежняя редкость, мир не сорит драмой
         val wxRate = weather.toDouble() / days
         check("rate.weather_events_rare", wxRate in 0.10..0.55, "" + wxRate)
@@ -196,35 +202,34 @@ fun main(args: Array<String>) {
     }
 
     // --- 3b. ЗЕМЛЯ: снег не берётся из воздуха и не лежит в жару ---
+    //     Проверяется по СНИМКАМ ДНЕЙ (daySnapshots), а не по событиям:
+    //     тихий день теперь не эмитит ни одной строки, и цепочка событий
+    //     не описывает мир полностью.
     run {
-        var badGrowth = 0; var badSummerSnow = 0; var winterNoSnow = 0
-        var maxCm = 0; var coverSeen = 0
+        var badGrowth = 0; var badHeat = 0; var iceNoCold = 0
+        var maxCm = 0; var coverDays = 0; var days = 0
         for (i in 0 until 500) {
             val season = i % 4
             val seed = 900000L + i * 17L
             val eng = SurvivalEngine(seed, season, SurvivalEngine.startOffsetFrom(seed), 2)
-            var prevCm = -1
-            var prevCtx: Map<String, Int> = emptyMap()
-            eng.run(0, 120) { e ->
-                val cm = e.ctx["snowcm"] ?: 0
-                val pr = e.ctx["precip"] ?: 0
-                val t = e.ctx["t"] ?: 0
-                if (prevCm >= 0 && cm > prevCm && pr < 3) badGrowth++
-                if (cm > maxCm) maxCm = cm
-                if (cm > 0) coverSeen++
-                // зима "встала" — значит покров есть
-                if ((e.ctx["winter"] ?: 0) == 1 && cm == 0 && (prevCtx["winter"] ?: 0) == 1) winterNoSnow++
-                // снег не может лежать при устойчивой жаре
-                if (cm > 0 && t >= 20) badSummerSnow++
-                prevCm = cm
-                prevCtx = e.ctx
+            val snaps = eng.daySnapshots(120)
+            var prev: DaySnap? = null
+            for (d in snaps) {
+                days++
+                if (prev != null && d.snowCm > prev.snowCm && d.precip < 3) badGrowth++
+                if (d.snowCm > 0 && d.tempC >= 20) badHeat++
+                if (d.snowCm > maxCm) maxCm = d.snowCm
+                if (d.snowCm > 0) coverDays++
+                prev = d
             }
         }
-        println("земля: макс. покров " + maxCm + " см · дней с покровом " + coverSeen)
+        println("земля: макс. покров " + maxCm + " см · покров " +
+            (coverDays * 100 / days) + " проц. дней")
         check("ground.no_snow_from_nothing", badGrowth == 0, "" + badGrowth)
-        check("ground.no_snow_in_heat", badSummerSnow == 0, "" + badSummerSnow)
-        check("ground.winter_implies_snow", winterNoSnow == 0, "" + winterNoSnow)
-        check("ground.snow_accumulates", maxCm in 20..180, "" + maxCm)
+        check("ground.no_snow_in_heat", badHeat == 0, "" + badHeat)
+        check("ground.snow_accumulates", maxCm in 20..130, "" + maxCm)
+        check("ground.cover_reasonable", coverDays * 100 / days in 15..60,
+            "" + (coverDays * 100 / days))
     }
 
     // --- 3c. Версия 1 жива: старые экспедиции доигрываются старым миром ---
@@ -238,7 +243,8 @@ fun main(args: Array<String>) {
         check("v1.differs_from_v2", a != v2)
         var holes = 0
         SurvivalEngine(555L, 3, 30, 1).run(0, 80) { e ->
-            if (corpus.renderOrNull(e.key, e.roll, e.params, e.ctx, e.nth) == null) holes++
+            if (e.key != "day_note" &&
+                corpus.renderOrNull(e.key, e.roll, e.params, e.ctx, e.nth) == null) holes++
         }
         check("v1.no_holes_in_new_corpus", holes == 0, "" + holes)
     }
@@ -301,10 +307,9 @@ fun main(args: Array<String>) {
             "wx.blizzard", "wx.blizzard_hold", "wx.storm", "wx.storm_hold",
             "wx.rain_hold", "wx.snow_hold", "wx.gloom_hold",
             "wx.cold_snap", "wx.cool_down", "wx.hard_frost", "wx.thaw", "wx.heat",
-            "wx.clear_streak", "wx.fog", "wx.wind_strong", "wx.snow_deep", "ambient",
+            "wx.clear_streak", "wx.fog", "wx.wind_strong", "wx.snow_deep", "ambient", "day_note",
             "phase.winter_set", "phase.snow_gone", "phase.river_freeze", "phase.river_open",
             "final.snow_cover",
-            "digest",
             "end.success", "end.voluntary",
             "final.summary", "final.first_snow", "final.storms",
         )
