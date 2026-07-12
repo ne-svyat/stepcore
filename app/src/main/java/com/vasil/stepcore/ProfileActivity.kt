@@ -6,7 +6,6 @@ import android.widget.EditText
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.RadioButton
-import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -30,14 +29,9 @@ class ProfileActivity : AppCompatActivity() {
         // контур контейнера - линии наезжали друг на друга. Каждая карточка
         // уже обведена сама, второй обводки не нужно.
 
-        // "ДАННЫЕ" - главное действие экрана, а выглядело как серая надпись,
-        // мимо которой легко проскочить. Теперь это заметная кнопка: своя
-        // рамка, акцентный цвет и мягкая пульсация.
-        val dataToggle = findViewById<TextView>(R.id.dataToggle)
-        DoodleUi.frame(dataToggle, R.color.accent_amber, R.color.surface_amber, 203L)
-        dataToggle.setTextColor(ContextCompat.getColor(this, R.color.accent_amber_bright))
-        dataToggle.setPadding(dp(16), dp(12), dp(16), dp(12))
-        DoodleUi.pulse(dataToggle)
+        // "ДАННЫЕ" оформляется ниже, рядом с уже объявленной dataToggle:
+        // второе объявление той же переменной в одной области видимости
+        // Kotlin не допускает.
 
         val prefs = getSharedPreferences(StepService.PREFS, MODE_PRIVATE)
         val weightIn = findViewById<EditText>(R.id.weightInput)
@@ -102,6 +96,13 @@ class ProfileActivity : AppCompatActivity() {
         }
 
         val dataToggle = findViewById<android.widget.TextView>(R.id.dataToggle)
+        // "ДАННЫЕ" - главное действие экрана, а выглядело серой надписью, мимо
+        // которой легко проскочить. Теперь это заметная кнопка: своя рамка,
+        // янтарный акцент (единственный такой на экране) и мягкая пульсация.
+        DoodleUi.frame(dataToggle, R.color.accent_amber, R.color.surface_amber, 203L)
+        dataToggle.setTextColor(ContextCompat.getColor(this, R.color.accent_amber_bright))
+        dataToggle.setPadding(dp(16), dp(12), dp(16), dp(12))
+        DoodleUi.pulse(dataToggle)
         val dataContainer = findViewById<LinearLayout>(R.id.dataContainer)
         // если профиль пустой — раскрыть сразу, иначе свёрнут
         if (!prefs.contains("p_weight")) {
