@@ -262,7 +262,7 @@ class StatsActivity : AppCompatActivity() {
         return box
     }
 
-    /** Число на границе цветов:    /** Число на границе цветов: 7000 -> "7к". */
+    /** Число на границе цветов: 7000 -> "7к". */
     private fun fmtK(n: Int): String =
         if (n % 1000 == 0) "${n / 1000}к" else "%.1fк".format(n / 1000f)
 
