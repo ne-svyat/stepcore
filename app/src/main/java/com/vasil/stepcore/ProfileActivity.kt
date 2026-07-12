@@ -6,13 +6,17 @@ import android.widget.EditText
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.RadioButton
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 
 /** Профиль (вес/рост/возраст/пол/цель) + паспорт статистики карточками. */
 class ProfileActivity : AppCompatActivity() {
+
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -20,7 +24,20 @@ class ProfileActivity : AppCompatActivity() {
         // V14.3: дудл-стиль — лагерь в шапке, рамки "от руки" на карточках.
         findViewById<DoodleSceneView>(R.id.doodleHeader).setScene(DoodleSceneView.PROFILE)
         DoodleUi.frame(findViewById(R.id.dataContainer), R.color.accent_violet, R.color.surface, 201L)
-        DoodleUi.frame(findViewById(R.id.passportContainer), R.color.accent_blue, R.color.surface, 202L)
+        // У контейнера "Паспорт" рамки НЕТ намеренно. Своя рамка у него была
+        // бы рамкой вокруг рамок: карточки внутри идут во всю ширину без
+        // отступов, и их красные/зелёные контуры ложились ровно на синий
+        // контур контейнера - линии наезжали друг на друга. Каждая карточка
+        // уже обведена сама, второй обводки не нужно.
+
+        // "ДАННЫЕ" - главное действие экрана, а выглядело как серая надпись,
+        // мимо которой легко проскочить. Теперь это заметная кнопка: своя
+        // рамка, акцентный цвет и мягкая пульсация.
+        val dataToggle = findViewById<TextView>(R.id.dataToggle)
+        DoodleUi.frame(dataToggle, R.color.accent_amber, R.color.surface_amber, 203L)
+        dataToggle.setTextColor(ContextCompat.getColor(this, R.color.accent_amber_bright))
+        dataToggle.setPadding(dp(16), dp(12), dp(16), dp(12))
+        DoodleUi.pulse(dataToggle)
 
         val prefs = getSharedPreferences(StepService.PREFS, MODE_PRIVATE)
         val weightIn = findViewById<EditText>(R.id.weightInput)

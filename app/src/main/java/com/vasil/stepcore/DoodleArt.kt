@@ -326,6 +326,76 @@ internal object Doodle {
         }
     }
 
+    /**
+     * Документ-паспорт: фото (лицо НАРОЧНО неразборчивое - поверх идёт
+     * штриховка), строки данных, штрих-код. Луч сканера рисуется отдельно,
+     * потому что он движется, а сам документ - нет.
+     */
+    fun passport(doc: Path, photo: Path, bars: Path, cx: Float, cy: Float,
+                 ww: Float, hh: Float, w: Wobble) {
+        val x = cx - ww / 2f; val y = cy - hh / 2f
+        roundRect(doc, x, y, ww, hh, 5f, 1.2f, w)
+
+        // фото слева
+        val px = x + ww * 0.04f; val py = y + hh * 0.06f
+        val pw = ww * 0.26f; val phh = hh * 0.52f
+        roundRect(photo, px, py, pw, phh, 3f, 1.0f, w)
+        val fcx = px + pw / 2f; val hy = py + phh * 0.36f
+        // голова
+        for (k in 0..16) {
+            val a2 = Math.toRadians(360.0 * k / 16)
+            val xx = fcx + pw * 0.20f * cos(a2).toFloat() + w.j(0.6f)
+            val yy = hy + pw * 0.20f * sin(a2).toFloat() + w.j(0.6f)
+            if (k == 0) photo.moveTo(xx, yy) else photo.lineTo(xx, yy)
+        }
+        // плечи
+        arc(photo, fcx, py + phh * 0.90f, pw * 0.36f, 180f, 360f, 0.8f, w)
+        // штриховка ПОВЕРХ лица: снимок не должен читаться
+        for (k in 0 until 6) {
+            val yy = py + 2f + k * (phh - 4f) / 6f
+            line(photo, px + 2f, yy, px + pw - 2f, yy, 0.8f, 4, w)
+        }
+
+        // строки данных справа
+        for (k in 0 until 4) {
+            val yy = y + hh * 0.10f + k * (hh * 0.13f)
+            val len = if (k % 2 == 0) ww * 0.42f else ww * 0.32f
+            line(doc, x + ww * 0.34f, yy, x + ww * 0.34f + len, yy, 0.8f, 5, w)
+        }
+
+        // штрих-код: ширины прутьев неровные, как настоящий
+        val bx = x + ww * 0.04f
+        val by = y + hh * 0.70f
+        val bw = ww * 0.92f
+        val bh = hh * 0.20f
+        var cur = bx
+        var k = 0
+        while (cur < bx + bw) {
+            val wd = 1f + (k * 7 % 3)
+            bars.addRect(cur, by, cur + wd, by + bh, Path.Direction.CW)
+            cur += wd + 2f + (k * 5 % 3)
+            k++
+        }
+    }
+
+    /** Уголки сканера - рамка прицела вокруг документа. */
+    fun scanCorners(p: Path, cx: Float, cy: Float, ww: Float, hh: Float, len: Float) {
+        val x0 = cx - ww / 2f - 3f
+        val x1 = cx + ww / 2f + 3f
+        val y0 = cy - hh / 2f - 3f
+        val y1 = cy + hh / 2f + 3f
+        corner(p, x0, y0, 1f, 1f, len)
+        corner(p, x1, y0, -1f, 1f, len)
+        corner(p, x0, y1, 1f, -1f, len)
+        corner(p, x1, y1, -1f, -1f, len)
+    }
+
+    private fun corner(p: Path, x: Float, y: Float, dx: Float, dy: Float, len: Float) {
+        p.moveTo(x, y + dy * len)
+        p.lineTo(x, y)
+        p.lineTo(x + dx * len, y)
+    }
+
     /** Шестерня: зубчатый контур + втулка. Угол задаётся снаружи -> крутится. */
     fun gear(p: Path, cx: Float, cy: Float, r: Float, teeth: Int, rotDeg: Float, w: Wobble) {
         val n = teeth * 4
@@ -502,6 +572,27 @@ class DoodleBorderDrawable(
 
 /** Общий помощник: одна строка на карточку в любом экране. */
 object DoodleUi {
+    /**
+     * Мягкая пульсация: элемент дышит прозрачностью, чтобы его нельзя было
+     * пропустить взглядом. Подписка живёт ровно столько, сколько View
+     * привязана к окну - отписка в onViewDetached, поэтому утечки нет и
+     * механизм не крутится ради мёртвой View.
+     */
+    fun pulse(v: View) {
+        val tick: () -> Unit = {
+            val k = 0.5f + 0.5f * kotlin.math.sin((BoilClock.phase * 2.2f).toDouble()).toFloat()
+            v.alpha = 0.70f + 0.30f * k
+        }
+        v.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(view: View) = BoilClock.register(tick)
+            override fun onViewDetachedFromWindow(view: View) {
+                BoilClock.unregister(tick)
+                view.alpha = 1f
+            }
+        })
+        if (v.isAttachedToWindow) BoilClock.register(tick)
+    }
+
     fun frame(v: View, strokeRes: Int, fillRes: Int, seed: Long) {
         val c = v.context
         v.background = DoodleBorderDrawable(
@@ -528,7 +619,7 @@ class DoodleSceneView @JvmOverloads constructor(
         const val NIGHT = 1        // Карточка ВЧЕРА: луна, звёзды (фиолет)
         const val DAY = 2          // Карточка СЕГОДНЯ: солнце, ёлки (бирюза)
         const val EXPEDITION = 3   // Экспедиция: лагерь, живой костёр (янтарь)
-        const val PROFILE = 4      // Профиль: стоянка, дым, поросль (бирюза)
+        const val PROFILE = 4      // Профиль: документ под сканером (фиолет+красный луч)
         const val STATS = 5        // Статистика: пики и река (синий)
         const val TIMELINE = 6     // Timeline: солнце, указатель, облака (янтарь)
         const val CALIBRATION = 7  // Калибровка: шестерни, песочные часы (фиолет)
@@ -560,6 +651,10 @@ class DoodleSceneView @JvmOverloads constructor(
     private val blue = ContextCompat.getColor(context, R.color.accent_blue)
     private val blueBr = ContextCompat.getColor(context, R.color.accent_blue_bright)
     private val gray = ContextCompat.getColor(context, R.color.axis_dim)
+    private val red = ContextCompat.getColor(context, R.color.accent_red)
+    private val beamPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND
+    }
     private val ember = 0xFF966E46.toInt()
 
     /**
@@ -603,7 +698,7 @@ class DoodleSceneView @JvmOverloads constructor(
             NIGHT -> drawNight(canvas, w, h, r)
             DAY -> drawDay(canvas, w, h, r)
             EXPEDITION -> drawCamp(canvas, w, h, r, amber, amberBr)
-            PROFILE -> drawCamp(canvas, w, h, r, teal, tealBr)
+            PROFILE -> drawPassport(canvas, w, h, r)
             STATS -> drawStats(canvas, w, h, r)
             TIMELINE -> drawTimeline(canvas, w, h, r)
             CALIBRATION -> drawCalibration(canvas, w, h, r)
@@ -712,6 +807,49 @@ class DoodleSceneView @JvmOverloads constructor(
         Doodle.line(trail, w * 0.74f, base - 2f * d, w * 0.80f, base + 2f * d, 1.2f, 6, r)
         c.drawPath(trail, stroke(tint, 1f))
         stars(c, tintBr, listOf(Triple(0.88f, 0.16f, 0.10f)), w, h, r)
+    }
+
+    /**
+     * Профиль = ДОКУМЕНТ ПОД СКАНЕРОМ. Экран, где хранятся личные данные,
+     * логично показать как паспорт: фото (нарочно неразборчивое - поверх
+     * идёт штриховка), строки данных, штрих-код. Красный луч идёт сверху
+     * вниз по петле и подсвечивает то, что пересекает.
+     */
+    private fun drawPassport(c: Canvas, w: Float, h: Float, r: Wobble) {
+        val cx = w * 0.72f
+        val cy = h * 0.50f
+        val dw = w * 0.44f
+        val dh = h * 0.76f
+
+        val doc = Path(); val photo = Path(); val bars = Path()
+        Doodle.passport(doc, photo, bars, cx, cy, dw, dh, r)
+        c.drawPath(doc, stroke(violet, 2f))
+        c.drawPath(photo, stroke(violetBr, 1.4f))
+        c.drawPath(bars, fill(violetBr, 150))
+
+        val corners = Path()
+        Doodle.scanCorners(corners, cx, cy, dw, dh, 10f * d)
+        c.drawPath(corners, stroke(red, 2f, 190))
+
+        // Луч сканера: идёт сверху вниз за 3 с, следом гаснущий шлейф.
+        val t = loop(3f, 0f)
+        val ly = cy - dh / 2f + dh * t
+        val x0 = cx - dw / 2f - 2f * d
+        val x1 = cx + dw / 2f + 2f * d
+        for (g in 3 downTo 1) {
+            beamPaint.color = red
+            beamPaint.alpha = 40 / g
+            beamPaint.strokeWidth = 1.5f * d
+            c.drawLine(x0, ly - g * 2.5f * d, x1, ly - g * 2.5f * d, beamPaint)
+        }
+        beamPaint.color = red
+        beamPaint.alpha = 230
+        beamPaint.strokeWidth = 2f * d
+        c.drawLine(x0, ly, x1, ly, beamPaint)
+
+        stars(c, blueBr, listOf(Triple(0.14f, 0.24f, 0.13f), Triple(0.30f, 0.72f, 0.09f)), w, h, r)
+        dotPaint.color = amberBr
+        c.drawCircle(w * 0.08f, h * 0.60f, 2f * d, dotPaint)
     }
 
     /** Статистика: острые пики и река - синий оттенок. */
