@@ -101,6 +101,11 @@ fun main(args: Array<String>) {
         var events = 0L; var days = 0L
         var weather = 0L; var ambient = 0L; var milestones = 0L
         var digests = 0L
+        var tracks = 0L
+        var badTrackNoSnow = 0
+        var badTrackInSnowfall = 0
+        var badBear = 0
+        var coverDaysSeen = 0L
         var stormDaysTotal = 0L
         var holes = 0
         var lies = 0
@@ -123,9 +128,19 @@ fun main(args: Array<String>) {
                 events++
                 when {
                     e.category == "weather" -> weather++
+                    e.category == "track" -> tracks++
                     e.key == "day_note" -> digests++
                     e.category == "ambient" -> ambient++
                     e.category == "milestone" -> milestones++
+                }
+                if (e.category == "track") {
+                    val cm = e.ctx["snowcm"] ?: 0
+                    val pr = e.ctx["precip"] ?: 0
+                    val wd = e.ctx["wind"] ?: 0
+                    val tt = e.ctx["t"] ?: 0
+                    if (cm < 2) badTrackNoSnow++
+                    if (pr >= 3 || wd == 3) badTrackInSnowfall++
+                    if (e.key == "track.bear" && tt <= -8) badBear++
                 }
                 if (e.key == "wx.snow_first") expFirstSnowEvent = true
                 perDay[e.tick] = (perDay[e.tick] ?: 0) + 1
@@ -168,7 +183,8 @@ fun main(args: Array<String>) {
 
         val perDayRate = events.toDouble() / days
         println("события/день = " + String.format("%.3f", perDayRate) +
-            "  (погода " + weather + " · сводки " + digests + " · зарисовки " + ambient + " · вехи " + milestones + ")")
+            "  (погода " + weather + " · сводки " + digests + " · зарисовки " + ambient +
+            " · вехи " + milestones + " · следы " + tracks + ")")
         println("бурь: " + String.format("%.1f", stormDaysTotal * 100.0 / days) + " проц. дней")
         println("температуры по сезонам (мин..макс): зима " + tempMin[0] + ".." + tempMax[0] +
             " · весна " + tempMin[1] + ".." + tempMax[1] +
@@ -183,7 +199,12 @@ fun main(args: Array<String>) {
         // событий-погоды (без сводок) — прежняя редкость, мир не сорит драмой
         val wxRate = weather.toDouble() / days
         check("rate.weather_events_rare", wxRate in 0.10..0.55, "" + wxRate)
-        check("rate.max_three_per_day", (perDayMax.values.maxOrNull() ?: 0) <= 3)
+        // веха + погода + заметка + зарисовка + след — потолок дня
+        check("rate.max_four_per_day", (perDayMax.values.maxOrNull() ?: 0) <= 5)
+        check("track.only_on_snow", badTrackNoSnow == 0, "" + badTrackNoSnow)
+        check("track.never_in_snowfall", badTrackInSnowfall == 0, "" + badTrackInSnowfall)
+        check("track.no_bear_in_hard_frost", badBear == 0, "" + badBear)
+        check("track.exists", tracks > 0, "" + tracks)
         check("corpus.no_holes", holes == 0)
         check("corpus.no_broken_conditions", corpus.problems().isEmpty(),
             corpus.problems().joinToString("; "))
@@ -309,6 +330,8 @@ fun main(args: Array<String>) {
             "wx.cold_snap", "wx.cool_down", "wx.hard_frost", "wx.thaw", "wx.heat",
             "wx.clear_streak", "wx.fog", "wx.wind_strong", "wx.snow_deep", "ambient", "day_note",
             "phase.winter_set", "phase.snow_gone", "phase.river_freeze", "phase.river_open",
+            "track.hare", "track.fox", "track.moose", "track.wolf", "track.sable",
+            "track.lynx", "track.wolverine", "track.grouse", "track.bear", "track.unknown",
             "final.snow_cover",
             "end.success", "end.voluntary",
             "final.summary", "final.first_snow", "final.storms",

@@ -28,8 +28,10 @@ data class WeatherState(
     val dryStreak: Int,        // подряд сухих дней
     // --- земля (только модель v2; в v1 остаются нулями) ---
     val front: Int = 0,        // 0 антициклон - 1 приближение - 2 прохождение - 3 тыл
-    val snowCm: Int = 0,       // глубина снежного покрова, см
+    val snowMm: Int = 0,       // покров в миллиметрах — истинный накопитель
+    val snowCm: Int = 0,       // он же в сантиметрах: то, что видит человек
     val riverIce: Int = 0,     // 0 открыта - 1 шуга/забереги - 2 ледостав
+    val snowAgeDays: Int = 0,  // сколько дней прошло с последнего снегопада
     val coldStreak: Int = 0,   // подряд дней с t <= -5
     val thawStreak: Int = 0,   // подряд дней с t >= +2
     val winterSet: Boolean = false, // зима фактически встала (снег лежит, мороз держится)
@@ -92,8 +94,10 @@ object WeatherModel {
     private const val ICE_EDGE_DAYS = 3
     private const val ICE_OPEN_DAYS = 4
     private const val SNOW_MAX_CM = 130
-    /** Оседание покрова за сутки: свежий снег быстро уплотняется. */
-    private const val SETTLE = 0.965
+    /** Испарение покрова в мороз: 2 мм в сутки. */
+    private const val SUBLIMATION_MM = 2
+    /** Оседание под собственным весом: 1/100 глубины в сутки. */
+    private const val SETTLE_DIV = 100
 
     /** Кусочно-линейная годовая кривая температуры. */
     fun baseTemp(yearDay: Int): Double {
@@ -143,6 +147,7 @@ object WeatherModel {
                 else -> { snow = 0; ice = 0; winter = false }
             }
         }
+        val snowMm = snow * 10
 
         return WeatherState(
             airMass = air, tempC = temp, cloud = cloud, wind = wind,
@@ -152,7 +157,9 @@ object WeatherModel {
             precipStreak = 0,
             dryStreak = 3,
             front = 0,
+            snowMm = snowMm,
             snowCm = snow,
+            snowAgeDays = if (snow > 0) 2 else 0,
             riverIce = ice,
             coldStreak = if (temp <= FROST_T) 1 else 0,
             thawStreak = if (temp >= THAW_T) 1 else 0,
@@ -296,23 +303,37 @@ object WeatherModel {
         val fog = rng.nextDouble() < minOf(fogP, FOG_CAP)
 
         // 9. ЗЕМЛЯ: снег ложится, тает, уплотняется.
-        val fresh = when (precip) {
-            4 -> 2 + rng.nextInt(5)   // 2..6 см за сутки снегопада
-            3 -> 1                    // мокрый снег ложится еле-еле
+        // Покров считается в МИЛЛИМЕТРАХ. В сантиметрах оседание застревало:
+        // 14 см * 0.965 = 13.5 -> округление возвращало те же 14, и снег
+        // «замерзал» на месте навсегда. Хуже того, оседание съедало по 2 см
+        // в сутки даже в тридцатиградусный мороз, где таять нечему.
+        var mm = prev.snowMm
+        mm += when (precip) {
+            4 -> 20 + rng.nextInt(41)  // 20..60 мм за сутки снегопада
+            3 -> 8                     // мокрый снег ложится еле-еле
             else -> { rng.nextDouble(); 0 }
         }
-        var snowD = prev.snowCm.toDouble()
-        // Оседание: свежий снег уплотняется под собственным весом. Без этого
-        // покров рос линейно и за зиму доходил до абсурдных двух метров.
-        snowD *= SETTLE
-        snowD += fresh
         if (temp > 0) {
-            // Таяние: солнце по градусам плюс дождь, который съедает снег быстрее.
-            var melt = temp * 1.5
-            if (precip == 1 || precip == 2) melt += 4.0
-            snowD -= melt
+            // Таяние: солнце по градусам плюс дождь, который съедает снег втрое быстрее.
+            var melt = temp * 15
+            if (precip == 1 || precip == 2) melt += 40
+            mm -= melt
+        } else {
+            // Мороз: покров не тает, но оседает под своим весом (1% в сутки)
+            // и понемногу испаряется. Приход снегопадов и этот сток дают
+            // равновесие на 60-90 см — столько и лежит в тайге к марту.
+            mm -= SUBLIMATION_MM + mm / SETTLE_DIV
         }
-        val snow = snowD.roundToInt().coerceIn(0, SNOW_MAX_CM)
+        mm = mm.coerceIn(0, SNOW_MAX_CM * 10)
+        val snow = mm / 10
+
+        // Возраст снега: сколько дней он лежит нетронутым. Это носитель
+        // информации — чем свежее покров, тем чётче на нём читается след.
+        val snowAge = when {
+            snow == 0 -> 0
+            precip >= 3 -> 0            // снегопад переписал страницу набело
+            else -> minOf(prev.snowAgeDays + 1, 99)
+        }
 
         val coldStreak = if (temp <= FROST_T) prev.coldStreak + 1 else 0
         val thawStreak = if (temp >= THAW_T) prev.thawStreak + 1 else 0
@@ -343,7 +364,9 @@ object WeatherModel {
             precipStreak = if (precip != 0) prev.precipStreak + 1 else 0,
             dryStreak = if (precip == 0) prev.dryStreak + 1 else 0,
             front = front,
+            snowMm = mm,
             snowCm = snow,
+            snowAgeDays = snowAge,
             riverIce = ice,
             coldStreak = coldStreak,
             thawStreak = thawStreak,

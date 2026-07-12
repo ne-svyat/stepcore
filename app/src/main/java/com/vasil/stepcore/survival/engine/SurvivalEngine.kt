@@ -173,6 +173,12 @@ class SurvivalEngine(
 
         val season = seasonOf(t)
         val dt = st.tempC - prev.tempC
+
+        // След бросается ПЕРВЫМ: остальные строки дня должны знать, был ли он.
+        // Иначе зарисовка «никто чужой по моему следу не прошёл» могла бы
+        // выйти в один день с волчьей цепочкой в двух шагах от лагеря.
+        val track = TrackModel.roll(rng, st, season)
+
         val ctx = mapOf(
             "day" to t,
             "t" to st.tempC,
@@ -184,8 +190,10 @@ class SurvivalEngine(
             "fog" to (if (st.fog) 1 else 0),
             "snowseen" to (if (st.snowSeen) 1 else 0),
             "snowcm" to st.snowCm,
+            "snowage" to st.snowAgeDays,
             "ice" to st.riverIce,
             "winter" to (if (st.winterSet) 1 else 0),
+            "track" to (if (track != null) 1 else 0),
         )
 
         if (t > 1 && seasonOf(t) != seasonOf(t - 1)) {
@@ -275,6 +283,17 @@ class SurvivalEngine(
             if (rng.nextDouble() < AMBIENT_P) {
                 fire("ambient", "ambient", rng.nextLong(), emptyMap(), ctx)
             }
+        }
+
+        // След — не погода и не быт: это первый признак того, что в тайге
+        // есть кто-то кроме тебя. Поэтому он идёт отдельной строкой и своей
+        // категорией, а не соревнуется с погодой за место в дне.
+        if (track != null) {
+            fire("track", "track." + track.species, rng.nextLong(), mapOf(
+                "temp" to fmtTemp(st.tempC),
+                "snow" to st.snowCm.toString(),
+                "age" to track.freshDays.toString(),
+            ), ctx)
         }
     }
 
