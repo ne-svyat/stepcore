@@ -157,7 +157,7 @@ class SurvivalRepo(private val context: Context) {
         val planReached = newTicksDone >= e.plannedDays
         val finishing = planReached || voluntary
 
-        val engine = SurvivalEngine(e.seed, e.startSeason, e.startOffset)
+        val engine = SurvivalEngine(e.seed, e.startSeason, e.startOffset, e.engineVersion)
         val now = System.currentTimeMillis()
         val fresh = ArrayList<ExpeditionEvent>()
         val summary = engine.run(e.ticksDone, newTicksDone) { ev ->
@@ -245,6 +245,13 @@ class SurvivalRepo(private val context: Context) {
             sb.append(' ')
             sb.append(corpus.render("final.storms", 0L,
                 mapOf("storms" to s.stormDays.toString())))
+        }
+        if (s.snowCoverDays > 0) {
+            sb.append(' ')
+            sb.append(corpus.render("final.snow_cover", 0L, mapOf(
+                "cover" to s.snowCoverDays.toString(),
+                "maxsnow" to s.maxSnowCm.toString(),
+            )))
         }
         return sb.toString()
     }

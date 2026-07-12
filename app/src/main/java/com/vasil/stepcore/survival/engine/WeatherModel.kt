@@ -3,35 +3,56 @@ package com.vasil.stepcore.survival.engine
 import kotlin.math.roundToInt
 
 /**
- * Погодное состояние одного дня мира. Полностью описывает то, что нужно
- * знать следующему дню (марковское свойство) и слою событий.
+ * Состояние мира за один день. Небо + ЗЕМЛЯ.
+ *
+ * До v103 существовало только небо: осадки сегодня, ветер сегодня. Земля
+ * не помнила ничего, поэтому снег мог «идти» и бесследно исчезать, а фраза
+ * «на свежем снегу ни одной отметины» могла выйти в сентябре после снега,
+ * стаявшего к обеду. Теперь снег ложится, лежит, тает и уплотняется, река
+ * замерзает и вскрывается, а зима наступает тогда, когда её видно глазами,
+ * а не когда так решил календарь.
+ *
+ * Марковское свойство сохранено: этих полей достаточно, чтобы посчитать
+ * следующий день. Ничего не сериализуется — мир пересчитывается из seed.
  */
 data class WeatherState(
-    val airMass: Double,       // медленная аномалия температуры, AR(1), -10..+10
+    val airMass: Double,       // медленная аномалия температуры, AR(1)
     val tempC: Int,            // итоговая дневная температура
     val cloud: Int,            // 0 ясно - 1 переменная - 2 пасмурно
     val wind: Int,             // 0 тихо - 1 ветрено - 2 сильный - 3 буря
     val precip: Int,           // 0 нет - 1 дождь - 2 ливень/гроза - 3 мокрый снег - 4 снег
     val fog: Boolean,          // утренний туман
-    val snowSeen: Boolean,     // экспедиция уже видела снег (для «первого снега»)
+    val snowSeen: Boolean,     // экспедиция уже видела снегопад
     val overcastStreak: Int,   // подряд пасмурных дней
     val precipStreak: Int,     // подряд дней с осадками
     val dryStreak: Int,        // подряд сухих дней
+    // --- земля (только модель v2; в v1 остаются нулями) ---
+    val front: Int = 0,        // 0 антициклон - 1 приближение - 2 прохождение - 3 тыл
+    val snowCm: Int = 0,       // глубина снежного покрова, см
+    val riverIce: Int = 0,     // 0 открыта - 1 шуга/забереги - 2 ледостав
+    val coldStreak: Int = 0,   // подряд дней с t <= -5
+    val thawStreak: Int = 0,   // подряд дней с t >= +2
+    val winterSet: Boolean = false, // зима фактически встала (снег лежит, мороз держится)
 )
 
 /**
  * Погодная модель Северной тайги (континентальный климат ~60 с.ш.).
  *
- * Устройство:
- * - годовая температурная кривая — кусочно-линейная по 8 якорям;
- * - поверх кривой живёт «воздушная масса» — авторегрессия AR(1),
- *   дающая многодневные волны холода и оттепелей вместо белого шума;
- * - облачность и ветер — марковские цепи с инерцией (погода не скачет);
- * - осадки выводятся из облачности, тип осадков — из температуры.
+ * Годовая кривая температуры и общая арифметика — общие для всех версий.
+ * Правила одного дня существуют в ДВУХ версиях:
  *
- * Порядок обращений к rng внутри step() ФИКСИРОВАН и является частью
- * контракта детерминизма: менять его можно только с ростом
- * SurvivalEngine.ENGINE_VERSION.
+ *  v1 — исходная: облачность и ветер как две независимые марковские цепи,
+ *       земли нет. Оставлена в коде навсегда: экспедиции, начатые до v103,
+ *       обязаны доигрываться по тем правилам, при которых начинались.
+ *       Версия записана в паспорте (Expedition.engineVersion).
+ *
+ *  v2 — фронтальная: у неба появляется скрытая причина — атмосферный фронт.
+ *       Из него выводятся И облачность, И ветер, И осадки, И температурный
+ *       сдвиг. Поэтому «ясная буря» перестаёт быть возможной: буря приходит
+ *       с фронтом, а фронт приносит облака. Плюс земля: снег, лёд, зима.
+ *
+ * Порядок обращений к rng внутри каждого step ФИКСИРОВАН и является частью
+ * контракта детерминизма: менять его можно только с ростом версии.
  */
 object WeatherModel {
 
@@ -40,31 +61,39 @@ object WeatherModel {
     // сезоны: 0 зима - 1 весна - 2 лето - 3 осень; день 0 года = начало зимы
 
     // Якоря годовой кривой (день года -> типичная дневная температура).
-    // Значения — сглаженный климат тайги ~60 с.ш.: минимум в середине зимы
-    // около -20, максимум в середине лета около +18.
     private val ANCHOR_DAY = intArrayOf(0, 45, 90, 135, 180, 225, 270, 315, 360)
     private val ANCHOR_TEMP = doubleArrayOf(-12.0, -20.0, -8.0, 4.0, 13.0, 18.0, 9.0, -2.0, -12.0)
 
-    // Воздушная масса: коэффициент инерции 0.85 даёт характерное время
-    // волны ~5-6 дней; сигма 2.2 с клампом -10..10 — реалистичный размах
-    // аномалий (мороз до -30 зимой случается, но редко).
     private const val AIR_PHI = 0.85
     private const val AIR_SIGMA = 2.2
     private const val AIR_CLAMP = 10.0
-    private const val DAY_NOISE = 1.2 // суточный шум поверх волны
+    private const val DAY_NOISE = 1.2
 
-    // Осадки: вероятности подобраны так, чтобы пасмурная полоса почти
-    // всегда приносила дождь/снег, а переменная облачность — изредка.
+    // --- v1: осадки из облачности ---
     private const val P_PRECIP_OVERCAST = 0.55
     private const val P_PRECIP_PARTLY = 0.15
-    private const val P_HEAVY = 0.25 // доля ливней среди осадков при пасмурности
+    private const val P_HEAVY = 0.25
 
-    // Туман: базовая вероятность + условия радиационного тумана
-    // (влажно после осадков, тихо, ясно, умеренная температура).
     private const val FOG_BASE = 0.05
     private const val FOG_AFTER_RAIN_BONUS = 0.20
     private const val FOG_AUTUMN_FACTOR = 1.7
     private const val FOG_CAP = 0.5
+
+    // --- v2: снег и лёд ---
+    /** Мороз считается «настоящим» с -5: с него начинается счёт морозных дней. */
+    private const val FROST_T = -5
+    /** Оттепель считается с +2: с неё начинается счёт дней таяния. */
+    private const val THAW_T = 2
+    /** Зима встала: покров не меньше 10 см и мороз держится 4 дня подряд. */
+    private const val WINTER_SNOW_CM = 10
+    private const val WINTER_COLD_DAYS = 4
+    /** Ледостав: 6 морозных дней подряд. Забереги: 3. Вскрытие: 4 дня оттепели. */
+    private const val ICE_FULL_DAYS = 6
+    private const val ICE_EDGE_DAYS = 3
+    private const val ICE_OPEN_DAYS = 4
+    private const val SNOW_MAX_CM = 130
+    /** Оседание покрова за сутки: свежий снег быстро уплотняется. */
+    private const val SETTLE = 0.965
 
     /** Кусочно-линейная годовая кривая температуры. */
     fun baseTemp(yearDay: Int): Double {
@@ -83,14 +112,16 @@ object WeatherModel {
         (((yearDay % YEAR_DAYS) + YEAR_DAYS) % YEAR_DAYS) / SEASON_DAYS
 
     /**
-     * Состояние «дня 0» — вечер прибытия в лагерь. Служит только опорой
-     * для диффов первого дня.
+     * Состояние «дня 0» — вечер прибытия в лагерь.
      *
      * snowSeen стартует истинным зимой и весной: там снегопад — норма,
-     * и текст «первый снег» был бы фальшью. Осенью и летом первый снег —
-     * настоящее событие.
+     * и текст «первый снег» был бы фальшью.
+     *
+     * Стартовый покров (только v2): зимой снег уже лежит, весной — оседает,
+     * осенью и летом земля голая. Иначе зимняя экспедиция начиналась бы
+     * в тайге без снега, что абсурдно.
      */
-    fun initial(rng: SplitMix64, yearDay0: Int, startSeason: Int): WeatherState {
+    fun initial(version: Int, rng: SplitMix64, yearDay0: Int, startSeason: Int): WeatherState {
         val air = (rng.nextGaussian() * 3.0).coerceIn(-8.0, 8.0)
         val temp = (baseTemp(yearDay0) + air).roundToInt()
         val cloudDraw = rng.nextDouble()
@@ -101,29 +132,50 @@ object WeatherModel {
             else -> 2
         }
         val wind = if (rng.nextDouble() < 0.6) 0 else 1
+
+        var snow = 0
+        var ice = 0
+        var winter = false
+        if (version >= 2) {
+            when (startSeason) {
+                0 -> { snow = 35 + rng.nextInt(30); ice = 2; winter = true }
+                1 -> { snow = 20 + rng.nextInt(20); ice = 2; winter = true }
+                else -> { snow = 0; ice = 0; winter = false }
+            }
+        }
+
         return WeatherState(
             airMass = air, tempC = temp, cloud = cloud, wind = wind,
             precip = 0, fog = false,
             snowSeen = startSeason == 0 || startSeason == 1,
             overcastStreak = if (cloud == 2) 1 else 0,
             precipStreak = 0,
-            dryStreak = 3, // чтобы осадки в первые же дни дали событие «начался дождь»
+            dryStreak = 3,
+            front = 0,
+            snowCm = snow,
+            riverIce = ice,
+            coldStreak = if (temp <= FROST_T) 1 else 0,
+            thawStreak = if (temp >= THAW_T) 1 else 0,
+            winterSet = winter,
         )
     }
 
-    /** Один день мира. Порядок обращений к rng фиксирован — см. контракт выше. */
-    fun step(prev: WeatherState, yearDay: Int, rng: SplitMix64): WeatherState {
+    /** Один день мира. Правила выбираются по версии, записанной в паспорте. */
+    fun step(version: Int, prev: WeatherState, yearDay: Int, rng: SplitMix64): WeatherState =
+        if (version >= 2) stepV2(prev, yearDay, rng) else stepV1(prev, yearDay, rng)
+
+    // =================================================================
+    //  v1 — заморожена. Правки запрещены: по ней доигрывают старые миры.
+    // =================================================================
+    private fun stepV1(prev: WeatherState, yearDay: Int, rng: SplitMix64): WeatherState {
         val season = seasonOf(yearDay)
 
-        // 1-2. воздушная масса и суточный шум
         val air = (AIR_PHI * prev.airMass + rng.nextGaussian() * AIR_SIGMA)
             .coerceIn(-AIR_CLAMP, AIR_CLAMP)
         val temp = (baseTemp(yearDay) + air + rng.nextGaussian() * DAY_NOISE).roundToInt()
 
-        // 3. облачность
-        val cloud = sampleCloud(prev.cloud, season, rng.nextDouble())
+        val cloud = sampleCloudV1(prev.cloud, season, rng.nextDouble())
 
-        // 4. осадки: тип по температуре — снег ниже -2, мокрый снег до +1
         val precip = when (cloud) {
             2 -> if (rng.nextDouble() < P_PRECIP_OVERCAST)
                 precipType(temp, heavy = rng.nextDouble() < P_HEAVY) else 0
@@ -132,11 +184,8 @@ object WeatherModel {
             else -> 0
         }
 
-        // 5. ветер
-        val wind = sampleWind(prev.wind, rng.nextDouble())
+        val wind = sampleWindV1(prev.wind, rng.nextDouble())
 
-        // 6. туман: радиационный — после вчерашних осадков, в тихую
-        //    малооблачную погоду при умеренной температуре
         var fogP = FOG_BASE
         if (prev.precip != 0 && wind <= 1 && cloud <= 1 && temp in -3..14) {
             fogP += FOG_AFTER_RAIN_BONUS
@@ -154,35 +203,18 @@ object WeatherModel {
         )
     }
 
-    private fun precipType(temp: Int, heavy: Boolean): Int = when {
-        temp <= -2 -> 4          // снег
-        temp <= 1 -> 3           // мокрый снег
-        heavy -> 2               // ливень (летом при тепле слой событий назовёт грозой)
-        else -> 1                // дождь
-    }
-
-    /**
-     * Марковская цепь облачности. Диагональ ~0.5-0.6 — полосы погоды
-     * длиной 2-4 дня. Осенью и зимой часть массы «ясно» уходит
-     * в «пасмурно» — сезонный перекос континентального климата.
-     */
-    private fun sampleCloud(from: Int, season: Int, draw: Double): Int {
+    private fun sampleCloudV1(from: Int, season: Int, draw: Double): Int {
         var pClear: Double; var pPartly: Double
         when (from) {
             0 -> { pClear = 0.55; pPartly = 0.30 }
             1 -> { pClear = 0.25; pPartly = 0.45 }
             else -> { pClear = 0.12; pPartly = 0.30 }
         }
-        if (season == 0 || season == 3) pClear -= 0.10 // остаток уходит в пасмурно
+        if (season == 0 || season == 3) pClear -= 0.10
         return if (draw < pClear) 0 else if (draw < pClear + pPartly) 1 else 2
     }
 
-    /**
-     * Марковская цепь ветра. Буря — редкое (доли процента стационарной
-     * вероятности из тихих состояний) и липкое (0.25 остаться) состояние:
-     * шторм длится день-два и утихает через «сильный ветер».
-     */
-    private fun sampleWind(from: Int, draw: Double): Int {
+    private fun sampleWindV1(from: Int, draw: Double): Int {
         val row = when (from) {
             0 -> doubleArrayOf(0.62, 0.30, 0.07, 0.01)
             1 -> doubleArrayOf(0.30, 0.48, 0.18, 0.04)
@@ -195,5 +227,179 @@ object WeatherModel {
             if (draw < acc) return i
         }
         return 3
+    }
+
+    // =================================================================
+    //  v2 — фронты и земля
+    // =================================================================
+
+    /**
+     * Порядок черпания случайности (контракт):
+     *   1 фронт · 2-3 воздушная масса и суточный шум · 4 облачность ·
+     *   5 осадки (наличие) · 6 осадки (сила) · 7 ветер · 8 туман ·
+     *   9 прирост снега
+     */
+    private fun stepV2(prev: WeatherState, yearDay: Int, rng: SplitMix64): WeatherState {
+        val season = seasonOf(yearDay)
+
+        // 1. Фронт — скрытая причина всей погоды дня.
+        val front = sampleFront(prev.front, rng.nextDouble())
+
+        // 2-3. Температура: климат + медленная волна + сдвиг от фронта.
+        //      Тёплый сектор перед фронтом теплее, тыл фронта холоднее —
+        //      отсюда естественные, а не выдуманные похолодания.
+        val frontShift = when (front) {
+            1 -> 1.5
+            2 -> 0.5
+            3 -> -2.5
+            else -> 0.0
+        }
+        val air = (AIR_PHI * prev.airMass + rng.nextGaussian() * AIR_SIGMA)
+            .coerceIn(-AIR_CLAMP, AIR_CLAMP)
+        val temp = (baseTemp(yearDay) + air + frontShift + rng.nextGaussian() * DAY_NOISE)
+            .roundToInt()
+
+        // 4. Облачность — следствие фронта, а не отдельная жизнь.
+        val cloud = sampleCloudV2(front, rng.nextDouble())
+
+        // 5-6. Осадки: вероятность от фронта, множитель от облачности.
+        val pBase = when (front) {
+            0 -> 0.03
+            1 -> 0.22
+            2 -> 0.68
+            else -> 0.25
+        }
+        val cloudFactor = when (cloud) {
+            0 -> 0.10
+            1 -> 0.55
+            else -> 1.0
+        }
+        val precip = if (rng.nextDouble() < pBase * cloudFactor) {
+            val heavy = rng.nextDouble() < (if (front == 2) 0.30 else 0.12)
+            precipType(temp, heavy)
+        } else {
+            rng.nextDouble() // холостой бросок: порядок rng не должен зависеть от ветки
+            0
+        }
+
+        // 7. Ветер — тоже следствие фронта. Буря без фронта невозможна.
+        val wind = sampleWindV2(front, rng.nextDouble())
+
+        // 8. Туман: радиационный (после осадков, в тихую погоду) —
+        //    или морозная дымка в сильный мороз при ясном небе.
+        var fogP = FOG_BASE
+        if (prev.precip != 0 && wind <= 1 && cloud <= 1 && temp in -3..14) {
+            fogP += FOG_AFTER_RAIN_BONUS
+        }
+        if (temp <= -20 && wind == 0) fogP += 0.15
+        if (season == 3) fogP *= FOG_AUTUMN_FACTOR
+        val fog = rng.nextDouble() < minOf(fogP, FOG_CAP)
+
+        // 9. ЗЕМЛЯ: снег ложится, тает, уплотняется.
+        val fresh = when (precip) {
+            4 -> 2 + rng.nextInt(5)   // 2..6 см за сутки снегопада
+            3 -> 1                    // мокрый снег ложится еле-еле
+            else -> { rng.nextDouble(); 0 }
+        }
+        var snowD = prev.snowCm.toDouble()
+        // Оседание: свежий снег уплотняется под собственным весом. Без этого
+        // покров рос линейно и за зиму доходил до абсурдных двух метров.
+        snowD *= SETTLE
+        snowD += fresh
+        if (temp > 0) {
+            // Таяние: солнце по градусам плюс дождь, который съедает снег быстрее.
+            var melt = temp * 1.5
+            if (precip == 1 || precip == 2) melt += 4.0
+            snowD -= melt
+        }
+        val snow = snowD.roundToInt().coerceIn(0, SNOW_MAX_CM)
+
+        val coldStreak = if (temp <= FROST_T) prev.coldStreak + 1 else 0
+        val thawStreak = if (temp >= THAW_T) prev.thawStreak + 1 else 0
+
+        // Лёд на реке. Вскрытие важнее замерзания: весна сильнее зимы.
+        val ice = when {
+            prev.riverIce > 0 && thawStreak >= ICE_OPEN_DAYS -> 0
+            coldStreak >= ICE_FULL_DAYS -> 2
+            coldStreak >= ICE_EDGE_DAYS -> maxOf(prev.riverIce, 1)
+            else -> prev.riverIce
+        }
+
+        // Фенологическая зима: не по календарю, а по факту — покров лежит
+        // и мороз держится. Кончается зима, когда снег сошёл полностью.
+        // Зима — состояние ЗЕМЛИ, а не календаря и не настроения: голая земля
+        // означает, что зимы нет, чем бы ни был занят календарь.
+        val winter = when {
+            snow == 0 -> false
+            snow >= WINTER_SNOW_CM && coldStreak >= WINTER_COLD_DAYS -> true
+            else -> prev.winterSet
+        }
+
+        return WeatherState(
+            airMass = air, tempC = temp, cloud = cloud, wind = wind,
+            precip = precip, fog = fog,
+            snowSeen = prev.snowSeen || precip >= 3,
+            overcastStreak = if (cloud == 2) prev.overcastStreak + 1 else 0,
+            precipStreak = if (precip != 0) prev.precipStreak + 1 else 0,
+            dryStreak = if (precip == 0) prev.dryStreak + 1 else 0,
+            front = front,
+            snowCm = snow,
+            riverIce = ice,
+            coldStreak = coldStreak,
+            thawStreak = thawStreak,
+            winterSet = winter,
+        )
+    }
+
+    /**
+     * Марковская цепь фронта. Антициклон липкий (0.70) — отсюда длинные
+     * ясные полосы. Прохождение фронта короткое и почти всегда сменяется
+     * тылом: погода после фронта не «щёлкает» обратно в штиль, а выдувается.
+     */
+    private fun sampleFront(from: Int, draw: Double): Int {
+        val row = when (from) {
+            0 -> doubleArrayOf(0.70, 0.24, 0.05, 0.01)
+            1 -> doubleArrayOf(0.10, 0.35, 0.50, 0.05)
+            2 -> doubleArrayOf(0.04, 0.11, 0.45, 0.40)
+            else -> doubleArrayOf(0.42, 0.23, 0.10, 0.25)
+        }
+        return pick(row, draw)
+    }
+
+    private fun sampleCloudV2(front: Int, draw: Double): Int {
+        val row = when (front) {
+            0 -> doubleArrayOf(0.70, 0.25, 0.05)
+            1 -> doubleArrayOf(0.15, 0.55, 0.30)
+            2 -> doubleArrayOf(0.02, 0.18, 0.80)
+            else -> doubleArrayOf(0.35, 0.45, 0.20)
+        }
+        return pick(row, draw)
+    }
+
+    private fun sampleWindV2(front: Int, draw: Double): Int {
+        val row = when (front) {
+            0 -> doubleArrayOf(0.68, 0.29, 0.03, 0.00)
+            1 -> doubleArrayOf(0.26, 0.52, 0.20, 0.02)
+            2 -> doubleArrayOf(0.10, 0.37, 0.46, 0.07)
+            else -> doubleArrayOf(0.22, 0.47, 0.29, 0.02)
+        }
+        return pick(row, draw)
+    }
+
+    private fun pick(row: DoubleArray, draw: Double): Int {
+        var acc = 0.0
+        for (i in row.indices) {
+            acc += row[i]
+            if (draw < acc) return i
+        }
+        return row.size - 1
+    }
+
+    /** Тип осадков по температуре: снег ниже -2, мокрый снег до +1. */
+    private fun precipType(temp: Int, heavy: Boolean): Int = when {
+        temp <= -2 -> 4
+        temp <= 1 -> 3
+        heavy -> 2
+        else -> 1
     }
 }

@@ -30,7 +30,9 @@ data class ExpeditionSummary(
     val fogMornings: Int,
     val minTemp: Int,
     val maxTemp: Int,
-    val firstSnowDay: Int, // -1, если снега не было или он был с самого старта
+    val firstSnowDay: Int,  // -1, если снега не было или он был с самого старта
+    val snowCoverDays: Int, // дней, когда снег ЛЕЖАЛ (не путать со снежными днями)
+    val maxSnowCm: Int,     // наибольшая глубина покрова
 )
 
 /**
@@ -46,6 +48,7 @@ class SurvivalEngine(
     private val seed: Long,
     private val startSeason: Int, // 0 зима - 1 весна - 2 лето - 3 осень
     private val startOffset: Int, // день внутри стартового сезона
+    private val version: Int = ENGINE_VERSION, // правила мира из паспорта экспедиции
 ) {
 
     /** День года для тика (тик 1 = первый полный день экспедиции). */
@@ -65,11 +68,12 @@ class SurvivalEngine(
      */
     fun run(fromExclusive: Int, toInclusive: Int, sink: (WorldEvent) -> Unit): ExpeditionSummary {
         var state = WeatherModel.initial(
-            SplitMix64.forTick(seed, 0), yearDay(0), startSeason
+            version, SplitMix64.forTick(seed, 0), yearDay(0), startSeason
         )
         var rain = 0; var snow = 0; var storm = 0; var fogs = 0
         var minT = Int.MAX_VALUE; var maxT = Int.MIN_VALUE
         var firstSnow = -1
+        var coverDays = 0; var maxSnow = 0
         // Счётчик срабатываний ключей ведётся по ВСЕМ тикам, а не только по
         // выдаваемым: иначе догон кусками сдвигал бы выбор вариантов.
         val seen = HashMap<String, Int>()
@@ -77,7 +81,7 @@ class SurvivalEngine(
         for (t in 1..toInclusive) {
             val rng = SplitMix64.forTick(seed, t)
             val prev = state
-            state = WeatherModel.step(prev, yearDay(t), rng)
+            state = WeatherModel.step(version, prev, yearDay(t), rng)
 
             if (state.precip == 1 || state.precip == 2) rain++
             if (state.precip >= 3) snow++
@@ -86,6 +90,8 @@ class SurvivalEngine(
             if (state.tempC < minT) minT = state.tempC
             if (state.tempC > maxT) maxT = state.tempC
             if (firstSnow < 0 && !prev.snowSeen && state.snowSeen) firstSnow = t
+            if (state.snowCm > 0) coverDays++
+            if (state.snowCm > maxSnow) maxSnow = state.snowCm
 
             emit(t, prev, state, rng, seen, t > fromExclusive, sink)
         }
@@ -97,6 +103,8 @@ class SurvivalEngine(
             minTemp = if (d == 0) 0 else minT,
             maxTemp = if (d == 0) 0 else maxT,
             firstSnowDay = firstSnow,
+            snowCoverDays = coverDays,
+            maxSnowCm = maxSnow,
         )
     }
 
@@ -137,10 +145,27 @@ class SurvivalEngine(
             "precip" to st.precip,
             "fog" to (if (st.fog) 1 else 0),
             "snowseen" to (if (st.snowSeen) 1 else 0),
+            "snowcm" to st.snowCm,
+            "ice" to st.riverIce,
+            "winter" to (if (st.winterSet) 1 else 0),
         )
 
         if (t > 1 && seasonOf(t) != seasonOf(t - 1)) {
             fire("milestone", "season.to_" + SEASON_EN[season], rng.nextLong(), emptyMap(), ctx)
+        }
+
+        // Вехи ЗЕМЛИ. Это события мира, а не календаря: зима наступает,
+        // когда снег лежит и мороз держится, а не когда так решил номер дня.
+        val phase: String? = when {
+            !prev.winterSet && st.winterSet -> "phase.winter_set"
+            prev.snowCm >= 5 && st.snowCm == 0 -> "phase.snow_gone"
+            prev.riverIce < 2 && st.riverIce == 2 -> "phase.river_freeze"
+            prev.riverIce > 0 && st.riverIce == 0 -> "phase.river_open"
+            else -> null
+        }
+        if (phase != null) {
+            fire("milestone", phase, rng.nextLong(),
+                mapOf("temp" to fmtTemp(st.tempC), "snow" to st.snowCm.toString()), ctx)
         }
 
         val blizzardNow = st.precip == 4 && st.wind >= 2
@@ -178,6 +203,9 @@ class SurvivalEngine(
             st.snowSeen && st.tempC >= 1 && prev.tempC < 0 -> "wx.thaw"
             st.tempC >= 27 && prev.tempC < 27 -> "wx.heat"
 
+            // --- земля ---
+            st.snowCm >= 40 && prev.snowCm < 40 -> "wx.snow_deep"
+
             // --- небо ---
             st.cloud == 0 && prev.overcastStreak >= 4 -> "wx.clear_streak"
             st.fog && !prev.fog -> "wx.fog"
@@ -189,7 +217,10 @@ class SurvivalEngine(
         }
 
         if (key != null) {
-            fire("weather", key, rng.nextLong(), mapOf("temp" to fmtTemp(st.tempC)), ctx)
+            fire("weather", key, rng.nextLong(), mapOf(
+                "temp" to fmtTemp(st.tempC),
+                "snow" to st.snowCm.toString(),
+            ), ctx)
         } else {
             // Тихий день: сводка наблюдательной сети из ЖИВЫХ данных.
             // Формулировки «день спокойный» отфильтрует корпус: они помечены
@@ -198,6 +229,7 @@ class SurvivalEngine(
                 "sky" to skyWord(st.cloud, st.fog),
                 "wind" to windWord(st.wind),
                 "temp" to fmtTemp(st.tempC),
+                "snow" to st.snowCm.toString(),
             ), ctx)
             // Редкая бытовая зарисовка ПОВЕРХ сводки — приправа, не замена.
             if (rng.nextDouble() < AMBIENT_P) {
@@ -208,11 +240,14 @@ class SurvivalEngine(
 
     companion object {
         /**
-         * Версия правил МИРА (генерация погоды). v102 меняет только выбор
-         * и формулировку событий, сам мир не тронут — версия остаётся 1,
-         * активные экспедиции продолжаются без разрыва.
+         * Версия правил МИРА. v103 вводит фронты и землю (снежный покров,
+         * лёд, фенологическую зиму) — это другой мир, поэтому версия 2.
+         *
+         * Экспедиции, начатые на версии 1, доигрываются по правилам версии 1:
+         * номер версии лежит в их паспорте, WeatherModel хранит обе ветки.
+         * Архив остаётся честным — он прожит тем миром, в котором начинался.
          */
-        const val ENGINE_VERSION = 1
+        const val ENGINE_VERSION = 2
 
         /**
          * Вероятность бытовой зарисовки в тихий день. 0.18 подобрано

@@ -47,8 +47,14 @@ private fun physicalLie(txt: String, ctx: Map<String, Int>): String? {
     if (low.contains("мороз") && t > 0) return "мороз при " + t
     if (low.contains("иней") && t > 0) return "иней при " + t
     if (RE_ROSA.containsMatchIn(low) && t < 0) return "роса при " + t
+    val cm = z(ctx, "snowcm")
     if (snowWord && snow == 0) return "снег без снега"
-    if (RE_NAST.containsMatchIn(low) && snow == 0) return "наст без снега"
+    if (RE_NAST.containsMatchIn(low) && cm == 0) return "наст без покрова"
+    if (low.contains("снегоступ") && cm == 0) return "снегоступы без покрова"
+    if (low.contains("покров") && cm == 0) return "покров без покрова"
+    if ((low.contains("ледостав") || low.contains("подо льдом") || low.contains("по льду")) &&
+        z(ctx, "ice") < 2) return "лёд без ледостава"
+    if (low.contains("шуга") && z(ctx, "ice") != 1) return "шуга без шуги"
     if ((low.contains("метел") || low.contains("метёт")) && snow == 0) return "метель без снега"
     if ((low.contains("жара") || low.contains("жарк")) && t < 25) return "жара при " + t
     if (low.contains("комар") && t < 8) return "комары при " + t
@@ -67,21 +73,21 @@ fun main(args: Array<String>) {
     // --- 1. Детерминизм: два прогона одного seed идентичны ---
     run {
         val a = ArrayList<String>(); val b = ArrayList<String>()
-        SurvivalEngine(42L, 3, 30).run(0, 100) { a.add(sig(it)) }
-        SurvivalEngine(42L, 3, 30).run(0, 100) { b.add(sig(it)) }
+        SurvivalEngine(42L, 3, 30, 2).run(0, 100) { a.add(sig(it)) }
+        SurvivalEngine(42L, 3, 30, 2).run(0, 100) { b.add(sig(it)) }
         check("determinism.same_seed", a == b)
         val c = ArrayList<String>()
-        SurvivalEngine(43L, 3, 30).run(0, 100) { c.add(sig(it)) }
+        SurvivalEngine(43L, 3, 30, 2).run(0, 100) { c.add(sig(it)) }
         check("determinism.diff_seed_diff_world", a != c)
     }
 
     // --- 2. Инвариантность партий: 1x100 == куски произвольной нарезки ---
     run {
         val whole = ArrayList<String>()
-        SurvivalEngine(777L, 2, 25).run(0, 100) { whole.add(sig(it)) }
+        SurvivalEngine(777L, 2, 25, 2).run(0, 100) { whole.add(sig(it)) }
         val cuts = listOf(0, 1, 7, 8, 37, 64, 99, 100)
         val chunked = ArrayList<String>()
-        val eng = SurvivalEngine(777L, 2, 25)
+        val eng = SurvivalEngine(777L, 2, 25, 2)
         for (i in 1 until cuts.size) {
             eng.run(cuts[i - 1], cuts[i]) { chunked.add(sig(it)) }
         }
@@ -107,7 +113,7 @@ fun main(args: Array<String>) {
         for (i in 0 until 2000) {
             val season = i % 4
             val seed = 100000L + i * 31L
-            val eng = SurvivalEngine(seed, season, SurvivalEngine.startOffsetFrom(seed))
+            val eng = SurvivalEngine(seed, season, SurvivalEngine.startOffsetFrom(seed), 2)
             var expFirstSnowEvent = false
             val perDay = HashMap<Int, Int>()
             val wxTicks = HashSet<Int>()
@@ -189,6 +195,54 @@ fun main(args: Array<String>) {
         check("storm.rare", stormDaysTotal.toDouble() / days in 0.005..0.10)
     }
 
+    // --- 3b. ЗЕМЛЯ: снег не берётся из воздуха и не лежит в жару ---
+    run {
+        var badGrowth = 0; var badSummerSnow = 0; var winterNoSnow = 0
+        var maxCm = 0; var coverSeen = 0
+        for (i in 0 until 500) {
+            val season = i % 4
+            val seed = 900000L + i * 17L
+            val eng = SurvivalEngine(seed, season, SurvivalEngine.startOffsetFrom(seed), 2)
+            var prevCm = -1
+            var prevCtx: Map<String, Int> = emptyMap()
+            eng.run(0, 120) { e ->
+                val cm = e.ctx["snowcm"] ?: 0
+                val pr = e.ctx["precip"] ?: 0
+                val t = e.ctx["t"] ?: 0
+                if (prevCm >= 0 && cm > prevCm && pr < 3) badGrowth++
+                if (cm > maxCm) maxCm = cm
+                if (cm > 0) coverSeen++
+                // зима "встала" — значит покров есть
+                if ((e.ctx["winter"] ?: 0) == 1 && cm == 0 && (prevCtx["winter"] ?: 0) == 1) winterNoSnow++
+                // снег не может лежать при устойчивой жаре
+                if (cm > 0 && t >= 20) badSummerSnow++
+                prevCm = cm
+                prevCtx = e.ctx
+            }
+        }
+        println("земля: макс. покров " + maxCm + " см · дней с покровом " + coverSeen)
+        check("ground.no_snow_from_nothing", badGrowth == 0, "" + badGrowth)
+        check("ground.no_snow_in_heat", badSummerSnow == 0, "" + badSummerSnow)
+        check("ground.winter_implies_snow", winterNoSnow == 0, "" + winterNoSnow)
+        check("ground.snow_accumulates", maxCm in 20..180, "" + maxCm)
+    }
+
+    // --- 3c. Версия 1 жива: старые экспедиции доигрываются старым миром ---
+    run {
+        val a = ArrayList<String>(); val b = ArrayList<String>()
+        SurvivalEngine(555L, 3, 30, 1).run(0, 80) { a.add(sig(it)) }
+        SurvivalEngine(555L, 3, 30, 1).run(0, 80) { b.add(sig(it)) }
+        check("v1.determinism", a == b)
+        val v2 = ArrayList<String>()
+        SurvivalEngine(555L, 3, 30, 2).run(0, 80) { v2.add(sig(it)) }
+        check("v1.differs_from_v2", a != v2)
+        var holes = 0
+        SurvivalEngine(555L, 3, 30, 1).run(0, 80) { e ->
+            if (corpus.renderOrNull(e.key, e.roll, e.params, e.ctx, e.nth) == null) holes++
+        }
+        check("v1.no_holes_in_new_corpus", holes == 0, "" + holes)
+    }
+
     // --- 4. StepLedger: крайние случаи ---
     run {
         val totals = mapOf("2026-07-08" to 9000, "2026-07-09" to 4000, "2026-07-10" to 12000)
@@ -247,7 +301,9 @@ fun main(args: Array<String>) {
             "wx.blizzard", "wx.blizzard_hold", "wx.storm", "wx.storm_hold",
             "wx.rain_hold", "wx.snow_hold", "wx.gloom_hold",
             "wx.cold_snap", "wx.cool_down", "wx.hard_frost", "wx.thaw", "wx.heat",
-            "wx.clear_streak", "wx.fog", "wx.wind_strong", "ambient",
+            "wx.clear_streak", "wx.fog", "wx.wind_strong", "wx.snow_deep", "ambient",
+            "phase.winter_set", "phase.snow_gone", "phase.river_freeze", "phase.river_open",
+            "final.snow_cover",
             "digest",
             "end.success", "end.voluntary",
             "final.summary", "final.first_snow", "final.storms",
