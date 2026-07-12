@@ -25,6 +25,42 @@ private fun check(name: String, ok: Boolean, detail: String = "") {
 
 private fun sig(e: WorldEvent) = "" + e.tick + "|" + e.category + "|" + e.key + "|" + e.roll
 
+private fun z(ctx: Map<String, Int>, k: String): Int = ctx[k] ?: 0
+
+/**
+ * Детектор физической лжи. Слово из левой колонки не имеет права попасть
+ * в журнал, если условие справа не выполнено. Именно этот класс багов
+ * дал в реальном журнале строку «Мороз окреп: +18°».
+ *
+ * Границы слов обязательны: подстрочный поиск ловил «НАСТоящий шторм»
+ * как наст. Ложное срабатывание детектора хуже отсутствия детектора —
+ * оно приучает игнорировать его вывод.
+ */
+private val RE_NAST = Regex("(?<![А-Яа-яЁё])наст[аеоуы]?(?![А-Яа-яЁё])")
+private val RE_ROSA = Regex("(?<![А-Яа-яЁё])рос[аеу](?![А-Яа-яЁё])")
+
+private fun physicalLie(txt: String, ctx: Map<String, Int>): String? {
+    val low = txt.lowercase()
+    val t = z(ctx, "t")
+    val snow = z(ctx, "snowseen")
+    val snowWord = low.contains("снег") || low.contains("снеж")
+    if (low.contains("мороз") && t > 0) return "мороз при " + t
+    if (low.contains("иней") && t > 0) return "иней при " + t
+    if (RE_ROSA.containsMatchIn(low) && t < 0) return "роса при " + t
+    if (snowWord && snow == 0) return "снег без снега"
+    if (RE_NAST.containsMatchIn(low) && snow == 0) return "наст без снега"
+    if ((low.contains("метел") || low.contains("метёт")) && snow == 0) return "метель без снега"
+    if ((low.contains("жара") || low.contains("жарк")) && t < 25) return "жара при " + t
+    if (low.contains("комар") && t < 8) return "комары при " + t
+    return null
+}
+
+/** Сводка не имеет права называть день спокойным, если он не спокоен. */
+private fun claimsCalm(txt: String): Boolean {
+    val low = txt.lowercase()
+    return low.contains("спокойн") || low.contains("без происшествий") || low.contains("тихо и ясно")
+}
+
 fun main(args: Array<String>) {
     val corpus = Corpus(File(args[0]).readText())
 
@@ -60,6 +96,8 @@ fun main(args: Array<String>) {
         var digests = 0L
         var stormDaysTotal = 0L
         var holes = 0
+        var lies = 0
+        var mutedStorms = 0
         val perDayMax = HashMap<Int, Int>()
         var autumnFirstSnow = 0; var autumnRuns = 0
         var winterFirstSnowLeak = 0
@@ -72,6 +110,8 @@ fun main(args: Array<String>) {
             val eng = SurvivalEngine(seed, season, SurvivalEngine.startOffsetFrom(seed))
             var expFirstSnowEvent = false
             val perDay = HashMap<Int, Int>()
+            val wxTicks = HashSet<Int>()
+            val stormTicks = HashSet<Int>()
             val summary = eng.run(0, 100) { e ->
                 events++
                 when (e.category) {
@@ -82,11 +122,29 @@ fun main(args: Array<String>) {
                 }
                 if (e.key == "wx.snow_first") expFirstSnowEvent = true
                 perDay[e.tick] = (perDay[e.tick] ?: 0) + 1
-                val txt = corpus.render(e.key, e.roll, e.params)
-                if (txt.startsWith("[")) { holes++; println("  дыра корпуса: " + e.key) }
-                if (txt.contains("{")) { holes++; println("  сирота-плейсхолдер: " + txt) }
+                val txt = corpus.renderOrNull(e.key, e.roll, e.params, e.ctx)
+                if (txt == null) {
+                    holes++
+                    println("  нет подходящего варианта: " + e.key + " ctx=" + e.ctx)
+                } else {
+                    if (txt.startsWith("[")) { holes++; println("  дыра корпуса: " + e.key) }
+                    if (txt.contains("{")) { holes++; println("  сирота-плейсхолдер: " + txt) }
+                    val lie = physicalLie(txt, e.ctx)
+                    if (lie != null) { lies++; println("  ФИЗИЧЕСКАЯ ЛОЖЬ [" + lie + "] " + e.key + " ctx=" + e.ctx + " :: " + txt) }
+                    if (e.category == "digest" && claimsCalm(txt) &&
+                        !(z(e.ctx, "wind") <= 1 && z(e.ctx, "precip") == 0 && z(e.ctx, "fog") == 0)) {
+                        lies++
+                        println("  ЛОЖНОЕ СПОКОЙСТВИЕ ctx=" + e.ctx + " :: " + txt)
+                    }
+                }
+                if (e.category == "weather") wxTicks.add(e.tick)
+                if (z(e.ctx, "wind") == 3) stormTicks.add(e.tick)
+                if (z(e.ctx, "precip") == 4 && z(e.ctx, "wind") >= 2) stormTicks.add(e.tick)
             }
             days += 100
+            // каждый день бури/метели ОБЯЗАН иметь погодное событие:
+            // «второй день бури» больше не проваливается в сводку тихого дня
+            for (tk in stormTicks) if (!wxTicks.contains(tk)) mutedStorms++
             stormDaysTotal += summary.stormDays
             if (tempMin[season] > summary.minTemp) tempMin[season] = summary.minTemp
             if (tempMax[season] < summary.maxTemp) tempMax[season] = summary.maxTemp
@@ -115,6 +173,10 @@ fun main(args: Array<String>) {
         check("rate.weather_events_rare", wxRate in 0.10..0.55, "" + wxRate)
         check("rate.max_three_per_day", (perDayMax.values.maxOrNull() ?: 0) <= 3)
         check("corpus.no_holes", holes == 0)
+        check("corpus.no_broken_conditions", corpus.problems().isEmpty(),
+            corpus.problems().joinToString("; "))
+        check("text.no_physical_lies", lies == 0, "" + lies)
+        check("text.storm_never_muted", mutedStorms == 0, "" + mutedStorms)
         // границы учитывают дрейф сезона: старт зимой за 100 дней доходит
         // до середины весны (до ~+20), старт летом — до осенних холодов (~-18)
         check("temp.winter_sane", tempMin[0] >= -45 && tempMax[0] <= 25,
@@ -182,7 +244,9 @@ fun main(args: Array<String>) {
             "season.to_winter", "season.to_spring", "season.to_summer", "season.to_autumn",
             "wx.rain_start", "wx.rain_stop", "wx.heavy_rain", "wx.thunder",
             "wx.sleet_start", "wx.snow_first", "wx.snow_start", "wx.snow_stop",
-            "wx.blizzard", "wx.storm", "wx.cold_snap", "wx.thaw", "wx.heat",
+            "wx.blizzard", "wx.blizzard_hold", "wx.storm", "wx.storm_hold",
+            "wx.rain_hold", "wx.snow_hold", "wx.gloom_hold",
+            "wx.cold_snap", "wx.cool_down", "wx.hard_frost", "wx.thaw", "wx.heat",
             "wx.clear_streak", "wx.fog", "wx.wind_strong", "ambient",
             "digest",
             "end.success", "end.voluntary",

@@ -9,6 +9,7 @@ import com.vasil.stepcore.survival.engine.ExpeditionSummary
 import com.vasil.stepcore.survival.engine.SplitMix64
 import com.vasil.stepcore.survival.engine.StepLedger
 import com.vasil.stepcore.survival.engine.SurvivalEngine
+import com.vasil.stepcore.survival.engine.WorldEvent
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.time.LocalDate
@@ -160,11 +161,14 @@ class SurvivalRepo(private val context: Context) {
         val now = System.currentTimeMillis()
         val fresh = ArrayList<ExpeditionEvent>()
         val summary = engine.run(e.ticksDone, newTicksDone) { ev ->
-            fresh.add(ExpeditionEvent(
-                expeditionId = e.id, tick = ev.tick, realTimeMs = now,
-                category = ev.category,
-                text = corpus.render(ev.key, ev.roll, ev.params),
-            ))
+            val text = renderEvent(ev)
+            if (text != null) {
+                fresh.add(ExpeditionEvent(
+                    expeditionId = e.id, tick = ev.tick, realTimeMs = now,
+                    category = ev.category,
+                    text = text,
+                ))
+            }
         }
 
         if (finishing) {
@@ -209,6 +213,17 @@ class SurvivalRepo(private val context: Context) {
         }
 
         return SyncOutcome(e.id, mint, res.consumedSteps, finishing)
+    }
+
+    /**
+     * Рендер события с контекстом дня.
+     * - ключа нет в корпусе -> громкая дыра "[ключ]" в журнале;
+     * - ключ есть, но ни один вариант не допустим в этот день -> строка
+     *   не печатается вовсе. Молчание честнее физической лжи.
+     */
+    private fun renderEvent(ev: WorldEvent): String? {
+        if (!corpus.has(ev.key)) return "[" + ev.key + "]"
+        return corpus.renderOrNull(ev.key, ev.roll, ev.params, ev.ctx, ev.nth)
     }
 
     private fun finalText(s: ExpeditionSummary): String {
