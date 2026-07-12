@@ -42,7 +42,7 @@ object TrackModel {
      * обращений к случайности зависел бы от погоды, и один и тот же тик
      * давал бы разные тексты при пересчёте мира кусками.
      */
-    fun roll(rng: SplitMix64, st: WeatherState, season: Int): Track? {
+    fun roll(rng: SplitMix64, st: WeatherState, season: Int, wolvesNearKm: Double = 99.0): Track? {
         val draw = rng.nextDouble()
         val pick = rng.nextDouble()
 
@@ -56,7 +56,11 @@ object TrackModel {
         // Сильный ветер портит старые следы: остаются только вчерашние.
         if (st.wind == 2 && st.snowAgeDays > 2) return null
 
-        if (draw >= P_BASE) return null
+        // Волки рядом — мелочь уходит. Это не поэзия, это то, как выглядит
+        // лес под стаей: заячьих следов просто нет, и тишина сама становится
+        // информацией.
+        val p = if (wolvesNearKm < 2.5) P_BASE * 0.35 else P_BASE
+        if (draw >= p) return null
 
         val species = pickSpecies(pick, st, season)
         return Track(species, st.snowAgeDays)
@@ -75,26 +79,20 @@ object TrackModel {
      */
     private fun pickSpecies(draw: Double, st: WeatherState, season: Int): String {
         val deep = st.snowCm >= 40
-        // Медведь ложится по холоду и снегу, а встаёт по теплу — не по дате.
-        // Весенний след при -10 был бы ровно той ложью, ради которой
-        // и заведён физический слой: календарь говорит «весна», зверь спит.
-        val bearAwake = (season == 3 && st.tempC > -8 && st.snowCm < 20) ||
-            (season == 1 && st.tempC > -5 && st.snowCm < 30)
 
+        // ВАЖНО: здесь остались только ФОНОВЫЕ звери. Волк, лось, медведь,
+        // рысь и росомаха стали агентами (FaunaModel): их след теперь значит,
+        // что зверь действительно был рядом, а не что так лёг кубик.
+        // Оставить их и тут значило бы врать дважды.
         val names = ArrayList<String>()
         val weights = ArrayList<Double>()
         fun add(name: String, w: Double) { if (w > 0.0) { names.add(name); weights.add(w) } }
 
-        add("hare", if (deep) 22.0 else 30.0)      // заяц — самый частый след
-        add("fox", if (deep) 10.0 else 18.0)       // лиса мышкует по мелкому снегу
-        add("moose", if (deep) 20.0 else 12.0)     // лосю глубина не помеха
-        add("sable", if (deep) 8.0 else 11.0)      // соболь
-        add("wolf", 8.0)                            // волки — всегда цепочкой
-        add("lynx", 5.0)                            // рысь
-        add("wolverine", 4.0)                       // росомаха
-        add("grouse", if (deep) 8.0 else 6.0)       // куропатка/глухарь: наброды
-        add("bear", if (bearAwake) 5.0 else 0.0)
-        add("unknown", 6.0)                         // не разобрал
+        add("hare", if (deep) 30.0 else 38.0)
+        add("fox", if (deep) 16.0 else 24.0)
+        add("sable", if (deep) 14.0 else 16.0)
+        add("grouse", if (deep) 12.0 else 10.0)
+        add("unknown", 10.0)
 
         val total = weights.sum()
         var acc = 0.0

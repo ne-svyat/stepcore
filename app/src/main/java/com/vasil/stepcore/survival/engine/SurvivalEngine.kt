@@ -37,6 +37,7 @@ data class DaySnap(
     val fog: Boolean,
     val snowCm: Int,
     val riverIce: Int,
+    val windDir: Int, // румб, откуда дует: 0 С .. 7 СЗ
 )
 
 /** Сводка по прожитым дням — для финальной истории и архива. */
@@ -96,6 +97,12 @@ class SurvivalEngine(
         // выдаваемым: иначе догон кусками сдвигал бы выбор вариантов.
         val seen = HashMap<String, Int>()
 
+        // Ветер и звери живут в СВОИХ потоках случайности (соль на seed).
+        // Погодный поток от этого не сдвигается ни на один бросок — миры
+        // старых экспедиций остаются теми же, какими были.
+        var windDir = WindField.initial(seed)
+        val fauna = if (version >= 2) FaunaModel.spawn(seed, startSeason) else emptyList()
+
         for (t in 1..toInclusive) {
             val rng = SplitMix64.forTick(seed, t)
             val prev = state
@@ -111,7 +118,11 @@ class SurvivalEngine(
             if (state.snowCm > 0) coverDays++
             if (state.snowCm > maxSnow) maxSnow = state.snowCm
 
-            emit(t, prev, state, rng, seen, t > fromExclusive, sink)
+            windDir = WindField.step(seed, t, windDir, state.front)
+            val fr = if (fauna.isEmpty()) null
+                else FaunaModel.step(fauna, state, windDir, seasonOf(t), seed, t)
+
+            emit(t, prev, state, rng, windDir, fr, seen, t > fromExclusive, sink)
         }
 
         val d = maxOf(toInclusive, 0)
@@ -135,12 +146,14 @@ class SurvivalEngine(
             version, SplitMix64.forTick(seed, 0), yearDay(0), startSeason
         )
         val out = ArrayList<DaySnap>(maxOf(toInclusive, 0))
+        var dir = WindField.initial(seed)
         for (t in 1..toInclusive) {
             state = WeatherModel.step(version, state, yearDay(t), SplitMix64.forTick(seed, t))
+            dir = WindField.step(seed, t, dir, state.front)
             out.add(DaySnap(
                 tick = t, tempC = state.tempC, cloud = state.cloud, wind = state.wind,
                 precip = state.precip, fog = state.fog,
-                snowCm = state.snowCm, riverIce = state.riverIce,
+                snowCm = state.snowCm, riverIce = state.riverIce, windDir = dir,
             ))
         }
         return out
@@ -159,7 +172,8 @@ class SurvivalEngine(
      */
     private fun emit(
         t: Int, prev: WeatherState, st: WeatherState,
-        rng: SplitMix64, seen: HashMap<String, Int>, deliver: Boolean,
+        rng: SplitMix64, windDir: Int, fr: FaunaModel.DayResult?,
+        seen: HashMap<String, Int>, deliver: Boolean,
         sink: (WorldEvent) -> Unit,
     ) {
         // Выдача события: сначала считаем срабатывание ключа (всегда),
@@ -177,7 +191,17 @@ class SurvivalEngine(
         // След бросается ПЕРВЫМ: остальные строки дня должны знать, был ли он.
         // Иначе зарисовка «никто чужой по моему следу не прошёл» могла бы
         // выйти в один день с волчьей цепочкой в двух шагах от лагеря.
-        val track = TrackModel.roll(rng, st, season)
+        //
+        // След АГЕНТА важнее фонового: если у лагеря ходила стая, писать про
+        // заячьи петли — значит скрыть главное. Фон бросается только тогда,
+        // когда крупного зверя рядом не было.
+        val wolvesKm = fr?.wolvesNearKm ?: 99.0
+        val agentTrack = fr?.trackKind
+        val bg = if (agentTrack == null) TrackModel.roll(rng, st, season, wolvesKm) else null
+        val trackKind = agentTrack ?: bg?.species
+        val trackVisible = trackKind != null &&
+            st.snowCm >= TrackModel.MIN_SNOW_CM && st.precip < 3 && st.wind < 3 && st.snowAgeDays >= 1
+        val track = if (trackVisible) trackKind else null
 
         val ctx = mapOf(
             "day" to t,
@@ -194,6 +218,10 @@ class SurvivalEngine(
             "ice" to st.riverIce,
             "winter" to (if (st.winterSet) 1 else 0),
             "track" to (if (track != null) 1 else 0),
+            "windir" to windDir,
+            "scent" to (ScentModel.campScentKm(st) * 10).toInt(),
+            "wolfkm" to minOf(99, wolvesKm.toInt()),
+            "dist" to ((fr?.event?.distKm ?: 99.0) * 10).toInt(),
         )
 
         if (t > 1 && seasonOf(t) != seasonOf(t - 1)) {
@@ -292,11 +320,28 @@ class SurvivalEngine(
         // есть кто-то кроме тебя. Поэтому он идёт отдельной строкой и своей
         // категорией, а не соревнуется с погодой за место в дне.
         if (track != null) {
-            fire("track", "track." + track.species, rng.nextLong(), mapOf(
+            fire("track", "track." + track, rng.nextLong(), mapOf(
                 "temp" to fmtTemp(st.tempC),
                 "snow" to st.snowCm.toString(),
-                "age" to track.freshDays.toString(),
+                "age" to st.snowAgeDays.toString(),
+                "km" to distWord(fr?.trackDistKm ?: 99.0),
             ), ctx)
+        }
+
+        // Зверь. Отдельная категория и отдельный цвет: это не погода и не быт,
+        // это единственное в мире, у чего есть собственная воля.
+        val ev = fr?.event
+        if (ev != null) {
+            fire("animal", ev.key, rng.nextLong(), mapOf(
+                "km" to distWord(ev.distKm),
+                "pack" to ev.packSize.toString(),
+                "temp" to fmtTemp(st.tempC),
+            ), ctx)
+        } else if (track == null && wolvesKm < 2.5 &&
+            st.snowCm >= TrackModel.MIN_SNOW_CM && st.precip < 3) {
+            // Пустой лес под стаей — тоже сообщение. Отсутствие следов
+            // информативно ровно настолько же, насколько их наличие.
+            fire("animal", "fauna.quiet", rng.nextLong(), emptyMap(), ctx)
         }
     }
 
@@ -351,6 +396,20 @@ class SurvivalEngine(
             else -> "пасмурно"
         }
 
+        /**
+         * Расстояние словами. Человек в тайге не меряет километрами —
+         * он меряет тем, что слышно и что видно.
+         */
+        fun distWord(km: Double): String = when {
+            km < 0.25 -> "у самого лагеря"
+            km < 0.6 -> "в двух сотнях шагов"
+            km < 1.2 -> "в полукилометре"
+            km < 2.5 -> "в километре с небольшим"
+            km < 5.0 -> "километрах в трёх"
+            km < 8.0 -> "далеко, километрах в пяти"
+            else -> "где-то далеко"
+        }
+
         /** Словесные осадки для шапки дня. */
         fun precipWord(precip: Int): String = when (precip) {
             1 -> "дождь"
@@ -370,7 +429,10 @@ class SurvivalEngine(
             sb.append(fmtTemp(d.tempC)).append("°")
             sb.append(" · ").append(skyWord(d.cloud, d.fog))
             if (d.precip > 0) sb.append(" · ").append(precipWord(d.precip))
-            if (d.wind > 0) sb.append(" · ").append(windWord(d.wind))
+            if (d.wind > 0) {
+                sb.append(" · ").append(windWord(d.wind))
+                sb.append(" (").append(Compass.RU[d.windDir]).append(")")
+            }
             if (d.snowCm > 0) sb.append(" · снег ").append(d.snowCm).append(" см")
             if (d.riverIce == 2) sb.append(" · река подо льдом")
             else if (d.riverIce == 1) sb.append(" · шуга")

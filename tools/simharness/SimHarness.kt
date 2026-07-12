@@ -2,7 +2,13 @@ package com.vasil.stepcore.survival.harness
 
 import com.vasil.stepcore.survival.engine.BackupCodec
 import com.vasil.stepcore.survival.engine.Corpus
+import com.vasil.stepcore.survival.engine.Compass
 import com.vasil.stepcore.survival.engine.DaySnap
+import com.vasil.stepcore.survival.engine.FaunaModel
+import com.vasil.stepcore.survival.engine.ScentModel
+import com.vasil.stepcore.survival.engine.SplitMix64
+import com.vasil.stepcore.survival.engine.WeatherModel
+import com.vasil.stepcore.survival.engine.WindField
 import com.vasil.stepcore.survival.engine.StepLedger
 import com.vasil.stepcore.survival.engine.SurvivalEngine
 import com.vasil.stepcore.survival.engine.WorldEvent
@@ -290,6 +296,78 @@ fun main(args: Array<String>) {
         check("spring.snow_melts", springsWithSnow == 0, "" + springsWithSnow + "/" + springsTotal)
     }
 
+    // --- 3d. ЗАПАХ И ЗВЕРЬ ---
+    //     Главная правда тайги, которую модель обязана держать:
+    //     зверь НЕ ЧУЕТ ПРОТИВ ВЕТРА. Волк в трёхстах метрах с наветренной
+    //     стороны не знает о лагере ничего. Если эта проверка когда-нибудь
+    //     упадёт — вся механика запаха превратилась в лотерею.
+    run {
+        var upwindSmell = 0
+        var noScentAtAll = 0
+        var checked = 0
+        for (i in 0 until 400) {
+            val seed = 313000L + i * 29L
+            val season = i % 4
+            val eng = SurvivalEngine(seed, season, SurvivalEngine.startOffsetFrom(seed), 2)
+            val snaps = eng.daySnapshots(60)
+            var dir = WindField.initial(seed)
+            var st = WeatherModel.initial(2, SplitMix64.forTick(seed, 0), eng.yearDay(0), season)
+            for (t in 1..60) {
+                st = WeatherModel.step(2, st, eng.yearDay(t), SplitMix64.forTick(seed, t))
+                dir = WindField.step(seed, t, dir, st.front)
+                if (st.wind == 0) continue // штиль: сектора нет, запах лужей
+                val upwind = Compass.downwind(dir + 4) // сектор ПРОТИВ ветра
+                checked++
+                // зверь с лучшим нюхом в 300 метрах строго против ветра
+                if (ScentModel.smells(0.3, upwind, st, dir, 1.6)) upwindSmell++
+                // он же ниже по ветру в 300 метрах — обязан чуять почти всегда
+                if (!ScentModel.smells(0.3, Compass.downwind(dir), st, dir, 1.6)) noScentAtAll++
+            }
+        }
+        println("запах: против ветра учуяли " + upwindSmell + " раз из " + checked +
+            " · по ветру не учуяли " + noScentAtAll)
+        check("scent.never_upwind", upwindSmell == 0, "" + upwindSmell)
+        check("scent.works_downwind", noScentAtAll * 100 / maxOf(checked, 1) < 10,
+            "" + (noScentAtAll * 100 / maxOf(checked, 1)) + "%")
+    }
+
+    // --- 3e. ЗВЕРИ: границы участка, спячка, охота ---
+    run {
+        var outOfRange = 0
+        var bearInFrost = 0
+        var deadMooseWalking = 0
+        var kills = 0
+        var wolfNearCamp = 0
+        for (i in 0 until 400) {
+            val seed = 424000L + i * 31L
+            val season = i % 4
+            val eng = SurvivalEngine(seed, season, SurvivalEngine.startOffsetFrom(seed), 2)
+            val agents = FaunaModel.spawn(seed, season)
+            var st = WeatherModel.initial(2, SplitMix64.forTick(seed, 0), eng.yearDay(0), season)
+            var dir = WindField.initial(seed)
+            var mooseAlive = agents.count { it.kind == FaunaModel.MOOSE }
+            for (t in 1..90) {
+                st = WeatherModel.step(2, st, eng.yearDay(t), SplitMix64.forTick(seed, t))
+                dir = WindField.step(seed, t, dir, st.front)
+                FaunaModel.step(agents, st, dir, eng.seasonOf(t), seed, t)
+                for (a in agents) {
+                    if (a.distKm < 0.0 || a.distKm > 30.0) outOfRange++
+                    if (a.kind == FaunaModel.BEAR && !a.asleep && st.tempC <= -12) bearInFrost++
+                }
+                val nowAlive = agents.count { it.kind == FaunaModel.MOOSE && it.alive }
+                if (nowAlive < mooseAlive) kills++
+                mooseAlive = nowAlive
+                val w = agents.first { it.kind == FaunaModel.WOLF }
+                if (w.distKm < 1.0) wolfNearCamp++
+            }
+        }
+        println("звери: волк у лагеря " + wolfNearCamp + " дн. · охот удачных " + kills)
+        check("fauna.in_range", outOfRange == 0, "" + outOfRange)
+        check("fauna.bear_sleeps_in_frost", bearInFrost == 0, "" + bearInFrost)
+        check("fauna.wolves_hunt", kills > 0, "" + kills)
+        check("fauna.wolves_visit_camp", wolfNearCamp > 0, "" + wolfNearCamp)
+    }
+
     // --- 3c. Версия 1 жива: старые экспедиции доигрываются старым миром ---
     run {
         val a = ArrayList<String>(); val b = ArrayList<String>()
@@ -367,6 +445,9 @@ fun main(args: Array<String>) {
             "wx.cold_snap", "wx.cool_down", "wx.hard_frost", "wx.thaw", "wx.heat",
             "wx.clear_streak", "wx.fog", "wx.wind_strong", "wx.snow_deep", "ambient", "day_note",
             "phase.winter_set", "phase.snow_gone", "phase.river_freeze", "phase.river_open",
+            "fauna.wolf.howl", "fauna.wolf.circle", "fauna.wolf.kill", "fauna.quiet",
+            "fauna.wolverine.camp", "fauna.wolverine.near", "fauna.bear.encounter",
+            "fauna.bear.near", "fauna.lynx.near", "fauna.moose.near",
             "track.hare", "track.fox", "track.moose", "track.wolf", "track.sable",
             "track.lynx", "track.wolverine", "track.grouse", "track.bear", "track.unknown",
             "final.snow_cover",
