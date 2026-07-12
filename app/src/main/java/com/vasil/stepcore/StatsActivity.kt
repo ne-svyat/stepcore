@@ -137,14 +137,6 @@ class StatsActivity : AppCompatActivity() {
 
     // ---------- heatmap ----------
 
-    private fun levelColorRes(total: Int): Int = when {
-        total <= 0 -> R.color.hm_empty
-        total < HM_T1 -> R.color.hm1
-        total < HM_T2 -> R.color.hm2
-        total < HM_T3 -> R.color.hm3
-        total < HM_T4 -> R.color.hm4
-        else -> R.color.hm5
-    }
 
     private fun cell(colorRes: Int): View {
         val v = View(this)
@@ -168,70 +160,109 @@ class StatsActivity : AppCompatActivity() {
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { topMargin = dp(4) }
         }
-        val weeks = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
 
         val today = LocalDate.now()
         val mondayThisWeek = today.minusDays((today.dayOfWeek.value - 1).toLong())
         val start = mondayThisWeek.minusWeeks(51) // ~52 недели
 
+        // Данные готовим здесь, рисует их ОДИН холст: 365 отдельных View
+        // невозможно анимировать, а один холст стоит как один виджет.
+        val list = ArrayList<HeatmapView.Day>(52 * 7)
         for (w in 0..51) {
-            val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
             for (dow in 0..6) {
                 val date = start.plusDays((w * 7 + dow).toLong())
                 if (date.isAfter(today)) {
-                    col.addView(cell(R.color.hm_empty).apply { visibility = View.INVISIBLE })
+                    list.add(HeatmapView.Day(date, 0, 0))
                     continue
                 }
                 val rec = byDate[date.toString()]
                 val total = if (rec == null) 0 else rec.walkSteps + rec.runSteps
-                val c = cell(levelColorRes(total))
-                c.setOnClickListener {
-                    Toast.makeText(this@StatsActivity,
-                        "${date}: $total шагов", Toast.LENGTH_SHORT).show()
-                }
-                col.addView(c)
+                list.add(HeatmapView.Day(date, levelOf(total), total))
             }
-            weeks.addView(col)
         }
-        scroll.addView(weeks)
+
+        val map = HeatmapView(this)
+        map.setData(list, 52) { day ->
+            val msg = if (day.steps == 0) "${day.date}: нет данных"
+                      else "${day.date}: ${day.steps} шагов · ${levelWord(day.level)}"
+            Toast.makeText(this@StatsActivity, msg, Toast.LENGTH_SHORT).show()
+        }
+        scroll.addView(map)
         // Текущая неделя - крайняя правая колонка; без прокрутки экран
         // открывался на пустом прошлом годе и heatmap казался пустым.
         scroll.post { scroll.fullScroll(View.FOCUS_RIGHT) }
         return scroll
     }
 
-    private fun buildLegend(): View {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(10) }
-        }
-        // Границы стоят МЕЖДУ квадратами: там, где реально меняется цвет.
-        val bounds = arrayOf(fmtK(HM_T1), fmtK(HM_T2), fmtK(HM_T3), fmtK(HM_T4))
-        val cells = intArrayOf(R.color.hm1, R.color.hm2, R.color.hm3, R.color.hm4, R.color.hm5)
-        cells.forEachIndexed { i, c ->
-            row.addView(cell(c))
-            if (i < bounds.size) row.addView(boundLabel(bounds[i]))
-        }
-        row.addView(boundLabel("+"))
+    /** Уровень дня: 0 нет данных, 1 слабый ... 5 сильный. */
+    private fun levelOf(total: Int): Int = when {
+        total <= 0 -> 0
+        total < HM_T1 -> 1
+        total < HM_T2 -> 2
+        total < HM_T3 -> 3
+        total < HM_T4 -> 4
+        else -> 5
+    }
 
+    private fun levelWord(level: Int): String = when (level) {
+        1 -> "мало"
+        2 -> "норма"
+        3 -> "хорошо"
+        4 -> "отлично"
+        5 -> "мощный день"
+        else -> "нет данных"
+    }
+
+    private fun buildLegend(): View {
+        // Старая легенда ставила числа МЕЖДУ квадратами и заканчивалась голым
+        // "+" - понять, какой квадрат что значит, было невозможно. Теперь у
+        // каждого уровня своя строка: квадрат, диапазон, слово.
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            )
+            ).apply { topMargin = dp(12) }
         }
-        box.addView(row)
+        val rows = listOf(
+            Triple(R.color.hm1, "до ${fmtK(HM_T1)}", "мало"),
+            Triple(R.color.hm2, "${fmtK(HM_T1)}–${fmtK(HM_T2)}", "норма"),
+            Triple(R.color.hm3, "${fmtK(HM_T2)}–${fmtK(HM_T3)}", "хорошо"),
+            Triple(R.color.hm4, "${fmtK(HM_T3)}–${fmtK(HM_T4)}", "отлично"),
+            Triple(R.color.hm5, "${fmtK(HM_T4)} и больше", "мощный день"),
+        )
+        for ((colorRes, range, word) in rows) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { bottomMargin = dp(3) }
+            }
+            row.addView(cell(colorRes))
+            row.addView(TextView(this).apply {
+                text = range
+                setTextColor(ContextCompat.getColor(this@StatsActivity, R.color.text_main))
+                textSize = 15f
+                layoutParams = LinearLayout.LayoutParams(dp(110),
+                    LinearLayout.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(8) }
+            })
+            row.addView(TextView(this).apply {
+                text = word
+                setTextColor(ContextCompat.getColor(this@StatsActivity, colorRes))
+                textSize = 15f
+            })
+            box.addView(row)
+        }
         box.addView(dimText("Цвет — по шагам за день. Пороги постоянные, от дневной цели не зависят.")
-            .apply { textSize = 12f })
+            .apply { textSize = 13f })
+        box.addView(dimText("Мощные дни светятся, слабые подрагивают. Нажми на день — покажу цифры.")
+            .apply { textSize = 13f })
         return box
     }
 
-    /** Число на границе цветов: 7000 -> "7к". */
+    /** Число на границе цветов:    /** Число на границе цветов: 7000 -> "7к". */
     private fun fmtK(n: Int): String =
         if (n % 1000 == 0) "${n / 1000}к" else "%.1fк".format(n / 1000f)
 

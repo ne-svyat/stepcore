@@ -291,6 +291,41 @@ internal object Doodle {
         }
     }
 
+    /**
+     * Штриховка "от руки" - заливка, которая НЕ идеальна: косые штрихи с
+     * дрожью, местами обрывающиеся, не достающие до краёв. Ровная заливка
+     * рядом с дрожащим контуром выглядит инородно - как будто фигуру
+     * закрасили в фотошопе поверх карандашного рисунка.
+     */
+    fun hatch(p: Path, x0f: Float, y0f: Float, x1f: Float, y1f: Float,
+              step: Float, angDeg: Float, inset: Float, w: Wobble) {
+        val x0 = x0f + inset; val y0 = y0f + inset
+        val x1 = x1f - inset; val y1 = y1f - inset
+        if (x1 <= x0 || y1 <= y0) return
+        val t = kotlin.math.tan(Math.toRadians(angDeg.toDouble())).toFloat()
+        val slope = (y1 - y0) / (if (kotlin.math.abs(t) < 0.1f) 0.1f else kotlin.math.abs(t))
+        var px = x0 - slope
+        var k = 0
+        val dir = if (angDeg < 0) -1f else 1f
+        while (px < x1 + slope) {
+            // Каждый пятый штрих пропускаем: рука не кладёт линии подряд ровно.
+            if (k % 5 != 4) {
+                var started = false
+                for (sIdx in 0..8) {
+                    val u = sIdx / 8f
+                    val x = px + dir * u * slope
+                    val y = y0 + u * (y1 - y0)
+                    if (x in x0..x1) {
+                        val jx = x + w.j(1f); val jy = y + w.j(1f)
+                        if (!started) { p.moveTo(jx, jy); started = true } else p.lineTo(jx, jy)
+                    }
+                }
+            }
+            px += step
+            k++
+        }
+    }
+
     /** Шестерня: зубчатый контур + втулка. Угол задаётся снаружи -> крутится. */
     fun gear(p: Path, cx: Float, cy: Float, r: Float, teeth: Int, rotDeg: Float, w: Wobble) {
         val n = teeth * 4
