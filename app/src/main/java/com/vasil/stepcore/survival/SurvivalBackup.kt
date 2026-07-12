@@ -3,6 +3,7 @@ package com.vasil.stepcore.survival
 import android.content.Context
 import androidx.room.withTransaction
 import com.vasil.stepcore.survival.engine.BackupCodec
+import com.vasil.stepcore.survival.engine.SurvivalEngine
 
 /**
  * Мост бэкапа между ядром и Survival Mode. Ядро вызывает две функции и
@@ -94,6 +95,11 @@ object SurvivalBackup {
                         status = e.status, createdMs = e.createdMs, finishedMs = e.finishedMs,
                         ticksDone = e.ticksDone, syncDate = e.syncDate,
                         syncDaySteps = e.syncDaySteps, stepRemainder = e.stepRemainder,
+                        // Файл бэкапа не знает про фазы. Восстанавливаем их из
+                        // прожитых дней: иначе импортированная активная
+                        // экспедиция начала бы догон с нуля и переписала бы
+                        // весь свой журнал заново.
+                        phasesDone = e.ticksDone * SurvivalEngine.PHASES,
                     ))
                     dao.insertEvents(e.events.map { ev ->
                         ExpeditionEvent(

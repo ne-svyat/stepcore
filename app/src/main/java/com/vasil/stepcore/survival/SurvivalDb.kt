@@ -11,6 +11,8 @@ import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.Update
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 
 /**
  * Survival Mode живёт в ОТДЕЛЬНОМ файле БД (survival.db), не в AppDb.
@@ -36,6 +38,7 @@ data class Expedition(
     val createdMs: Long,
     val finishedMs: Long = 0L,
     val ticksDone: Int = 0,     // прожито дней мира
+    val phasesDone: Int = 0,    // прожито ФАЗ (4 на день): единица прогресса
     val syncDate: String,       // до какой даты шаги съедены
     val syncDaySteps: Int = 0,  // съедено шагов этой даты
     val stepRemainder: Int = 0, // несожжённый остаток (< stepsPerTick)
@@ -47,8 +50,9 @@ data class ExpeditionEvent(
     val expeditionId: Long,
     val tick: Int,              // день мира (0 = прибытие в лагерь)
     val realTimeMs: Long,       // когда строка попала в журнал (реальное время)
-    val category: String,       // milestone / weather / ambient / system
+    val category: String,       // milestone / weather / track / animal / ambient / system
     val text: String,           // уже отрендеренный текст: прошлое неизменно
+    val phase: Int = 1,         // 0 утро - 1 день - 2 вечер - 3 ночь
 )
 
 @Dao
@@ -76,17 +80,31 @@ interface SurvivalDao {
 }
 
 @Database(entities = [Expedition::class, ExpeditionEvent::class],
-    version = 1, exportSchema = false)
+    version = 2, exportSchema = false)
 abstract class SurvivalDb : RoomDatabase() {
     abstract fun dao(): SurvivalDao
 
     companion object {
+        /**
+         * 1 -> 2: у события появилась фаза суток, у экспедиции — прогресс
+         * в фазах. Уже прожитые дни переводятся один в один: день = 4 фазы,
+         * а старым записям журнала назначается «день» — это ровно то, чем
+         * они и были, когда весь мир жил сутками.
+         */
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE expeditions ADD COLUMN phasesDone INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE expedition_events ADD COLUMN phase INTEGER NOT NULL DEFAULT 1")
+                db.execSQL("UPDATE expeditions SET phasesDone = ticksDone * 4")
+            }
+        }
+
         @Volatile private var instance: SurvivalDb? = null
         fun get(context: Context): SurvivalDb =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
                     context.applicationContext, SurvivalDb::class.java, "survival.db"
-                ).build().also { instance = it }
+                ).addMigrations(MIGRATION_1_2).build().also { instance = it }
             }
     }
 }

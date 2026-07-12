@@ -107,7 +107,14 @@ class SurvivalRepo(private val context: Context) {
             sb.append("Д").append(t)
             if (head != null) sb.append(" · ").append(SurvivalEngine.headerOf(head))
             sb.append('\n')
-            for (ev in evsOfDay) sb.append("    ").append(ev.text).append('\n')
+            var lastPhase = -1
+            for (ev in evsOfDay.sortedWith(compareBy<ExpeditionEvent>({ it.phase }, { it.id }))) {
+                if (ev.phase != lastPhase) {
+                    sb.append("    [").append(SurvivalEngine.PHASE_RU[ev.phase]).append("]\n")
+                    lastPhase = ev.phase
+                }
+                sb.append("      ").append(ev.text).append('\n')
+            }
         }
         return sb.toString().trimEnd()
     }
@@ -172,28 +179,36 @@ class SurvivalRepo(private val context: Context) {
         for (d in allDays) if (d.date > e.syncDate && d.date < today) between.add(d.date)
         between.sort()
 
+        // ФАЗА — новая единица прогресса. Лестница шагов считает те же
+        // ступени, только вчетверо мельче: четверть дневной нормы = одна фаза.
+        // Поэтому запись падает в журнал по ходу дня, а не в его конце.
+        val phaseSteps = maxOf(1, e.stepsPerTick / SurvivalEngine.PHASES)
         val res = StepLedger.advance(
             StepLedger.Sync(e.syncDate, e.syncDaySteps, e.stepRemainder),
             today, todaySteps(today),
-            { d -> totals[d] ?: 0 }, between, e.stepsPerTick,
+            { d -> totals[d] ?: 0 }, between, phaseSteps,
         )
 
-        // --- тики: не дальше плана; лишние шаги при финише сгорают ---
-        val mint = minOf(res.newTicks, e.plannedDays - e.ticksDone).coerceAtLeast(0)
-        val newTicksDone = e.ticksDone + mint
-        val planReached = newTicksDone >= e.plannedDays
+        // --- фазы: не дальше плана; лишние шаги при финише сгорают ---
+        val maxPhases = e.plannedDays * SurvivalEngine.PHASES
+        val gained = minOf(res.newTicks, maxPhases - e.phasesDone).coerceAtLeast(0)
+        val newPhasesDone = e.phasesDone + gained
+        val newTicksDone = newPhasesDone / SurvivalEngine.PHASES
+        val mint = newTicksDone - e.ticksDone
+        val planReached = newPhasesDone >= maxPhases
         val finishing = planReached || voluntary
 
         val engine = SurvivalEngine(e.seed, e.startSeason, e.startOffset, e.engineVersion)
         val now = System.currentTimeMillis()
         val fresh = ArrayList<ExpeditionEvent>()
-        val summary = engine.run(e.ticksDone, newTicksDone) { ev ->
+        val summary = engine.run(e.phasesDone, newPhasesDone) { ev ->
             val text = renderEvent(ev)
             if (text != null) {
                 fresh.add(ExpeditionEvent(
                     expeditionId = e.id, tick = ev.tick, realTimeMs = now,
                     category = ev.category,
                     text = text,
+                    phase = ev.phase,
                 ))
             }
         }
@@ -204,6 +219,7 @@ class SurvivalRepo(private val context: Context) {
             fresh.add(ExpeditionEvent(
                 expeditionId = e.id, tick = newTicksDone, realTimeMs = now,
                 category = "milestone",
+                phase = SurvivalEngine.NIGHT,
                 text = corpus.render(endKey, roll, mapOf(
                     "days" to newTicksDone.toString(),
                     "daysW" to SurvivalEngine.daysWord(newTicksDone),
@@ -213,6 +229,7 @@ class SurvivalRepo(private val context: Context) {
                 fresh.add(ExpeditionEvent(
                     expeditionId = e.id, tick = newTicksDone, realTimeMs = now,
                     category = "system",
+                    phase = SurvivalEngine.NIGHT,
                     text = finalText(summary),
                 ))
             }
@@ -220,6 +237,7 @@ class SurvivalRepo(private val context: Context) {
 
         val updated = e.copy(
             ticksDone = newTicksDone,
+            phasesDone = newPhasesDone,
             syncDate = res.sync.date,
             syncDaySteps = res.sync.daySteps,
             stepRemainder = if (finishing) 0 else res.sync.remainder,

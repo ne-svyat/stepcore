@@ -18,7 +18,8 @@ data class WorldEvent(
     val roll: Long,
     val params: Map<String, String> = emptyMap(),
     val ctx: Map<String, Int> = emptyMap(),
-    val nth: Int = 0, // какое по счёту срабатывание этого ключа за экспедицию
+    val nth: Int = 0,   // какое по счёту срабатывание этого ключа за экспедицию
+    val phase: Int = 1, // 0 утро - 1 день - 2 вечер - 3 ночь
 )
 
 /**
@@ -77,13 +78,20 @@ class SurvivalEngine(
     fun seasonOf(tick: Int): Int = WeatherModel.seasonOf(yearDay(tick))
 
     /**
-     * Прожить мир до тика toInclusive; события эмитить только для тиков
-     * строго после fromExclusive (более ранние уже лежат в журнале).
-     * Возвращает сводку по всему диапазону 1..toInclusive.
+     * Прожить мир до фазы toInclusive; события эмитить только для фаз строго
+     * после fromExclusive (более ранние уже лежат в журнале).
      *
-     * Пропуск эмиссии для старых тиков безопасен: у каждого тика свой
-     * изолированный rng, черпание случайности внутри тика не влияет
-     * на соседние.
+     * ЕДИНИЦА ПРОГРЕССА ТЕПЕРЬ — ФАЗА, А НЕ ДЕНЬ. День мира состоит из
+     * четырёх фаз (утро, день, вечер, ночь), и каждая стоит четверть дневной
+     * нормы шагов. Поэтому запись падает в журнал ПО ХОДУ дня, а не задним
+     * числом в его конце: прошёл четверть нормы — прочитал утренний след;
+     * прошёл всю — услышал ночной вой.
+     *
+     * Глобальный номер фазы: (день - 1) * 4 + фаза + 1. День 0 (прибытие)
+     * имеет номер 0 и выдаётся при первой же синхронизации.
+     *
+     * Сводка считается только по ПОЛНОСТЬЮ прожитым дням: половина дня —
+     * это ещё не день, и в статистику она попасть не может.
      */
     fun run(fromExclusive: Int, toInclusive: Int, sink: (WorldEvent) -> Unit): ExpeditionSummary {
         var state = WeatherModel.initial(
@@ -103,29 +111,36 @@ class SurvivalEngine(
         var windDir = WindField.initial(seed)
         val fauna = if (version >= 2) FaunaModel.spawn(seed, startSeason) else emptyList()
 
-        for (t in 1..toInclusive) {
+        // Мир считается до последнего ЗАТРОНУТОГО дня, даже если он прожит
+        // наполовину: утренние события этого дня уже случились.
+        val lastDay = (toInclusive + PHASES - 1) / PHASES
+        val fullDays = toInclusive / PHASES
+
+        for (t in 1..lastDay) {
             val rng = SplitMix64.forTick(seed, t)
             val prev = state
             state = WeatherModel.step(version, prev, yearDay(t), rng)
 
-            if (state.precip == 1 || state.precip == 2) rain++
-            if (state.precip >= 3) snow++
-            if (state.wind == 3 || (state.precip == 4 && state.wind >= 2)) storm++
-            if (state.fog) fogs++
-            if (state.tempC < minT) minT = state.tempC
-            if (state.tempC > maxT) maxT = state.tempC
-            if (firstSnow < 0 && !prev.snowSeen && state.snowSeen) firstSnow = t
-            if (state.snowCm > 0) coverDays++
-            if (state.snowCm > maxSnow) maxSnow = state.snowCm
+            if (t <= fullDays) {
+                if (state.precip == 1 || state.precip == 2) rain++
+                if (state.precip >= 3) snow++
+                if (state.wind == 3 || (state.precip == 4 && state.wind >= 2)) storm++
+                if (state.fog) fogs++
+                if (state.tempC < minT) minT = state.tempC
+                if (state.tempC > maxT) maxT = state.tempC
+                if (firstSnow < 0 && !prev.snowSeen && state.snowSeen) firstSnow = t
+                if (state.snowCm > 0) coverDays++
+                if (state.snowCm > maxSnow) maxSnow = state.snowCm
+            }
 
             windDir = WindField.step(seed, t, windDir, state.front)
             val fr = if (fauna.isEmpty()) null
                 else FaunaModel.step(fauna, state, windDir, seasonOf(t), seed, t)
 
-            emit(t, prev, state, rng, windDir, fr, seen, t > fromExclusive, sink)
+            emit(t, prev, state, rng, windDir, fr, seen, fromExclusive, toInclusive, sink)
         }
 
-        val d = maxOf(toInclusive, 0)
+        val d = maxOf(fullDays, 0)
         return ExpeditionSummary(
             days = d, rainDays = rain, snowDays = snow, stormDays = storm,
             fogMornings = fogs,
@@ -173,16 +188,21 @@ class SurvivalEngine(
     private fun emit(
         t: Int, prev: WeatherState, st: WeatherState,
         rng: SplitMix64, windDir: Int, fr: FaunaModel.DayResult?,
-        seen: HashMap<String, Int>, deliver: Boolean,
+        seen: HashMap<String, Int>, fromPhase: Int, toPhase: Int,
         sink: (WorldEvent) -> Unit,
     ) {
-        // Выдача события: сначала считаем срабатывание ключа (всегда),
-        // потом отдаём наружу (только для новых тиков).
+        // Выдача события: срабатывание ключа считается ВСЕГДА (иначе догон
+        // кусками сдвигал бы выбор вариантов), а наружу событие уходит,
+        // только если его фаза уже прожита и ещё не записана.
         fun fire(category: String, key: String, roll: Long,
                  params: Map<String, String>, ctx: Map<String, Int>) {
             val nth = seen[key] ?: 0
             seen[key] = nth + 1
-            if (deliver) sink(WorldEvent(t, category, key, roll, params, ctx, nth))
+            val ph = phaseOf(category, key)
+            val g = globalPhase(t, ph)
+            if (g > fromPhase && g <= toPhase) {
+                sink(WorldEvent(t, category, key, roll, params, ctx, nth, ph))
+            }
         }
 
         val season = seasonOf(t)
@@ -370,6 +390,38 @@ class SurvivalEngine(
          * не даёт этим наблюдениям превратиться в ежедневную мантру.
          */
         const val DAY_NOTE_P = 0.5
+
+        /** Фаз в дне мира. Четверть дневной нормы шагов на каждую. */
+        const val PHASES = 4
+        const val MORNING = 0
+        const val DAY = 1
+        const val EVENING = 2
+        const val NIGHT = 3
+
+        val PHASE_RU = arrayOf("утро", "день", "вечер", "ночь")
+
+        /** Глобальный номер фазы: сквозная шкала прогресса экспедиции. */
+        fun globalPhase(tick: Int, phase: Int): Int =
+            if (tick <= 0) 0 else (tick - 1) * PHASES + phase + 1
+
+        /**
+         * Когда в сутках случается событие.
+         *
+         * Это не украшение. След читают УТРОМ — по свежему снегу, до того как
+         * его затопчешь. Волки воют НОЧЬЮ. Туман стоит до полудня и потому
+         * утренний. Записи в дневник делают ВЕЧЕРОМ у костра. Погода — это
+         * характеристика дня целиком.
+         */
+        fun phaseOf(category: String, key: String): Int = when {
+            category == "track" -> MORNING
+            key == "wx.fog" || key == "wx.rain_stop" ||
+                key == "wx.snow_stop" || key == "wx.clear_streak" -> MORNING
+            key.startsWith("wx.blizzard") -> NIGHT
+            key == "fauna.wolf.howl" || key == "fauna.wolf.circle" ||
+                key.startsWith("fauna.wolverine") -> NIGHT
+            category == "ambient" -> EVENING
+            else -> DAY
+        }
 
         val SEASON_EN = arrayOf("winter", "spring", "summer", "autumn")
         val SEASON_RU = arrayOf("зима", "весна", "лето", "осень")

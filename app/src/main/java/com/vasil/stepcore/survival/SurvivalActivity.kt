@@ -459,7 +459,6 @@ class SurvivalActivity : AppCompatActivity() {
         for (t in e.ticksDone downTo first) {
             val dayEvents = byTick[t]
                 ?.filter { JournalStyle.visibleInCard(it.category) }
-                ?.sortedBy { it.id }
                 ?: emptyList()
             val head = heads[t]
             if (dayEvents.isEmpty() && head == null) continue
@@ -510,14 +509,27 @@ class SurvivalActivity : AppCompatActivity() {
         }
         card.addView(top)
 
-        for (ev in events) {
+        // Внутри дня события идут по времени суток. Метка фазы появляется
+        // только когда время сменилось: дневник, а не расписание.
+        var lastPhase = -1
+        for (ev in events.sortedWith(compareBy<ExpeditionEvent>({ it.phase }, { it.id }))) {
+            if (ev.phase != lastPhase) {
+                lastPhase = ev.phase
+                card.addView(TextView(this).apply {
+                    text = SurvivalEngine.PHASE_RU[ev.phase.coerceIn(0, 3)]
+                    textSize = 13f
+                    setTextColor(ContextCompat.getColor(
+                        this@SurvivalActivity, R.color.text_dim))
+                    setPadding(dp(6), dp(6), 0, 0)
+                })
+            }
             card.addView(TextView(this).apply {
                 text = JournalStyle.markOf(ev.category) + " " + ev.text
                 textSize = 18f
                 setTextColor(ContextCompat.getColor(
                     this@SurvivalActivity, JournalStyle.colorRes(ev.category)))
                 setLineSpacing(dp(4).toFloat(), 1f)
-                setPadding(dp(4), dp(4), 0, 0)
+                setPadding(dp(4), dp(2), 0, 0)
             })
         }
         return card

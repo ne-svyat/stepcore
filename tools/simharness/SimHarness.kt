@@ -80,19 +80,21 @@ fun main(args: Array<String>) {
     // --- 1. Детерминизм: два прогона одного seed идентичны ---
     run {
         val a = ArrayList<String>(); val b = ArrayList<String>()
-        SurvivalEngine(42L, 3, 30, 2).run(0, 100) { a.add(sig(it)) }
-        SurvivalEngine(42L, 3, 30, 2).run(0, 100) { b.add(sig(it)) }
+        SurvivalEngine(42L, 3, 30, 2).run(0, 100 * SurvivalEngine.PHASES) { a.add(sig(it)) }
+        SurvivalEngine(42L, 3, 30, 2).run(0, 100 * SurvivalEngine.PHASES) { b.add(sig(it)) }
         check("determinism.same_seed", a == b)
         val c = ArrayList<String>()
-        SurvivalEngine(43L, 3, 30, 2).run(0, 100) { c.add(sig(it)) }
+        SurvivalEngine(43L, 3, 30, 2).run(0, 100 * SurvivalEngine.PHASES) { c.add(sig(it)) }
         check("determinism.diff_seed_diff_world", a != c)
     }
 
     // --- 2. Инвариантность партий: 1x100 == куски произвольной нарезки ---
     run {
         val whole = ArrayList<String>()
-        SurvivalEngine(777L, 2, 25, 2).run(0, 100) { whole.add(sig(it)) }
-        val cuts = listOf(0, 1, 7, 8, 37, 64, 99, 100)
+        SurvivalEngine(777L, 2, 25, 2).run(0, 100 * SurvivalEngine.PHASES) { whole.add(sig(it)) }
+        // Нарезка теперь по ФАЗАМ, в том числе посреди дня: догон, прерванный
+        // на утре, обязан дать ровно тот же журнал, что и цельный прогон.
+        val cuts = listOf(0, 1, 3, 7, 8, 29, 30, 149, 256, 399, 400)
         val chunked = ArrayList<String>()
         val eng = SurvivalEngine(777L, 2, 25, 2)
         for (i in 1 until cuts.size) {
@@ -112,6 +114,9 @@ fun main(args: Array<String>) {
         var badTrackInSnowfall = 0
         var badBear = 0
         var badSky = 0
+        var badPhase = 0
+        var trackNotMorning = 0
+        var howlNotNight = 0
         var stormDaysTotal = 0L
         var holes = 0
         var lies = 0
@@ -130,7 +135,7 @@ fun main(args: Array<String>) {
             val perDay = HashMap<Int, Int>()
             val wxTicks = HashSet<Int>()
             val stormTicks = HashSet<Int>()
-            val summary = eng.run(0, 100) { e ->
+            val summary = eng.run(0, 100 * SurvivalEngine.PHASES) { e ->
                 events++
                 when {
                     e.category == "weather" -> weather++
@@ -139,6 +144,9 @@ fun main(args: Array<String>) {
                     e.category == "ambient" -> ambient++
                     e.category == "milestone" -> milestones++
                 }
+                if (e.phase < 0 || e.phase > 3) badPhase++
+                if (e.category == "track" && e.phase != SurvivalEngine.MORNING) trackNotMorning++
+                if (e.key == "fauna.wolf.howl" && e.phase != SurvivalEngine.NIGHT) howlNotNight++
                 val pc = e.ctx["precip"] ?: 0
                 if ((pc == 2 || pc == 4) && (e.ctx["cloud"] ?: 0) < 2) badSky++
                 if (e.category == "track") {
@@ -215,6 +223,9 @@ fun main(args: Array<String>) {
         check("track.exists", tracks > 0, "" + tracks)
         check("sky.heavy_precip_needs_overcast", badSky == 0, "" + badSky)
         check("corpus.no_holes", holes == 0)
+        check("phase.in_range", badPhase == 0, "" + badPhase)
+        check("phase.tracks_in_morning", trackNotMorning == 0, "" + trackNotMorning)
+        check("phase.howl_at_night", howlNotNight == 0, "" + howlNotNight)
         check("corpus.no_broken_conditions", corpus.problems().isEmpty(),
             corpus.problems().joinToString("; "))
         check("text.no_physical_lies", lies == 0, "" + lies)
@@ -371,14 +382,14 @@ fun main(args: Array<String>) {
     // --- 3c. Версия 1 жива: старые экспедиции доигрываются старым миром ---
     run {
         val a = ArrayList<String>(); val b = ArrayList<String>()
-        SurvivalEngine(555L, 3, 30, 1).run(0, 80) { a.add(sig(it)) }
-        SurvivalEngine(555L, 3, 30, 1).run(0, 80) { b.add(sig(it)) }
+        SurvivalEngine(555L, 3, 30, 1).run(0, 80 * SurvivalEngine.PHASES) { a.add(sig(it)) }
+        SurvivalEngine(555L, 3, 30, 1).run(0, 80 * SurvivalEngine.PHASES) { b.add(sig(it)) }
         check("v1.determinism", a == b)
         val v2 = ArrayList<String>()
-        SurvivalEngine(555L, 3, 30, 2).run(0, 80) { v2.add(sig(it)) }
+        SurvivalEngine(555L, 3, 30, 2).run(0, 80 * SurvivalEngine.PHASES) { v2.add(sig(it)) }
         check("v1.differs_from_v2", a != v2)
         var holes = 0
-        SurvivalEngine(555L, 3, 30, 1).run(0, 80) { e ->
+        SurvivalEngine(555L, 3, 30, 1).run(0, 80 * SurvivalEngine.PHASES) { e ->
             if (e.key != "day_note" &&
                 corpus.renderOrNull(e.key, e.roll, e.params, e.ctx, e.nth) == null) holes++
         }
