@@ -12,7 +12,11 @@ import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import android.view.Gravity
 import androidx.core.content.ContextCompat
+import com.vasil.stepcore.DoodleIconDrawable
+import com.vasil.stepcore.DoodleProgressView
+import com.vasil.stepcore.DoodleUi
 import androidx.lifecycle.lifecycleScope
 import com.vasil.stepcore.R
 import com.vasil.stepcore.survival.engine.SurvivalEngine
@@ -110,6 +114,36 @@ class SurvivalActivity : AppCompatActivity() {
             findViewById(R.id.tempo100Btn), findViewById(R.id.tempo1000Btn),
             findViewById(R.id.tempo5000Btn), findViewById(R.id.tempo10000Btn),
         )
+
+        // Сезон узнаётся по значку, а не только по слову.
+        icon(seasonBtns[0], DoodleIconDrawable.SNOWFLAKE, R.color.accent_blue_bright)
+        icon(seasonBtns[1], DoodleIconDrawable.LEAF, R.color.accent_teal_bright)
+        icon(seasonBtns[2], DoodleIconDrawable.SUN, R.color.accent_amber)
+        icon(seasonBtns[3], DoodleIconDrawable.AUTUMN, R.color.accent_amber_bright)
+        for (b in durBtns) icon(b, DoodleIconDrawable.FLAG, R.color.accent_violet_bright)
+        for (b in tempoBtns) icon(b, DoodleIconDrawable.FOOTPRINTS, R.color.accent_violet_bright)
+
+        // Карточка-подсказка: рюкзак как знак снаряжения.
+        DoodleUi.frame(tempoHint, R.color.accent_violet, R.color.surface, 801L)
+        tempoHint.setCompoundDrawablesWithIntrinsicBounds(
+            null, null,
+            DoodleIconDrawable(DoodleIconDrawable.BACKPACK,
+                ContextCompat.getColor(this, R.color.accent_teal), 
+                resources.displayMetrics.density, 34f),
+            null)
+        tempoHint.compoundDrawablePadding = dp(10)
+        tempoHint.setPadding(dp(14), dp(12), dp(14), dp(12))
+
+        // Заголовок архива: сундук.
+        findViewById<TextView>(R.id.archiveTitle).apply {
+            setCompoundDrawablesWithIntrinsicBounds(
+                null, null,
+                DoodleIconDrawable(DoodleIconDrawable.CHEST,
+                    ContextCompat.getColor(this@SurvivalActivity, R.color.accent_amber),
+                    resources.displayMetrics.density, 26f),
+                null)
+            compoundDrawablePadding = dp(8)
+        }
 
         for (i in seasonBtns.indices) {
             seasonBtns[i].setOnClickListener { season = i; refreshStartControls() }
@@ -302,20 +336,102 @@ class SurvivalActivity : AppCompatActivity() {
             return
         }
         for (a in arch) {
-            val mark = if (a.status == "done_success") "по плану" else "прервана"
-            val row = TextView(this).apply {
-                text = "№" + a.id + " · " + SurvivalEngine.SEASON_RU[a.startSeason] +
-                    " · " + a.ticksDone + "/" + a.plannedDays + " дн. · " + mark
-                textSize = 15f
-                setTextColor(ContextCompat.getColor(this@SurvivalActivity, R.color.text_main))
-                setPadding(0, dp(10), 0, dp(10))
-                setOnClickListener {
-                    viewingId = a.id
-                    lifecycleScope.launch { refreshUi(runSync = false) }
-                }
-            }
-            archiveBox.addView(row)
+            archiveBox.addView(archiveRow(a))
         }
+    }
+
+    /** Цвет и значок сезона - одни и те же во всём экране. */
+    private fun seasonIcon(season: Int): Int = when (season) {
+        0 -> DoodleIconDrawable.SNOWFLAKE
+        1 -> DoodleIconDrawable.LEAF
+        2 -> DoodleIconDrawable.SUN
+        else -> DoodleIconDrawable.AUTUMN
+    }
+
+    private fun seasonColor(season: Int): Int = when (season) {
+        0 -> R.color.accent_blue_bright
+        1 -> R.color.accent_teal_bright
+        2 -> R.color.accent_amber
+        else -> R.color.accent_amber_bright
+    }
+
+    /**
+     * Строка архива: рамка, значок сезона, текст и ПОЛОСА ПРОГРЕССА с
+     * процентом. Раньше это была голая строка текста - по ней невозможно
+     * было с одного взгляда понять, далеко ли зашла экспедиция.
+     */
+    private fun archiveRow(a: Expedition): View {
+        val done = if (a.plannedDays > 0)
+            a.ticksDone.toFloat() / a.plannedDays else 0f
+        val pct = (done * 100f).toInt().coerceIn(0, 100)
+        val colorRes = seasonColor(a.startSeason)
+        val mark = if (a.status == "done_success") "по плану" else "прервана"
+
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            val lp = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            lp.bottomMargin = dp(8)
+            layoutParams = lp
+            setOnClickListener {
+                viewingId = a.id
+                lifecycleScope.launch { refreshUi(runSync = false) }
+            }
+        }
+        DoodleUi.frame(row, colorRes, R.color.surface, 900L + a.id * 13L)
+
+        row.addView(android.widget.ImageView(this).apply {
+            setImageDrawable(DoodleIconDrawable(seasonIcon(a.startSeason),
+                ContextCompat.getColor(this@SurvivalActivity, colorRes),
+                resources.displayMetrics.density, 24f))
+            layoutParams = LinearLayout.LayoutParams(dp(28), dp(28))
+        })
+
+        row.addView(TextView(this).apply {
+            text = "№" + a.id + " · " + SurvivalEngine.SEASON_RU[a.startSeason]
+            textSize = 17f
+            setTextColor(ContextCompat.getColor(this@SurvivalActivity, colorRes))
+            val lp = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            lp.leftMargin = dp(8)
+            layoutParams = lp
+        })
+
+        row.addView(TextView(this).apply {
+            text = a.ticksDone.toString() + "/" + a.plannedDays + " дн. · " + mark
+            textSize = 14f
+            setTextColor(ContextCompat.getColor(this@SurvivalActivity, R.color.text_dim))
+            val lp = LinearLayout.LayoutParams(0,
+                LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            lp.leftMargin = dp(10)
+            layoutParams = lp
+        })
+
+        val bars = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(dp(72),
+                LinearLayout.LayoutParams.WRAP_CONTENT)
+        }
+        bars.addView(TextView(this).apply {
+            text = "$pct%"
+            textSize = 14f
+            setTextColor(ContextCompat.getColor(this@SurvivalActivity, colorRes))
+        })
+        bars.addView(DoodleProgressView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(68), dp(12))
+            setProgress(done,
+                ContextCompat.getColor(this@SurvivalActivity, colorRes),
+                a.id)
+        })
+        row.addView(bars)
+        return row
     }
 
     // ---------- вспомогательное ----------
@@ -350,13 +466,36 @@ class SurvivalActivity : AppCompatActivity() {
         tempoHint.text = sb.toString()
     }
 
+    /**
+     * Выбор показывается РАМКОЙ, а не прозрачностью.
+     *
+     * Раньше выбранная кнопка отличалась только цветом текста и alpha - на
+     * тёмном фоне это почти не читалось, и весь экран выглядел монотонным
+     * списком слов. Теперь выбранная - янтарная карточка с заливкой, а
+     * невыбранные - тусклые фиолетовые контуры. Разница видна мгновенно.
+     */
     private fun markGroup(btns: List<Button>, selected: Int) {
         for (i in btns.indices) {
             val sel = i == selected
-            btns[i].setTextColor(ContextCompat.getColor(this,
-                if (sel) R.color.accent_red else R.color.text_main))
-            btns[i].alpha = if (sel) 1.0f else 0.55f
+            btns[i].alpha = 1f
+            if (sel) {
+                DoodleUi.frame(btns[i], R.color.accent_amber, R.color.surface_amber,
+                    600L + i * 7L)
+                btns[i].setTextColor(ContextCompat.getColor(this, R.color.accent_amber_bright))
+            } else {
+                DoodleUi.frame(btns[i], R.color.accent_violet, R.color.surface,
+                    700L + i * 7L)
+                btns[i].setTextColor(ContextCompat.getColor(this, R.color.text_dim))
+            }
         }
+    }
+
+    /** Иконка слева от текста кнопки: кнопка остаётся кнопкой, меняется вид. */
+    private fun icon(btn: Button, type: Int, colorRes: Int) {
+        val dr = DoodleIconDrawable(type, ContextCompat.getColor(this, colorRes),
+            resources.displayMetrics.density)
+        btn.setCompoundDrawablesWithIntrinsicBounds(dr, null, null, null)
+        btn.compoundDrawablePadding = dp(6)
     }
 
     private fun dimRow(text: String): TextView = TextView(this).apply {

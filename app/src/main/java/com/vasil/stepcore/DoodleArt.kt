@@ -595,6 +595,12 @@ object DoodleUi {
 
     fun frame(v: View, strokeRes: Int, fillRes: Int, seed: Long) {
         val c = v.context
+        // Старую рамку ОБЯЗАТЕЛЬНО гасим перед заменой. Рамка подписана на
+        // общий механизм и отписывается в setVisible(false); если просто
+        // затереть фон, подписка осталась бы висеть. Экран Экспедиции
+        // перекрашивает кнопки на КАЖДЫЙ клик - подписчики копились бы
+        // бесконечно, и механизм дёргал бы мёртвые рамки.
+        (v.background as? DoodleBorderDrawable)?.setVisible(false, false)
         v.background = DoodleBorderDrawable(
             ContextCompat.getColor(c, strokeRes),
             ContextCompat.getColor(c, fillRes),
