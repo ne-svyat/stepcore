@@ -30,6 +30,19 @@ object FaunaModel {
 
     const val SALT = 0x1A0F_BEA5_7C0D_3E11L
 
+    /** Дальше этого — зверь «далеко» и может потянуться к знакомому месту. */
+    private const val FAR_KM = 3.0
+    /** Росомахе лагерь интересен, но и она не ночует под палаткой. */
+    private const val WOLVERINE_SHY_KM = 1.1
+
+    /** Минимум дней молчания между воями стаи. */
+    private const val HOWL_PAUSE = 9
+
+    /** Ближе этого зверь без запаха лагеря не подходит: у него свои дела.
+     *  Порог выбран ЗА радиусом чтения следов (2,2 км) — иначе тропа зверя
+     *  пересекала мою каждый день, и след из события превращался в фон. */
+    private const val SHY_KM = 2.6
+
     const val WOLF = "wolf"
     const val BEAR = "bear"
     const val WOLVERINE = "wolverine"
@@ -73,7 +86,7 @@ object FaunaModel {
      */
     private fun boldness(kind: String): Double = when (kind) {
         WOLVERINE -> 0.85
-        BEAR -> 0.45
+        BEAR -> 0.32
         WOLF -> 0.30
         LYNX -> 0.15
         MOOSE -> 0.05
@@ -89,6 +102,7 @@ object FaunaModel {
         var packSize: Int = 1,   // только для волков
         var asleep: Boolean = false, // медведь в берлоге
         var smelledDays: Int = 0,    // сколько дней подряд чует лагерь
+        var quietDays: Int = 0,      // сколько дней стая молчит (пауза между воями)
     )
 
     /** Что произошло сегодня — одно, самое значимое событие. */
@@ -164,6 +178,8 @@ object FaunaModel {
                 if (a.asleep) { a.smelledDays = 0; continue }
             }
 
+            if (a.kind == WOLF) a.quietDays++
+
             // Голод. Зимой еда даётся тяжелее — голод копится быстрее.
             val hungerRate = if (st.snowCm > 20) 0.055 else 0.035
             a.hunger = minOf(1.0, a.hunger + hungerRate)
@@ -186,8 +202,25 @@ object FaunaModel {
                 a.sector = (a.sector + (if (rng.nextDouble() < 0.5) 1 else 7)) % 8
             } else {
                 // Не чует: бродит по участку. Направление меняется лениво.
-                val drift = (rng.nextDouble() - 0.45) * sp * 0.35
-                a.distKm = (a.distKm + drift).coerceIn(0.4, homeRange(a.kind))
+                //
+                // Голодный зверь бродит НЕ равномерно: он обходит участок,
+                // и лагерь на этом участке — самая заметная аномалия. Волк
+                // помнит, где пахло дымом, даже когда ветер сменился.
+                // Без этого стая, разминувшись с подветренным сектором,
+                // уходила на десять километров и не возвращалась неделями.
+                // Любопытство работает только ИЗДАЛЕКА: голодный зверь
+                // возвращается в тот угол участка, где однажды пахло дымом.
+                // Вблизи оно выключается — иначе волк превращался в собаку
+                // и сутками сидел у палатки (проверено: 43% дней у лагеря).
+                val curiosity =
+                    if (a.kind == MOOSE || a.distKm < FAR_KM) 0.0 else a.hunger * 0.25
+                val drift = (rng.nextDouble() - 0.45 - curiosity) * sp * 0.35
+                var nd = a.distKm + drift
+                // Не чуя лагеря, зверь не подходит вплотную просто так: у него
+                // свои дела. Исключение — росомаха, ей чужие дела интересны.
+                val floor = if (a.kind == WOLVERINE) WOLVERINE_SHY_KM else SHY_KM
+                if (nd < floor) nd = floor + rng.nextDouble() * 0.6
+                a.distKm = nd.coerceIn(0.4, homeRange(a.kind))
                 if (rng.nextDouble() < 0.3) {
                     a.sector = (a.sector + (if (rng.nextDouble() < 0.5) 1 else 7) + 8) % 8
                 }
@@ -227,8 +260,36 @@ object FaunaModel {
         val trackChance = if ((near?.distKm ?: 9.0) < 1.0) 0.5 else 0.3
         val tracker = if (near != null && rng.nextDouble() < trackChance) near else null
 
+        val event = pickEvent(agents, kill, wolvesNear, st, rng)
+
+        // ПОСЛЕДСТВИЕ ВИЗИТА. Этого не хватало, и без него зверь, дошедший до
+        // лагеря, там и оставался: росомаха жила у палатки треть экспедиции.
+        // В жизни визит всегда чем-то кончается — и зверь уходит.
+        if (event != null) {
+            val who = agents.firstOrNull { it.kind == event.kind && it.alive }
+            when (event.key) {
+                // Наелась — и ушла отсыпаться. Голод сброшен, участок сменён.
+                "fauna.wolverine.camp" -> if (who != null) {
+                    who.hunger = 0.0
+                    who.distKm = 6.0 + rng.nextDouble() * 8.0
+                    who.sector = rng.nextInt(8)
+                }
+                // Разошлись. Медведь не охотится на человека — он его избегает,
+                // просто делает это неторопливо и с достоинством.
+                "fauna.bear.encounter" -> if (who != null) {
+                    who.distKm = 4.0 + rng.nextDouble() * 6.0
+                    who.sector = rng.nextInt(8)
+                }
+                // Обошли, изучили, ушли. Стая не штурмует лагерь — она его читает.
+                "fauna.wolf.circle" -> if (who != null) {
+                    who.distKm = 2.5 + rng.nextDouble() * 3.0
+                }
+                else -> {}
+            }
+        }
+
         return DayResult(
-            event = pickEvent(agents, kill, wolvesNear, st, rng),
+            event = event,
             trackKind = tracker?.kind,
             trackDistKm = tracker?.distKm ?: 99.0,
             wolvesNearKm = wolvesNear,
@@ -249,8 +310,11 @@ object FaunaModel {
     ): FaunaEvent? {
         fun a(kind: String) = agents.firstOrNull { it.kind == kind && it.alive && !it.asleep }
 
+        // Встреча глаза в глаза — редчайшее событие, и такой она должна
+        // остаться. Медведь подходит вплотную, только если по-настоящему
+        // голоден; сытый обойдёт стороной, и это будет «медведь рядом».
         val bear = a(BEAR)
-        if (bear != null && bear.distKm < 0.35) {
+        if (bear != null && bear.distKm < 0.35 && bear.hunger > 0.82) {
             return FaunaEvent("fauna.bear.encounter", BEAR, bear.distKm, 1)
         }
         val wolverine = a(WOLVERINE)
@@ -272,7 +336,13 @@ object FaunaModel {
         }
         // Вой слышно далеко, но только в тихую погоду: в бурю не слышно
         // собственных мыслей, не то что волков за пять километров.
-        if (wolf != null && wolvesNear < 6.0 && st.wind <= 1 && rng.nextDouble() < 0.28) {
+        //
+        // Пауза обязательна. Когда стая стала патрулировать ближе, вой пошёл
+        // через день и перестал быть событием — а событие, которое случается
+        // всегда, событием быть перестаёт.
+        if (wolf != null && wolvesNear < 4.5 && st.wind <= 1 &&
+            wolf.quietDays >= HOWL_PAUSE && rng.nextDouble() < 0.28) {
+            wolf.quietDays = 0
             return FaunaEvent("fauna.wolf.howl", WOLF, wolvesNear, wolf.packSize)
         }
         val lynx = a(LYNX)

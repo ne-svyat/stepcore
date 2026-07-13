@@ -304,7 +304,9 @@ class SurvivalEngine(
             st.snowCm >= 40 && prev.snowCm < 40 -> "wx.snow_deep"
 
             // --- небо ---
-            st.cloud == 0 && prev.overcastStreak >= 4 -> "wx.clear_streak"
+            // Туман важнее облачности: шапка дня в тумане пишет «туманно»,
+            // и строка «Наконец ясно» рядом с ней была прямой ложью.
+            st.cloud == 0 && !st.fog && prev.overcastStreak >= 4 -> "wx.clear_streak"
             st.fog && !prev.fog -> "wx.fog"
             st.cloud == 2 && st.precip == 0 && st.overcastStreak >= 6 &&
                 st.overcastStreak % 3 == 0 -> "wx.gloom_hold"
@@ -415,7 +417,10 @@ class SurvivalEngine(
         fun phaseOf(category: String, key: String): Int = when {
             category == "track" -> MORNING
             key == "wx.fog" || key == "wx.rain_stop" ||
-                key == "wx.snow_stop" || key == "wx.clear_streak" -> MORNING
+                key == "wx.snow_stop" || key == "wx.clear_streak" ||
+                // «Утром всё белое» — первый снег замечают, выйдя из палатки,
+                // а не в середине дня.
+                key == "wx.snow_first" -> MORNING
             key.startsWith("wx.blizzard") -> NIGHT
             key == "fauna.wolf.howl" || key == "fauna.wolf.circle" ||
                 key.startsWith("fauna.wolverine") -> NIGHT

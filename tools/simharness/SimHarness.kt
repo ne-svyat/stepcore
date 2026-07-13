@@ -114,6 +114,7 @@ fun main(args: Array<String>) {
         var badTrackInSnowfall = 0
         var badBear = 0
         var badSky = 0
+        val animalKeys = HashMap<String, Int>()
         var badPhase = 0
         var trackNotMorning = 0
         var howlNotNight = 0
@@ -149,6 +150,7 @@ fun main(args: Array<String>) {
                 if (e.key == "fauna.wolf.howl" && e.phase != SurvivalEngine.NIGHT) howlNotNight++
                 val pc = e.ctx["precip"] ?: 0
                 if ((pc == 2 || pc == 4) && (e.ctx["cloud"] ?: 0) < 2) badSky++
+                if (e.category == "animal") animalKeys[e.key] = (animalKeys[e.key] ?: 0) + 1
                 if (e.category == "track") {
                     val cm = e.ctx["snowcm"] ?: 0
                     val pr = e.ctx["precip"] ?: 0
@@ -198,6 +200,7 @@ fun main(args: Array<String>) {
         }
 
         val perDayRate = events.toDouble() / days
+        println("ЗВЕРЬ по ключам: " + animalKeys.entries.sortedByDescending { it.value }.joinToString(" · ") { it.key + "=" + it.value })
         println("события/день = " + String.format("%.3f", perDayRate) +
             "  (погода " + weather + " · сводки " + digests + " · зарисовки " + ambient +
             " · вехи " + milestones + " · следы " + tracks + ")")
