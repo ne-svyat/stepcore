@@ -128,6 +128,21 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(this, CalibrationActivity::class.java))
         }
         val toggleBtn = findViewById<Button>(R.id.toggleButton)
+
+        // Кнопка перестаёт быть кнопкой и становится сигналом. Пока счёт не
+        // идёт, она зелёная и пульсирует; забыть нажать её теперь невозможно.
+        // Цена забывчивости - потерянные шаги, то есть единственное, ради чего
+        // приложение существует.
+        val pulseBg = PulseButtonDrawable(
+            density = resources.displayMetrics.density,
+            colorGo = ContextCompat.getColor(this, R.color.accent_green),
+            colorStop = ContextCompat.getColor(this, R.color.accent_red_bright),
+            fillGo = ContextCompat.getColor(this, R.color.surface_green),
+            fillStop = ContextCompat.getColor(this, R.color.surface_red),
+        )
+        toggleBtn.background = pulseBg
+        toggleBtn.stateListAnimator = null
+        toggleBtn.elevation = 0f
         val historyBtn = findViewById<View>(R.id.historyButton)
         val hapticSwitch = findViewById<SwitchCompat>(R.id.hapticSwitch)
         val detailLogSwitch = findViewById<SwitchCompat>(R.id.detailLogSwitch)
@@ -245,8 +260,17 @@ class MainActivity : AppCompatActivity() {
                 }
                 launch {
                     StepsState.serviceRunning.collect { running ->
-                        statusView.text = if (running) "Считаю шаги" else "Остановлено"
+                        statusView.text = if (running) "Считаю шаги" else "СЧЁТ НЕ ИДЁТ"
+                        statusView.setTextColor(ContextCompat.getColor(
+                            this@MainActivity,
+                            if (running) R.color.text_dim else R.color.accent_red_bright,
+                        ))
                         toggleBtn.text = if (running) "Стоп" else "Старт"
+                        toggleBtn.setTextColor(ContextCompat.getColor(
+                            this@MainActivity,
+                            if (running) R.color.accent_red_bright else R.color.accent_green,
+                        ))
+                        pulseBg.setRunning(running)
                     }
                 }
                 launch {

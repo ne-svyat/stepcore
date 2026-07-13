@@ -14,6 +14,11 @@
     <color name="accent_violet">#7F77DD</color>
     <color name="accent_violet_bright">#AFA9EC</color>
     <color name="surface_violet">#1A1830</color>
+    <!-- Зелёный смысла «можно и нужно нажать». Отдельный от бирюзового
+         accent_teal: тот несёт данные, этот - действие. -->
+    <color name="accent_green">#19D45C</color>
+    <color name="surface_green">#0B2416</color>
+    <color name="surface_red">#2A1010</color>
     <color name="accent_amber">#EF9F27</color>
     <color name="accent_amber_bright">#FAC775</color>
     <color name="surface_amber">#241A08</color>
