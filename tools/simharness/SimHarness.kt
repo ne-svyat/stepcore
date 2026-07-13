@@ -666,6 +666,42 @@ fun main(args: Array<String>) {
         check("radar.scent_matches_world", mismatch == 0, "" + mismatch)
     }
 
+    // --- 10. ОТЧЁТ РАДАРА: текст не имеет права расходиться с экраном ---
+    run {
+        var bad = 0
+        var machineLines = 0L
+        var reports = 0L
+        for (i in 0 until 500) {
+            val seed = 550000L + i * 23L
+            val eng = SurvivalEngine(seed, i % 4, SurvivalEngine.startOffsetFrom(seed), 2)
+            val obs = eng.observations(80 * SurvivalEngine.PHASES)
+            val snaps = eng.daySnapshots(80)
+            for (t in intArrayOf(1, 7, 30, 80)) {
+                val rec = RadarModel.build(obs.filter { it.tick <= t }, snaps[t - 1], t)
+                val txt = RadarModel.report(1L, SurvivalEngine.headerOf(snaps[t - 1]), rec)
+                reports++
+                if (!txt.startsWith("РАДАР")) bad++
+                if (!txt.contains("# day=" + t)) bad++
+                // машинных строк ровно столько, сколько меток на экране
+                val lines = txt.lines().filter { it.startsWith("# ") && !it.contains("day=") }
+                if (lines.size != rec.marks.size) bad++
+                machineLines += lines.size
+                // каждый зверь назван по-русски ровно один раз
+                for (m in rec.marks) {
+                    if (!txt.contains(RadarModel.kindRu(m.kind))) bad++
+                    if (m.attention && !txt.contains("ЧУЕТ ЛАГЕРЬ")) bad++
+                }
+                // отчёт не имеет права упоминать зверя, которого нет на радаре
+                for (k in rec.unknown) {
+                    if (txt.contains("# " + k + " ")) bad++
+                }
+                if (txt.contains("{") || txt.contains("null")) bad++
+            }
+        }
+        println("отчёты радара: " + reports + " · машинных строк " + machineLines)
+        check("report.matches_screen", bad == 0, "" + bad)
+    }
+
     if (failures == 0) {
         println("OK: все инварианты выдержаны")
     } else {

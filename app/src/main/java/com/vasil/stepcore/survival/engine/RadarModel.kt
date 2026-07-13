@@ -202,4 +202,87 @@ object RadarModel {
         val v = Math.round(km * 10.0) / 10.0
         return v.toString().replace('.', ',') + " км"
     }
+
+    /** Число с одним знаком после точки — для машинных строк. */
+    private fun f1(v: Double): String = (Math.round(v * 10.0) / 10.0).toString()
+
+    private fun f2(v: Double): String = (Math.round(v * 100.0) / 100.0).toString()
+
+    private fun srcTag(source: Int): String = when (source) {
+        Obs.SEEN -> "seen"
+        Obs.TRACK -> "track"
+        else -> "heard"
+    }
+
+    /**
+     * ОТЧЁТ РАДАРА — то же знание, но текстом.
+     *
+     * Скриншот не годится: по картинке не видно ни точных километров, ни
+     * возраста сведений, ни источника метки. Поэтому отчёт двухслойный.
+     *
+     * Верх — для человека: ровно те же слова, что на экране.
+     * Низ (строки с решёткой) — для разбора: сырые числа, из которых экран
+     * и нарисован. Если радар однажды соврёт, ложь будет видна именно здесь,
+     * а не в пересказе. Так же устроен экспорт журнала — и именно он ловил
+     * баги, которых не видели инварианты.
+     */
+    fun report(expId: Long, header: String, r: Recon): String {
+        val sb = StringBuilder()
+        sb.append("РАДАР · экспедиция №").append(expId)
+            .append(" · день ").append(r.day).append('\n')
+        if (header.isNotEmpty()) sb.append(header).append('\n')
+        if (r.hasWorld) {
+            if (r.calm) {
+                sb.append("штиль: запах стоит вокруг лагеря, ")
+                    .append(kmRu(r.scentKm)).append('\n')
+            } else {
+                sb.append("ветер ").append(Compass.RU[r.windDir])
+                    .append(" -> запах несёт на ").append(Compass.RU[r.downwind])
+                    .append(", ").append(kmRu(r.scentKm)).append('\n')
+            }
+        }
+        sb.append('\n')
+
+        if (r.marks.isEmpty()) {
+            sb.append("Пока ничего. Следов нет, голосов не слышно.\n")
+        }
+        for (m in r.marks) {
+            sb.append(kindRu(m.kind))
+            if (m.kind == FaunaModel.WOLF && m.packSize > 1) {
+                sb.append(", ").append(m.packSize)
+            }
+            sb.append(" — ").append(Compass.RU[m.sector])
+                .append(", ").append(kmRu(m.distKm))
+            sb.append(" · ").append(ageRu(m.ageDays))
+                .append(", ").append(sourceRu(m.source))
+            if (m.attention) sb.append(" · ЧУЕТ ЛАГЕРЬ")
+            else if (m.stale) sb.append(" · сведения устарели")
+            sb.append('\n')
+        }
+        if (r.unknown.isNotEmpty()) {
+            sb.append("Ни разу не встречены: ")
+                .append(r.unknown.joinToString(" · ") { kindRu(it) }).append('\n')
+        }
+
+        sb.append("\n#== данные для разбора\n")
+        sb.append("# day=").append(r.day)
+            .append(" windir=").append(r.windDir)
+            .append(" down=").append(r.downwind)
+            .append(" calm=").append(if (r.calm) 1 else 0)
+            .append(" scent=").append(f1(r.scentKm))
+            .append('\n')
+        for (m in r.marks) {
+            sb.append("# ").append(m.kind)
+                .append(" sec=").append(m.sector)
+                .append(" d=").append(f2(m.distKm))
+                .append(" age=").append(m.ageDays)
+                .append(" src=").append(srcTag(m.source))
+                .append(" u=").append(f2(m.uncertaintyKm))
+                .append(" fresh=").append(f2(m.freshness))
+                .append(" hot=").append(if (m.attention) 1 else 0)
+                .append(" pack=").append(m.packSize)
+                .append('\n')
+        }
+        return sb.toString().trimEnd()
+    }
 }

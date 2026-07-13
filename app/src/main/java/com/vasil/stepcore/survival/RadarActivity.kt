@@ -1,5 +1,9 @@
 package com.vasil.stepcore.survival
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
 import android.graphics.Typeface
 import android.os.Bundle
 import android.view.Gravity
@@ -31,6 +35,9 @@ class RadarActivity : AppCompatActivity() {
     private lateinit var factsText: TextView
     private lateinit var legendBox: LinearLayout
 
+    /** Готовый отчёт текущего экрана. Считается один раз при отрисовке. */
+    private var report: String = ""
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_radar)
@@ -42,17 +49,39 @@ class RadarActivity : AppCompatActivity() {
         legendBox = findViewById(R.id.radarLegend)
         findViewById<Button>(R.id.radarBackBtn).setOnClickListener { finish() }
 
+        findViewById<Button>(R.id.radarCopyBtn).setOnClickListener {
+            if (report.isEmpty()) return@setOnClickListener
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            cm.setPrimaryClip(ClipData.newPlainText("Радар", report))
+            android.widget.Toast.makeText(this, "Отчёт скопирован",
+                android.widget.Toast.LENGTH_SHORT).show()
+        }
+        findViewById<Button>(R.id.radarShareBtn).setOnClickListener {
+            if (report.isEmpty()) return@setOnClickListener
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_SUBJECT, "Радар окрестностей")
+                putExtra(Intent.EXTRA_TEXT, report)
+            }
+            startActivity(Intent.createChooser(send, "Поделиться отчётом"))
+        }
+
         val id = intent.getLongExtra(EXTRA_ID, -1L)
         lifecycleScope.launch {
             val e = repo.byId(id)
             if (e == null) { finish(); return@launch }
-            render(e, repo.recon(e))
+            val day = repo.days(e).lastOrNull()
+            val header = if (day == null) "" else SurvivalEngine.headerOf(day)
+            render(e, repo.recon(e), header)
         }
     }
 
-    private fun render(e: Expedition, r: RadarModel.Recon) {
+    private fun render(e: Expedition, r: RadarModel.Recon, header: String) {
         titleText.text = "Окрестности · экспедиция №" + e.id
         radar.setRecon(r)
+        // Отчёт строится из того же снимка знания, что и картинка: текст и
+        // экран не могут разойтись даже теоретически.
+        report = RadarModel.report(e.id, header, r)
 
         val sb = StringBuilder()
         sb.append("День ").append(r.day)
