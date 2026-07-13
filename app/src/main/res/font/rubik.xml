@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Семейство шрифта приложения.
+
+    Caveat был красив, но нечитаем на ходу — а «на ходу» и есть основной
+    сценарий шагомера: взгляд на экран длится долю секунды, боковым зрением,
+    в движении. Красота, которую невозможно прочесть, не является красотой.
+
+    Rubik: 500 — основной текст, 700 — заголовки и числа. Жирное начертание
+    берётся из НАСТОЯЩЕГО файла 700, а не синтетически утолщается системой,
+    поэтому буквы остаются собой.
+
+    Лицензия OFL. Подмножество: латиница, полная кириллица, знаки препинания.
+-->
+<font-family xmlns:android="http://schemas.android.com/apk/res/android">
+    <font
+        android:font="@font/rubik_regular"
+        android:fontWeight="500"
+        android:fontStyle="normal" />
+    <font
+        android:font="@font/rubik_bold"
+        android:fontWeight="700"
+        android:fontStyle="normal" />
+</font-family>

@@ -16,7 +16,7 @@
              приложение. Явные fontFamily в разметке сняты, иначе они бы
              перекрыли тему. Исключение - monospace в диагностике: там
              моноширинность несёт смысл (колонки чисел). -->
-        <item name="android:fontFamily">@font/caveat</item>
-        <item name="fontFamily">@font/caveat</item>
+        <item name="android:fontFamily">@font/rubik</item>
+        <item name="fontFamily">@font/rubik</item>
     </style>
 </resources>

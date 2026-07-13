@@ -16,6 +16,7 @@
             android:text="TIMELINE"
             android:textColor="@color/accent_red"
             android:textSize="33sp"
+                    android:textStyle="bold"
             android:letterSpacing="0.05" />
 
         <com.vasil.stepcore.DoodleSceneView

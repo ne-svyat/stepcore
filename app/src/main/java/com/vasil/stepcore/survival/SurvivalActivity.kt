@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.Typeface
 import android.os.Bundle
 import android.view.View
 import android.widget.Button
@@ -497,6 +498,9 @@ class SurvivalActivity : AppCompatActivity() {
         top.addView(TextView(this).apply {
             text = if (tick == 0) "Старт" else "Д" + tick
             textSize = 17f
+            // Жирное начертание берётся из семейства шрифта (700), а не
+            // из синтетического утолщения системой: буквы остаются теми же.
+            setTypeface(typeface, Typeface.BOLD)
             setTextColor(ContextCompat.getColor(this@SurvivalActivity, R.color.accent_red))
             setPadding(dp(if (head != null) 8 else 0), 0, dp(8), 0)
         })
@@ -504,6 +508,7 @@ class SurvivalActivity : AppCompatActivity() {
             top.addView(TextView(this).apply {
                 text = SurvivalEngine.headerOf(head)
                 textSize = 15f
+                setTypeface(typeface, Typeface.BOLD)
                 setTextColor(ContextCompat.getColor(this@SurvivalActivity, R.color.text_dim))
             })
         }

@@ -55,10 +55,10 @@ object JournalStyle {
      * дневником, а не приборной панелью, но глаз всё равно цепляется.
      */
     fun markOf(category: String): String = when (category) {
-        MILESTONE -> "◆"
+        MILESTONE -> "»"
         RADIO -> "((•))"
-        TRACK -> "⌇"
-        ANIMAL -> "❧"
+        TRACK -> "~"
+        ANIMAL -> "•"
         else -> "·"
     }
 

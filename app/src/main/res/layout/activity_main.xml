@@ -92,7 +92,8 @@
                     android:layout_height="wrap_content"
                     android:text="0"
                     android:textColor="@color/text_main"
-                    android:textSize="44sp" />
+                    android:textSize="44sp"
+                    android:textStyle="bold" />
 
                 <TextView
                     android:id="@+id/goalText"
@@ -263,7 +264,8 @@
                         android:id="@+id/ySteps"
                         android:layout_width="wrap_content" android:layout_height="wrap_content"
                         android:text="нет данных" android:textColor="@color/text_main"
-                        android:textSize="31sp" android:layout_marginTop="2dp" />
+                        android:textSize="31sp"
+                    android:textStyle="bold" android:layout_marginTop="2dp" />
 
                     <LinearLayout
                         android:id="@+id/yesterdayDetailsGroup"
@@ -318,7 +320,8 @@
                         android:id="@+id/tSteps"
                         android:layout_width="wrap_content" android:layout_height="wrap_content"
                         android:text="0" android:textColor="@color/text_main"
-                        android:textSize="31sp" android:layout_marginTop="2dp" />
+                        android:textSize="31sp"
+                    android:textStyle="bold" android:layout_marginTop="2dp" />
 
                     <TextView android:id="@+id/tKm" android:layout_width="wrap_content"
                         android:layout_height="wrap_content" android:text=""
