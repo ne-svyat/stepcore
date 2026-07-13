@@ -96,26 +96,38 @@ object ScentModel {
      * почти не пахнет. Дождь смывает запах, снегопад глушит. Туман и
      * инверсия держат его низко и далеко.
      */
-    fun campScentKm(st: WeatherState): Double {
+    fun campScentKm(st: WeatherState): Double =
+        campScentKm(st.wind, st.tempC, st.precip, st.fog)
+
+    /**
+     * Та же дальность, но из голых цифр дня.
+     *
+     * Нужна радару. Состояние мира не сериализуется, зато карточка дня
+     * (DaySnap) несёт ровно те четыре цифры, от которых запах и зависит:
+     * ветер, температура, осадки, туман. Поэтому радар считает ту же
+     * величину, что и зверь, — а не свою собственную «примерно такую же».
+     * Инвариант в песочнице сверяет обе ветки на каждом дне мира.
+     */
+    fun campScentKm(wind: Int, tempC: Int, precip: Int, fog: Boolean): Double {
         var r = BASE_KM
-        r *= when (st.wind) {
+        r *= when (wind) {
             0 -> 0.6
             1 -> 1.0
             2 -> 1.45
             else -> 0.75
         }
         r *= when {
-            st.tempC <= -20 -> 0.5
-            st.tempC <= -5 -> 0.75
-            st.tempC >= 10 -> 1.3
+            tempC <= -20 -> 0.5
+            tempC <= -5 -> 0.75
+            tempC >= 10 -> 1.3
             else -> 1.0
         }
-        r *= when (st.precip) {
+        r *= when (precip) {
             1, 2 -> 0.35   // дождь смывает
             3, 4 -> 0.6    // снегопад глушит
             else -> 1.0
         }
-        if (st.fog) r *= 1.3
+        if (fog) r *= 1.3
         return r
     }
 
@@ -125,12 +137,26 @@ object ScentModel {
      * @param nose чутьё зверя: медведь 1.6, волк 1.5, росомаха 1.4,
      *             лиса 1.0, лось 0.7, рысь 0.5 (охотится глазами)
      */
-    fun smells(distKm: Double, sector: Int, st: WeatherState, windDir: Int, nose: Double): Boolean {
-        val reach = campScentKm(st) * nose
+    fun smells(distKm: Double, sector: Int, st: WeatherState, windDir: Int, nose: Double): Boolean =
+        smells(distKm, sector, st.wind, st.tempC, st.precip, st.fog, windDir, nose)
+
+    /** То же правило из цифр дня — для радара. Одна физика на всех. */
+    fun smells(
+        distKm: Double, sector: Int,
+        wind: Int, tempC: Int, precip: Int, fog: Boolean,
+        windDir: Int, nose: Double,
+    ): Boolean {
+        val reach = campScentKm(wind, tempC, precip, fog) * nose
         // Штиль: сектора нет, запах расходится кругом, но недалеко.
-        if (st.wind == 0) return distKm <= reach * 0.5
+        if (wind == 0) return distKm <= reach * 0.5
         // Зверь должен стоять ТАМ, КУДА уносит запах.
         if (Compass.diff(sector, Compass.downwind(windDir)) > 1) return false
         return distKm <= reach
+    }
+
+    /** Докуда достаёт запах СЕГОДНЯ для зверя с обычным чутьём. */
+    fun reachKm(wind: Int, tempC: Int, precip: Int, fog: Boolean): Double {
+        val r = campScentKm(wind, tempC, precip, fog)
+        return if (wind == 0) r * 0.5 else r
     }
 }

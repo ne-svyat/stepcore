@@ -5,6 +5,8 @@ import com.vasil.stepcore.survival.engine.Corpus
 import com.vasil.stepcore.survival.engine.Compass
 import com.vasil.stepcore.survival.engine.DaySnap
 import com.vasil.stepcore.survival.engine.FaunaModel
+import com.vasil.stepcore.survival.engine.Obs
+import com.vasil.stepcore.survival.engine.RadarModel
 import com.vasil.stepcore.survival.engine.ScentModel
 import com.vasil.stepcore.survival.engine.SplitMix64
 import com.vasil.stepcore.survival.engine.WeatherModel
@@ -22,6 +24,14 @@ import java.io.File
  */
 
 private var failures = 0
+
+/**
+ * Отпечаток мира версии 2. Считается по событиям 50 сидов x 100 дней.
+ * Пока ENGINE_VERSION не меняется, эта константа неприкосновенна: любой
+ * новый слой обязан жить в своём потоке случайности и не двигать погоду,
+ * ветер и зверя уже начатых экспедиций.
+ */
+private const val WORLD_FINGERPRINT = "5ad63198a83e0fe9"
 
 private fun check(name: String, ok: Boolean, detail: String = "") {
     if (!ok) {
@@ -516,6 +526,144 @@ fun main(args: Array<String>) {
             check("plural." + n, SurvivalEngine.daysWord(n) == w,
                 SurvivalEngine.daysWord(n))
         }
+    }
+
+    // --- 8. ОТПЕЧАТОК МИРА: новые слои не двигают старые миры ---
+    //     Хеш всех событий 50 сидов x 100 дней. Любой лишний бросок кубика
+    //     в общем потоке — и константа разъедется. Именно так проверяется
+    //     обещание «слой добавляется, экспедиции не ломаются».
+    //     Меняется ЛЕГАЛЬНО только вместе с ENGINE_VERSION.
+    run {
+        var h = 1125899906842597L
+        for (i in 0 until 50) {
+            val season = i % 4
+            val seed = 424242L + i * 977L
+            SurvivalEngine(seed, season, SurvivalEngine.startOffsetFrom(seed), 2)
+                .run(0, 100 * SurvivalEngine.PHASES) { e ->
+                    val sg = "" + e.tick + "|" + e.category + "|" + e.key + "|" + e.roll +
+                        "|" + e.phase + "|" + e.nth + "|" + e.params + "|" + e.ctx
+                    for (c in sg) h = 31 * h + c.code
+                }
+        }
+        val fp = java.lang.Long.toHexString(h)
+        println("отпечаток мира: " + fp)
+        check("world.fingerprint_frozen", fp == WORLD_FINGERPRINT,
+            "было " + WORLD_FINGERPRINT + ", стало " + fp)
+    }
+
+    // --- 9. РАДАР: наблюдения и туман войны (200 000 дней мира) ---
+    run {
+        var obsTotal = 0L
+        var days = 0L
+        var badSector = 0; var badDist = 0; var badAge = 0; var badMark = 0
+        var knownDays = 0L
+        var attentionDays = 0L
+        val bySource = IntArray(3)
+        for (i in 0 until 2000) {
+            val season = i % 4
+            val seed = 310000L + i * 41L
+            val eng = SurvivalEngine(seed, season, SurvivalEngine.startOffsetFrom(seed), 2)
+            val obs = eng.observations(100 * SurvivalEngine.PHASES)
+            val snaps = eng.daySnapshots(100)
+            for (o in obs) {
+                obsTotal++
+                if (o.sector < 0 || o.sector > 7) badSector++
+                if (o.distKm <= 0.0 || o.distKm > 40.0) badDist++
+                if (o.tick < 1 || o.tick > 100) badAge++
+                if (o.source in 0..2) bySource[o.source]++ else badAge++
+            }
+            for (t in 1..100) {
+                days++
+                val upto = obs.filter { it.tick <= t }
+                val rec = RadarModel.build(upto, snaps[t - 1], t)
+                if (rec.marks.isNotEmpty()) knownDays++
+                if (rec.marks.any { it.attention }) attentionDays++
+                for (m in rec.marks) {
+                    if (m.ageDays < 0 || m.ageDays > RadarModel.FORGET_DAYS) badMark++
+                    if (m.attention && m.ageDays != 0) badMark++
+                    if (m.uncertaintyKm >= RadarModel.FORGET_KM) badMark++
+                    if (m.freshness <= 0.0 || m.freshness > 1.0) badMark++
+                }
+                if (rec.marks.size + rec.unknown.size != RadarModel.KINDS.size &&
+                    rec.marks.size + rec.unknown.size > RadarModel.KINDS.size) badMark++
+            }
+        }
+        println("радар: наблюдений " + obsTotal + " (видел " + bySource[0] +
+            " · след " + bySource[1] + " · слух " + bySource[2] +
+            ") · дней со сведениями " + (knownDays * 100 / days) +
+            " проц. · дней тревоги " + (attentionDays * 100 / days) + " проц.")
+        check("radar.sector_in_range", badSector == 0, "" + badSector)
+        check("radar.dist_sane", badDist == 0, "" + badDist)
+        check("radar.obs_sane", badAge == 0, "" + badAge)
+        check("radar.mark_sane", badMark == 0, "" + badMark)
+        check("radar.obs_exist", obsTotal > 0, "" + obsTotal)
+        // Радар не должен ни молчать всегда, ни знать всё всегда.
+        check("radar.knows_sometimes", knownDays * 100 / days in 5..90,
+            "" + (knownDays * 100 / days))
+        check("radar.alarm_is_rare", attentionDays * 100 / days <= 30,
+            "" + (attentionDays * 100 / days))
+    }
+
+    // --- 9b. Радар не знает того, о чём журнал промолчал ---
+    run {
+        var orphan = 0
+        var mid = 0
+        for (i in 0 until 300) {
+            val seed = 610000L + i * 7L
+            val eng = SurvivalEngine(seed, i % 4, SurvivalEngine.startOffsetFrom(seed), 2)
+            val ticks = HashSet<Int>()
+            val obs = ArrayList<Obs>()
+            eng.run(0, 100 * SurvivalEngine.PHASES, { obs.add(it) }) { e ->
+                if (e.category == "animal" || e.category == "track") ticks.add(e.tick)
+            }
+            for (o in obs) if (!ticks.contains(o.tick)) orphan++
+
+            // догон, оборванный на утре: вечерние наблюдения того же дня
+            // ещё не случились — радар не имеет права их показывать
+            val g = SurvivalEngine.globalPhase(41, SurvivalEngine.MORNING)
+            val part = eng.observations(g)
+            if (part.any { it.tick == 41 && it.phase > SurvivalEngine.MORNING }) mid++
+            if (part.any { it.tick > 41 }) mid++
+            // и наблюдения только копятся: префикс полного списка
+            val full = eng.observations(100 * SurvivalEngine.PHASES)
+            if (full.take(part.size) != part) mid++
+        }
+        check("radar.no_orphan_observations", orphan == 0, "" + orphan)
+        check("radar.obs_phase_gated_and_append_only", mid == 0, "" + mid)
+    }
+
+    // --- 9c. Туман войны: знание расползается и в конце концов гаснет ---
+    run {
+        check("radar.uncertainty_grows",
+            RadarModel.uncertaintyKm(FaunaModel.WOLF, Obs.SEEN, 1) >
+                RadarModel.uncertaintyKm(FaunaModel.WOLF, Obs.SEEN, 0))
+        check("radar.freshness_fades", RadarModel.freshness(3) < RadarModel.freshness(0))
+        check("radar.hearing_is_vaguer_than_sight",
+            RadarModel.baseErrKm(Obs.HEARD) > RadarModel.baseErrKm(Obs.SEEN))
+        // волк за неделю забывается полностью, лось помнится дольше
+        check("radar.wolf_forgotten_fast",
+            RadarModel.uncertaintyKm(FaunaModel.WOLF, Obs.SEEN, 5) >= RadarModel.FORGET_KM)
+        check("radar.moose_remembered_longer",
+            RadarModel.uncertaintyKm(FaunaModel.MOOSE, Obs.SEEN, 5) < RadarModel.FORGET_KM)
+    }
+
+    // --- 9d. Запах радара == запах зверя. Одна физика, две ветки кода ---
+    run {
+        var mismatch = 0
+        for (i in 0 until 300) {
+            val seed = 990000L + i * 11L
+            val eng = SurvivalEngine(seed, i % 4, SurvivalEngine.startOffsetFrom(seed), 2)
+            val snaps = eng.daySnapshots(60).associateBy { it.tick }
+            eng.run(0, 60 * SurvivalEngine.PHASES) { e ->
+                val d = snaps[e.tick]
+                if (d != null) {
+                    val s10 = (ScentModel.campScentKm(d.wind, d.tempC, d.precip, d.fog) * 10).toInt()
+                    if (s10 != (e.ctx["scent"] ?: s10)) mismatch++
+                    if (d.windDir != (e.ctx["windir"] ?: d.windDir)) mismatch++
+                }
+            }
+        }
+        check("radar.scent_matches_world", mismatch == 0, "" + mismatch)
     }
 
     if (failures == 0) {

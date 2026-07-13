@@ -9,6 +9,7 @@ import com.vasil.stepcore.survival.engine.ExpeditionSummary
 import com.vasil.stepcore.survival.engine.SplitMix64
 import com.vasil.stepcore.survival.engine.StepLedger
 import com.vasil.stepcore.survival.engine.DaySnap
+import com.vasil.stepcore.survival.engine.RadarModel
 import com.vasil.stepcore.survival.engine.SurvivalEngine
 import com.vasil.stepcore.survival.engine.WorldEvent
 import kotlinx.coroutines.sync.Mutex
@@ -59,6 +60,21 @@ class SurvivalRepo(private val context: Context) {
     fun days(e: Expedition): List<DaySnap> =
         SurvivalEngine(e.seed, e.startSeason, e.startOffset, e.engineVersion)
             .daySnapshots(e.ticksDone)
+
+    /**
+     * Что человек ЗНАЕТ об окрестностях — на последний прожитый день.
+     *
+     * Как и шапки дней, не хранится в базе: наблюдения пересчитываются из
+     * seed теми же правилами, по которым мир и прожит. Отсюда следствие:
+     * радар есть и у экспедиций, начатых до этого обновления, и у архивных
+     * — там он показывает знание на день, когда всё закончилось.
+     */
+    fun recon(e: Expedition): RadarModel.Recon {
+        val eng = SurvivalEngine(e.seed, e.startSeason, e.startOffset, e.engineVersion)
+        val obs = eng.observations(e.phasesDone)
+        val day = eng.daySnapshots(e.ticksDone).lastOrNull()
+        return RadarModel.build(obs, day, e.ticksDone)
+    }
 
     /**
      * Полный текст экспедиции для копирования/шаринга: шапка, журнал в

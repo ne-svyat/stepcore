@@ -72,6 +72,7 @@ class SurvivalActivity : AppCompatActivity() {
     private lateinit var syncNote: TextView
     private lateinit var journalBox: LinearLayout
     private lateinit var actionRow: LinearLayout
+    private lateinit var radarBtn: Button
     private lateinit var refreshBtn: Button
     private lateinit var finishBtn: Button
     private lateinit var backBtn: Button
@@ -98,6 +99,7 @@ class SurvivalActivity : AppCompatActivity() {
         syncNote = findViewById(R.id.syncNoteText)
         journalBox = findViewById(R.id.journalBox)
         actionRow = findViewById(R.id.actionRow)
+        radarBtn = findViewById(R.id.radarBtn)
         refreshBtn = findViewById(R.id.refreshBtn)
         finishBtn = findViewById(R.id.finishBtn)
         backBtn = findViewById(R.id.backBtn)
@@ -166,6 +168,15 @@ class SurvivalActivity : AppCompatActivity() {
                 v.isEnabled = true
                 refreshUi(runSync = false)
             }
+        }
+
+        // Окрестности открываются и у активной, и у архивной экспедиции:
+        // знание — часть истории мира, а не служебная панель живого режима.
+        radarBtn.setOnClickListener {
+            val id = shownId
+            if (id < 0) return@setOnClickListener
+            startActivity(Intent(this, RadarActivity::class.java)
+                .putExtra(RadarActivity.EXTRA_ID, id))
         }
 
         refreshBtn.setOnClickListener {

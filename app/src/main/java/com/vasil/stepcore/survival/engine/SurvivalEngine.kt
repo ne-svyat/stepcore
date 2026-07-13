@@ -23,6 +23,37 @@ data class WorldEvent(
 )
 
 /**
+ * НАБЛЮДЕНИЕ — то, что человек в лагере МОГ узнать о звере.
+ *
+ * Это не позиция зверя. Это отчёт очевидца, у которого есть глаза, уши и
+ * снег под ногами. Три источника — три разные честности:
+ *   SEEN  — видел сам: румб точен, расстояние почти точно;
+ *   TRACK — прочитал след утром: румб точен, расстояние — догадка;
+ *   HEARD — услышал вой или возню на добыче: и румб, и дальность на слух.
+ *
+ * НЕ ХРАНИТСЯ. Как и весь мир — пересчитывается из seed. Поэтому радар
+ * работает и у экспедиций, прожитых до этого обновления, и у архивных.
+ *
+ * Наблюдение рождается ровно там, где рождается СТРОКА ЖУРНАЛА, и ни на
+ * шаг раньше: радар не имеет права знать то, о чём журнал промолчал.
+ */
+data class Obs(
+    val tick: Int,
+    val phase: Int,
+    val kind: String,     // wolf / bear / wolverine / lynx / moose
+    val sector: Int,      // румб от лагеря: 0 С .. 7 СЗ
+    val distKm: Double,   // расстояние в МОМЕНТ наблюдения
+    val source: Int,      // SEEN / TRACK / HEARD
+    val packSize: Int,
+) {
+    companion object {
+        const val SEEN = 0
+        const val TRACK = 1
+        const val HEARD = 2
+    }
+}
+
+/**
  * Состояние одного дня мира для шапки карточки журнала.
  *
  * НЕ хранится в базе: мир детерминирован, поэтому день дешевле пересчитать
@@ -93,7 +124,12 @@ class SurvivalEngine(
      * Сводка считается только по ПОЛНОСТЬЮ прожитым дням: половина дня —
      * это ещё не день, и в статистику она попасть не может.
      */
-    fun run(fromExclusive: Int, toInclusive: Int, sink: (WorldEvent) -> Unit): ExpeditionSummary {
+    fun run(
+        fromExclusive: Int,
+        toInclusive: Int,
+        obsSink: (Obs) -> Unit = {},
+        sink: (WorldEvent) -> Unit,
+    ): ExpeditionSummary {
         var state = WeatherModel.initial(
             version, SplitMix64.forTick(seed, 0), yearDay(0), startSeason
         )
@@ -137,7 +173,8 @@ class SurvivalEngine(
             val fr = if (fauna.isEmpty()) null
                 else FaunaModel.step(fauna, state, windDir, seasonOf(t), seed, t)
 
-            emit(t, prev, state, rng, windDir, fr, seen, fromExclusive, toInclusive, sink)
+            emit(t, prev, state, rng, windDir, fr, seen, fromExclusive, toInclusive,
+                sink, obsSink)
         }
 
         val d = maxOf(fullDays, 0)
@@ -150,6 +187,19 @@ class SurvivalEngine(
             snowCoverDays = coverDays,
             maxSnowCm = maxSnow,
         )
+    }
+
+    /**
+     * Всё, что человек узнал о зверях к моменту toPhase.
+     *
+     * Мир проживается заново (это копейки арифметики), но НИ ОДНО событие
+     * наружу не выдаётся: интересны только наблюдения. Гейт по фазе тот же,
+     * что у журнала, — радар не забегает вперёд журнала даже на четверть дня.
+     */
+    fun observations(toPhase: Int): List<Obs> {
+        val out = ArrayList<Obs>()
+        run(toPhase, toPhase, { out.add(it) }) { }
+        return out
     }
 
     /**
@@ -190,7 +240,18 @@ class SurvivalEngine(
         rng: SplitMix64, windDir: Int, fr: FaunaModel.DayResult?,
         seen: HashMap<String, Int>, fromPhase: Int, toPhase: Int,
         sink: (WorldEvent) -> Unit,
+        obsSink: (Obs) -> Unit,
     ) {
+        // Наблюдение уходит наружу по тому же правилу, что и строка журнала:
+        // фаза должна быть ПРОЖИТА. Нижней границы нет — радар показывает
+        // всё, что человек знает, а не только новости последнего догона.
+        fun observe(ph: Int, kind: String, sector: Int, distKm: Double,
+                    source: Int, pack: Int) {
+            if (globalPhase(t, ph) <= toPhase) {
+                obsSink(Obs(t, ph, kind, sector, distKm, source, pack))
+            }
+        }
+
         // Выдача события: срабатывание ключа считается ВСЕГДА (иначе догон
         // кусками сдвигал бы выбор вариантов), а наружу событие уходит,
         // только если его фаза уже прожита и ещё не записана.
@@ -348,6 +409,12 @@ class SurvivalEngine(
                 "age" to st.snowAgeDays.toString(),
                 "km" to distWord(fr?.trackDistKm ?: 99.0),
             ), ctx)
+            // След АГЕНТА — наблюдение с румбом: цепочка уходит в конкретную
+            // сторону. Фоновый след (заяц, соболь) румба не несёт: он и в
+            // жизни ничего не говорит о том, где зверь сейчас.
+            if (agentTrack != null && fr != null) {
+                observe(MORNING, agentTrack, fr.trackSector, fr.trackDistKm, Obs.TRACK, 1)
+            }
         }
 
         // Зверь. Отдельная категория и отдельный цвет: это не погода и не быт,
@@ -359,6 +426,12 @@ class SurvivalEngine(
                 "pack" to ev.packSize.toString(),
                 "temp" to fmtTemp(st.tempC),
             ), ctx)
+            // Вой и возня на добыче — это СЛУХ: сторона примерно, дальность
+            // на глазок. Всё остальное человек видел своими глазами.
+            val src = if (ev.key == "fauna.wolf.howl" || ev.key == "fauna.wolf.kill")
+                Obs.HEARD else Obs.SEEN
+            observe(phaseOf("animal", ev.key), ev.kind, ev.sector, ev.distKm,
+                src, ev.packSize)
         } else if (track == null && wolvesKm < 2.5 &&
             st.snowCm >= TrackModel.MIN_SNOW_CM && st.precip < 3) {
             // Пустой лес под стаей — тоже сообщение. Отсутствие следов

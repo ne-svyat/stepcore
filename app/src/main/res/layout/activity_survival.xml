@@ -224,6 +224,13 @@
                     android:layout_marginTop="8dp"
                     android:visibility="gone" />
 
+                <Button
+                    android:id="@+id/radarBtn"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Окрестности"
+                    android:layout_marginTop="12dp" />
+
                 <LinearLayout
                     android:id="@+id/actionRow"
                     android:layout_width="match_parent"

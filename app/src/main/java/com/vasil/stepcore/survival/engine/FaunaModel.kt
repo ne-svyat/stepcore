@@ -50,7 +50,7 @@ object FaunaModel {
     const val MOOSE = "moose"
 
     /** Чутьё. Рысь охотится глазами и ушами — запах лагеря ей почти не говорит. */
-    private fun nose(kind: String): Double = when (kind) {
+    fun nose(kind: String): Double = when (kind) {
         BEAR -> 1.6
         WOLF -> 1.5
         WOLVERINE -> 1.4
@@ -105,12 +105,19 @@ object FaunaModel {
         var quietDays: Int = 0,      // сколько дней стая молчит (пауза между воями)
     )
 
-    /** Что произошло сегодня — одно, самое значимое событие. */
+    /**
+     * Что произошло сегодня — одно, самое значимое событие.
+     *
+     * sector добавлен в v112: событие всегда ЗНАЛО, где стоит зверь, просто
+     * не рассказывало. Журналу румб не нужен («волки выли за рекой» звучит
+     * лучше, чем «волки выли, азимут 45»), а радару — нужен.
+     */
     data class FaunaEvent(
         val key: String,
         val kind: String,
         val distKm: Double,
         val packSize: Int,
+        val sector: Int,
     )
 
     /** Итог дня фауны: событие + кто оставил след + давят ли волки на мелочь. */
@@ -118,6 +125,7 @@ object FaunaModel {
         val event: FaunaEvent?,
         val trackKind: String?,   // след агента (важнее фонового)
         val trackDistKm: Double,
+        val trackSector: Int,     // откуда пришёл след: румб от лагеря
         val wolvesNearKm: Double, // 99 если далеко
     )
 
@@ -292,6 +300,7 @@ object FaunaModel {
             event = event,
             trackKind = tracker?.kind,
             trackDistKm = tracker?.distKm ?: 99.0,
+            trackSector = tracker?.sector ?: 0,
             wolvesNearKm = wolvesNear,
         )
     }
@@ -315,24 +324,24 @@ object FaunaModel {
         // голоден; сытый обойдёт стороной, и это будет «медведь рядом».
         val bear = a(BEAR)
         if (bear != null && bear.distKm < 0.35 && bear.hunger > 0.82) {
-            return FaunaEvent("fauna.bear.encounter", BEAR, bear.distKm, 1)
+            return FaunaEvent("fauna.bear.encounter", BEAR, bear.distKm, 1, bear.sector)
         }
         val wolverine = a(WOLVERINE)
         if (wolverine != null && wolverine.distKm < 0.35) {
-            return FaunaEvent("fauna.wolverine.camp", WOLVERINE, wolverine.distKm, 1)
+            return FaunaEvent("fauna.wolverine.camp", WOLVERINE, wolverine.distKm, 1, wolverine.sector)
         }
         val wolf = a(WOLF)
         if (wolf != null && wolf.distKm < 0.9) {
-            return FaunaEvent("fauna.wolf.circle", WOLF, wolf.distKm, wolf.packSize)
+            return FaunaEvent("fauna.wolf.circle", WOLF, wolf.distKm, wolf.packSize, wolf.sector)
         }
         if (kill != null && wolf != null && wolf.distKm < 3.5) {
-            return FaunaEvent("fauna.wolf.kill", WOLF, wolf.distKm, wolf.packSize)
+            return FaunaEvent("fauna.wolf.kill", WOLF, wolf.distKm, wolf.packSize, wolf.sector)
         }
         if (bear != null && bear.distKm < 1.6) {
-            return FaunaEvent("fauna.bear.near", BEAR, bear.distKm, 1)
+            return FaunaEvent("fauna.bear.near", BEAR, bear.distKm, 1, bear.sector)
         }
         if (wolverine != null && wolverine.distKm < 1.2) {
-            return FaunaEvent("fauna.wolverine.near", WOLVERINE, wolverine.distKm, 1)
+            return FaunaEvent("fauna.wolverine.near", WOLVERINE, wolverine.distKm, 1, wolverine.sector)
         }
         // Вой слышно далеко, но только в тихую погоду: в бурю не слышно
         // собственных мыслей, не то что волков за пять километров.
@@ -343,15 +352,15 @@ object FaunaModel {
         if (wolf != null && wolvesNear < 4.5 && st.wind <= 1 &&
             wolf.quietDays >= HOWL_PAUSE && rng.nextDouble() < 0.28) {
             wolf.quietDays = 0
-            return FaunaEvent("fauna.wolf.howl", WOLF, wolvesNear, wolf.packSize)
+            return FaunaEvent("fauna.wolf.howl", WOLF, wolvesNear, wolf.packSize, wolf.sector)
         }
         val lynx = a(LYNX)
         if (lynx != null && lynx.distKm < 1.0) {
-            return FaunaEvent("fauna.lynx.near", LYNX, lynx.distKm, 1)
+            return FaunaEvent("fauna.lynx.near", LYNX, lynx.distKm, 1, lynx.sector)
         }
         val moose = a(MOOSE)
         if (moose != null && moose.distKm < 1.0) {
-            return FaunaEvent("fauna.moose.near", MOOSE, moose.distKm, 1)
+            return FaunaEvent("fauna.moose.near", MOOSE, moose.distKm, 1, moose.sector)
         }
         return null
     }
