@@ -46,23 +46,21 @@
             android:orientation="horizontal"
             android:layout_marginTop="10dp">
             <Button android:id="@+id/radarCopyBtn"
-                style="?android:attr/buttonBarButtonStyle"
-                android:layout_width="0dp" android:layout_weight="1"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Скопировать"
-                android:textColor="@color/text_main" />
+                android:layout_marginEnd="10dp"
+                android:text="Скопировать" />
             <Button android:id="@+id/radarShareBtn"
-                style="?android:attr/buttonBarButtonStyle"
-                android:layout_width="0dp" android:layout_weight="1"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Поделиться"
-                android:textColor="@color/text_main" />
+                android:text="Поделиться" />
         </LinearLayout>
 
         <Button
             android:id="@+id/radarBackBtn"
-            android:layout_width="match_parent"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
             android:text="Назад"
             android:layout_marginTop="16dp" />
 

@@ -49,6 +49,20 @@ class RadarActivity : AppCompatActivity() {
         legendBox = findViewById(R.id.radarLegend)
         findViewById<Button>(R.id.radarBackBtn).setOnClickListener { finish() }
 
+        // Те же три носителя смысла, что и на экране экспедиции: отчёт —
+        // фиолетовый (вынести наружу), возврат — тусклый.
+        DoodleUi.chip(findViewById(R.id.radarCopyBtn),
+            com.vasil.stepcore.DoodleIconDrawable.COPY,
+            R.color.accent_violet, R.color.surface_violet,
+            R.color.accent_violet_bright, 601L)
+        DoodleUi.chip(findViewById(R.id.radarShareBtn),
+            com.vasil.stepcore.DoodleIconDrawable.SHARE,
+            R.color.accent_violet, R.color.surface_violet,
+            R.color.accent_violet_bright, 602L)
+        DoodleUi.chip(findViewById(R.id.radarBackBtn),
+            com.vasil.stepcore.DoodleIconDrawable.BACK,
+            R.color.axis_dim, R.color.surface, R.color.text_dim, 603L)
+
         findViewById<Button>(R.id.radarCopyBtn).setOnClickListener {
             if (report.isEmpty()) return@setOnClickListener
             val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager

@@ -39,6 +39,14 @@ class DoodleIconDrawable(
         const val FLAG = 5        // план: цель
         const val BACKPACK = 6    // снаряжение
         const val CHEST = 7       // архив
+        // v114: значки действий. Каждый обязан читаться на бегу, поэтому
+        // ни один не сложнее трёх штрихов.
+        const val COMPASS = 8     // окрестности: где я и что вокруг
+        const val REFRESH = 9     // обновить: догнать мир
+        const val COPY = 10       // скопировать: два листа
+        const val SHARE = 11      // поделиться: три узла и связи
+        const val BACK = 12       // назад
+        const val CROSS = 13      // завершить: необратимо
     }
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -72,6 +80,12 @@ class DoodleIconDrawable(
             FLAG -> flag(cx, cy, r, w)
             BACKPACK -> backpack(cx, cy, r, w)
             CHEST -> chest(cx, cy, r, w)
+            COMPASS -> compass(cx, cy, r, w)
+            REFRESH -> refresh(cx, cy, r, w)
+            COPY -> copyIcon(cx, cy, r, w)
+            SHARE -> share(cx, cy, r, w)
+            BACK -> back(cx, cy, r, w)
+            CROSS -> cross(cx, cy, r, w)
         }
         paint.strokeWidth = 1.6f * density
     }
@@ -153,6 +167,77 @@ class DoodleIconDrawable(
         }
         Doodle.roundRect(path, cx - r * 0.3f, cy + r * 0.35f, r * 0.6f, r * 0.45f,
             r * 0.1f, 0.7f, w)
+    }
+
+    /**
+     * Компас: кольцо и стрелка на север. Знак «осмотреться».
+     * Стрелка НЕсимметрична — длинный север, короткий хвост: симметричный
+     * ромб читался как глаз, а не как стрелка (проверено отрисовкой).
+     */
+    private fun compass(cx: Float, cy: Float, r: Float, w: Wobble) {
+        Doodle.arc(path, cx, cy, r * 0.98f, 0f, 180f, 0.6f, w)
+        Doodle.arc(path, cx, cy, r * 0.98f, 180f, 360f, 0.6f, w)
+        Doodle.poly(path, floatArrayOf(
+            cx, cy - r * 0.80f,
+            cx + r * 0.30f, cy + r * 0.22f,
+            cx, cy + r * 0.02f,
+            cx - r * 0.30f, cy + r * 0.22f,
+        ), 0.6f, 3, w, true)
+        Doodle.line(path, cx, cy + r * 0.02f, cx, cy + r * 0.55f, 0.5f, 3, w)
+    }
+
+    /**
+     * Обновить: почти замкнутая дуга со стрелкой — время пошло дальше.
+     * Наконечник строится ПО КАСАТЕЛЬНОЙ к дуге: прямые штрихи «в сторону»
+     * отваливались от кольца и выглядели мусором.
+     */
+    private fun refresh(cx: Float, cy: Float, r: Float, w: Wobble) {
+        Doodle.arc(path, cx, cy, r * 0.85f, 45f, 225f, 0.7f, w)
+        Doodle.arc(path, cx, cy, r * 0.85f, 225f, 340f, 0.7f, w)
+        val a = Math.toRadians(340.0)
+        val hx = cx + r * 0.85f * cos(a).toFloat()
+        val hy = cy + r * 0.85f * sin(a).toFloat()
+        val tx = -sin(a).toFloat()
+        val ty = cos(a).toFloat()
+        for (sgn in intArrayOf(150, -150)) {
+            val b = Math.toRadians(sgn.toDouble())
+            val bx = tx * cos(b).toFloat() - ty * sin(b).toFloat()
+            val by = tx * sin(b).toFloat() + ty * cos(b).toFloat()
+            Doodle.line(path, hx, hy, hx + r * 0.42f * bx, hy + r * 0.42f * by, 0.5f, 3, w)
+        }
+    }
+
+    /** Скопировать: лист поверх листа. */
+    private fun copyIcon(cx: Float, cy: Float, r: Float, w: Wobble) {
+        Doodle.roundRect(path, cx - r * 0.9f, cy - r * 0.55f, r * 1.15f, r * 1.4f,
+            r * 0.12f, 0.7f, w)
+        Doodle.roundRect(path, cx - r * 0.25f, cy - r * 0.95f, r * 1.15f, r * 1.4f,
+            r * 0.12f, 0.7f, w)
+    }
+
+    /** Поделиться: три узла и связи между ними. */
+    private fun share(cx: Float, cy: Float, r: Float, w: Wobble) {
+        val ax = cx - r * 0.6f; val ay = cy
+        val bx = cx + r * 0.6f; val by = cy - r * 0.75f
+        val dx = cx + r * 0.6f; val dy = cy + r * 0.75f
+        Doodle.line(path, ax, ay, bx, by, 0.6f, 4, w)
+        Doodle.line(path, ax, ay, dx, dy, 0.6f, 4, w)
+        oval(ax, ay, r * 0.22f, r * 0.22f, w)
+        oval(bx, by, r * 0.22f, r * 0.22f, w)
+        oval(dx, dy, r * 0.22f, r * 0.22f, w)
+    }
+
+    /** Назад: стрелка влево. */
+    private fun back(cx: Float, cy: Float, r: Float, w: Wobble) {
+        Doodle.line(path, cx + r * 0.85f, cy, cx - r * 0.8f, cy, 0.6f, 5, w)
+        Doodle.line(path, cx - r * 0.8f, cy, cx - r * 0.2f, cy - r * 0.5f, 0.6f, 3, w)
+        Doodle.line(path, cx - r * 0.8f, cy, cx - r * 0.2f, cy + r * 0.5f, 0.6f, 3, w)
+    }
+
+    /** Завершить: крест. Единственное необратимое действие в режиме. */
+    private fun cross(cx: Float, cy: Float, r: Float, w: Wobble) {
+        Doodle.line(path, cx - r * 0.7f, cy - r * 0.7f, cx + r * 0.7f, cy + r * 0.7f, 0.8f, 5, w)
+        Doodle.line(path, cx + r * 0.7f, cy - r * 0.7f, cx - r * 0.7f, cy + r * 0.7f, 0.8f, 5, w)
     }
 
     private fun chest(cx: Float, cy: Float, r: Float, w: Wobble) {

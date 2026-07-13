@@ -141,8 +141,9 @@
 
                 <Button
                     android:id="@+id/startExpBtn"
-                    android:layout_width="match_parent"
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
+                    android:layout_gravity="center_horizontal"
                     android:text="Отправиться"
                     android:layout_marginTop="16dp" />
 
@@ -176,11 +177,9 @@
 
                 <Button
                     android:id="@+id/backBtn"
-                    style="?android:attr/buttonBarButtonStyle"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="&#8592; К списку"
-                    android:textColor="@color/text_dim"
+                    android:text="К списку"
                     android:visibility="gone" />
 
                 <TextView
@@ -226,10 +225,11 @@
 
                 <Button
                     android:id="@+id/radarBtn"
-                    android:layout_width="match_parent"
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
+                    android:layout_gravity="center_horizontal"
                     android:text="Окрестности"
-                    android:layout_marginTop="12dp" />
+                    android:layout_marginTop="14dp" />
 
                 <LinearLayout
                     android:id="@+id/actionRow"
@@ -238,14 +238,14 @@
                     android:orientation="horizontal"
                     android:layout_marginTop="12dp">
                     <Button android:id="@+id/refreshBtn"
-                        android:layout_width="0dp" android:layout_weight="1"
+                        android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
+                        android:layout_marginEnd="10dp"
                         android:text="Обновить" />
-                    <Button android:id="@+id/finishBtn" style="?android:attr/buttonBarButtonStyle"
-                        android:layout_width="0dp" android:layout_weight="1"
+                    <Button android:id="@+id/finishBtn"
+                        android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Завершить"
-                        android:textColor="@color/text_dim" />
+                        android:text="Завершить" />
                 </LinearLayout>
 
                 <TextView
@@ -264,14 +264,15 @@
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
                     android:layout_marginTop="4dp">
-                    <Button android:id="@+id/copyBtn" style="?android:attr/buttonBarButtonStyle"
-                        android:layout_width="0dp" android:layout_weight="1"
-                        android:layout_height="wrap_content" android:text="Скопировать"
-                        android:textColor="@color/text_main" />
-                    <Button android:id="@+id/shareBtn" style="?android:attr/buttonBarButtonStyle"
-                        android:layout_width="0dp" android:layout_weight="1"
-                        android:layout_height="wrap_content" android:text="Поделиться"
-                        android:textColor="@color/text_main" />
+                    <Button android:id="@+id/copyBtn"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginEnd="10dp"
+                        android:text="Скопировать" />
+                    <Button android:id="@+id/shareBtn"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Поделиться" />
                 </LinearLayout>
 
                 <LinearLayout

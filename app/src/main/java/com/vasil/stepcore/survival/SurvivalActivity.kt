@@ -127,6 +127,23 @@ class SurvivalActivity : AppCompatActivity() {
         for (b in durBtns) icon(b, DoodleIconDrawable.FLAG, R.color.accent_violet_bright)
         for (b in tempoBtns) icon(b, DoodleIconDrawable.FOOTPRINTS, R.color.accent_violet_bright)
 
+        // КНОПКИ РЕЖИМА. Каждая — свой значок и свой цвет; путаница между
+        // «Обновить» и «Завершить» стоила бы экспедиции.
+        DoodleUi.chip(findViewById(R.id.startExpBtn), DoodleIconDrawable.FOOTPRINTS,
+            R.color.accent_green, R.color.surface_green, R.color.accent_green, 501L)
+        DoodleUi.chip(radarBtn, DoodleIconDrawable.COMPASS,
+            R.color.accent_teal, R.color.surface_teal, R.color.accent_teal_bright, 502L)
+        DoodleUi.chip(refreshBtn, DoodleIconDrawable.REFRESH,
+            R.color.accent_green, R.color.surface_green, R.color.accent_green, 503L)
+        DoodleUi.chip(finishBtn, DoodleIconDrawable.CROSS,
+            R.color.accent_red, R.color.surface_red, R.color.accent_red, 504L)
+        DoodleUi.chip(copyBtn, DoodleIconDrawable.COPY,
+            R.color.accent_violet, R.color.surface_violet, R.color.accent_violet_bright, 505L)
+        DoodleUi.chip(shareBtn, DoodleIconDrawable.SHARE,
+            R.color.accent_violet, R.color.surface_violet, R.color.accent_violet_bright, 506L)
+        DoodleUi.chip(backBtn, DoodleIconDrawable.BACK,
+            R.color.axis_dim, R.color.surface, R.color.text_dim, 507L)
+
         // Карточка-подсказка: рюкзак как знак снаряжения.
         DoodleUi.frame(tempoHint, R.color.accent_violet, R.color.surface, 801L)
         tempoHint.setCompoundDrawablesWithIntrinsicBounds(

@@ -593,6 +593,46 @@ object DoodleUi {
         if (v.isAttachedToWindow) BoilClock.register(tick)
     }
 
+    /**
+     * КНОПКА-ФИШКА: значок + короткое слово в дрожащей рамке.
+     *
+     * Зачем. Кнопка во весь экран сообщает ровно одно: «здесь что-то можно
+     * нажать». Какое именно — приходится читать. На ходу человек не читает,
+     * он узнаёт. Поэтому у фишки три носителя смысла сразу:
+     *   значок — ЧТО она делает,
+     *   цвет   — ЧТО она значит (зелёное — действие, красное — необратимое,
+     *            бирюзовое — данные, фиолетовое — вынести наружу),
+     *   размер — насколько её стоит бояться.
+     *
+     * Кнопка остаётся обычной Button: клики, состояния, доступность — всё
+     * системное. Меняется только одежда.
+     */
+    fun chip(
+        btn: android.widget.Button,
+        icon: Int,
+        strokeRes: Int,
+        fillRes: Int,
+        textRes: Int,
+        seed: Long,
+    ) {
+        val c = btn.context
+        val d = c.resources.displayMetrics.density
+        frame(btn, strokeRes, fillRes, seed)
+        btn.setCompoundDrawablesWithIntrinsicBounds(
+            DoodleIconDrawable(icon, ContextCompat.getColor(c, textRes), d, 19f),
+            null, null, null)
+        btn.compoundDrawablePadding = (6 * d).toInt()
+        btn.setTextColor(ContextCompat.getColor(c, textRes))
+        btn.setAllCaps(false)
+        btn.textSize = 14f
+        // Системные минимумы кнопки (48dp) растягивали фишку в полосу.
+        btn.minWidth = 0
+        btn.minimumWidth = 0
+        btn.minHeight = 0
+        btn.minimumHeight = 0
+        btn.setPadding((12 * d).toInt(), (9 * d).toInt(), (12 * d).toInt(), (9 * d).toInt())
+    }
+
     fun frame(v: View, strokeRes: Int, fillRes: Int, seed: Long) {
         val c = v.context
         // Старую рамку ОБЯЗАТЕЛЬНО гасим перед заменой. Рамка подписана на
