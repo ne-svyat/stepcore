@@ -377,9 +377,14 @@ class SurvivalEngine(
         }
 
         if (key != null) {
+            // Сторона света теперь ПАРАМЕТР, а не буква в строке корпуса.
+            // Дождь приходит с того ветра, который сегодня в мире, и уходит
+            // туда, куда этот ветер его несёт.
             fire("weather", key, rng.nextLong(), mapOf(
                 "temp" to fmtTemp(st.tempC),
                 "snow" to st.snowCm.toString(),
+                "windfrom" to windFrom(windDir),
+                "windto" to windTo(windDir),
             ), ctx)
         } else {
             // Тихий день. Цифры дня (небо, ветер, температура, снег) больше
@@ -392,10 +397,15 @@ class SurvivalEngine(
                     "wind" to windWord(st.wind),
                     "temp" to fmtTemp(st.tempC),
                     "snow" to st.snowCm.toString(),
+                    "windfrom" to windFrom(windDir),
+                    "windto" to windTo(windDir),
                 ), ctx)
             }
             if (rng.nextDouble() < AMBIENT_P) {
-                fire("ambient", "ambient", rng.nextLong(), emptyMap(), ctx)
+                fire("ambient", "ambient", rng.nextLong(), mapOf(
+                    "windfrom" to windFrom(windDir),
+                    "windto" to windTo(windDir),
+                ), ctx)
             }
         }
 
@@ -424,6 +434,7 @@ class SurvivalEngine(
             fire("animal", ev.key, rng.nextLong(), mapOf(
                 "km" to distWord(ev.distKm),
                 "pack" to ev.packSize.toString(),
+                "packw" to packWord(ev.packSize),
                 "temp" to fmtTemp(st.tempC),
             ), ctx)
             // Вой и возня на добыче — это СЛУХ: сторона примерно, дальность
@@ -578,6 +589,42 @@ class SurvivalEngine(
         }
 
         /** Русское склонение: 1 день - 2 дня - 5 дней - 11 дней - 21 день. */
+        /**
+         * Стая словами: 1 зверь, 2 зверя, 5 зверей.
+         *
+         * Раньше в корпусе стояло «{pack} зверя», и стая из пяти волков
+         * выходила «5 зверя». Число приходит из мира — значит, и падеж
+         * обязан приходить оттуда же, а не быть вписанным в строку.
+         */
+        fun packWord(n: Int): String {
+            val m10 = n % 10
+            val m100 = n % 100
+            return when {
+                m100 in 11..14 -> "зверей"
+                m10 == 1 -> "зверь"
+                m10 in 2..4 -> "зверя"
+                else -> "зверей"
+            }
+        }
+
+        /** Откуда: «с севера», «с юго-запада». Родительный падеж. */
+        val WIND_FROM = arrayOf(
+            "севера", "северо-востока", "востока", "юго-востока",
+            "юга", "юго-запада", "запада", "северо-запада",
+        )
+
+        /** Куда: «на восток», «на юго-запад». Винительный падеж. */
+        val WIND_TO = arrayOf(
+            "север", "северо-восток", "восток", "юго-восток",
+            "юг", "юго-запад", "запад", "северо-запад",
+        )
+
+        /** Откуда дует. */
+        fun windFrom(windDir: Int): String = WIND_FROM[((windDir % 8) + 8) % 8]
+
+        /** Куда уносит — то есть подветренная сторона. */
+        fun windTo(windDir: Int): String = WIND_TO[Compass.downwind(windDir)]
+
         fun daysWord(n: Int): String {
             val m10 = n % 10
             val m100 = n % 100

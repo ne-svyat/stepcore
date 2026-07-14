@@ -30,8 +30,13 @@ private var failures = 0
  * Пока ENGINE_VERSION не меняется, эта константа неприкосновенна: любой
  * новый слой обязан жить в своём потоке случайности и не двигать погоду,
  * ветер и зверя уже начатых экспедиций.
+ *
+ * v115: из отпечатка убраны params — готовые СЛОВА события. Слова обязаны
+ * улучшаться (падежи, стороны света), мир — нет. Теперь отпечаток берётся
+ * по ctx: это сырое состояние мира на день, из которого слова и лепятся.
+ * Проверено: до и после v115 значение одинаково — мир не шелохнулся.
  */
-private const val WORLD_FINGERPRINT = "5ad63198a83e0fe9"
+private const val WORLD_FINGERPRINT = "e40d82116ae5da8"
 
 private fun check(name: String, ok: Boolean, detail: String = "") {
     if (!ok) {
@@ -541,7 +546,7 @@ fun main(args: Array<String>) {
             SurvivalEngine(seed, season, SurvivalEngine.startOffsetFrom(seed), 2)
                 .run(0, 100 * SurvivalEngine.PHASES) { e ->
                     val sg = "" + e.tick + "|" + e.category + "|" + e.key + "|" + e.roll +
-                        "|" + e.phase + "|" + e.nth + "|" + e.params + "|" + e.ctx
+                        "|" + e.phase + "|" + e.nth + "|" + e.ctx
                     for (c in sg) h = 31 * h + c.code
                 }
         }
@@ -700,6 +705,92 @@ fun main(args: Array<String>) {
         }
         println("отчёты радара: " + reports + " · машинных строк " + machineLines)
         check("report.matches_screen", bad == 0, "" + bad)
+    }
+
+    // --- 11. ТЕКСТ НЕ ВРЁТ ---
+    //
+    // Два правила, обе нарушены в реальном журнале до v115:
+    //   а) число и падеж приходят из мира, а не из строки корпуса;
+    //   б) сторона света, названная в тексте, обязана совпадать с ветром
+    //      этого дня — и не имеет права звучать в штиль.
+    run {
+        // падежи стаи
+        check("text.pack_1", SurvivalEngine.packWord(1) == "зверь")
+        check("text.pack_2", SurvivalEngine.packWord(2) == "зверя")
+        check("text.pack_5", SurvivalEngine.packWord(5) == "зверей")
+        check("text.pack_11", SurvivalEngine.packWord(11) == "зверей")
+        check("text.pack_21", SurvivalEngine.packWord(21) == "зверь")
+        check("text.pack_22", SurvivalEngine.packWord(22) == "зверя")
+
+        // в самом корпусе не должно остаться ни одной зашитой стороны света
+        val roots = listOf("север", "юг", "восток", "запад", "Север", "Юг", "Восток", "Запад")
+        var hardcoded = 0
+        for (line in File(args[0]).readLines()) {
+            val l = line.trim()
+            if (l.isEmpty() || l.startsWith("#") || !l.contains("|")) continue
+            val text = l.substringAfter("|")
+            if (roots.any { text.contains(it) }) {
+                hardcoded++
+                println("  зашитая сторона света: " + l.take(70))
+            }
+        }
+        check("text.no_hardcoded_direction", hardcoded == 0, "" + hardcoded)
+    }
+
+    // --- 11b. Сторона света в готовом тексте == ветер этого дня ---
+    run {
+        val gen = SurvivalEngine.WIND_FROM
+        val acc = SurvivalEngine.WIND_TO
+        var lies = 0
+        var calmLies = 0
+        var withDir = 0L
+        for (i in 0 until 3000) {
+            val seed = 121000L + i * 17L
+            SurvivalEngine(seed, i % 4, SurvivalEngine.startOffsetFrom(seed), 2)
+                .run(0, 70 * SurvivalEngine.PHASES) { e ->
+                    val txt = corpus.renderOrNull(e.key, e.roll, e.params, e.ctx, e.nth) ?: ""
+                    val dir = e.ctx["windir"] ?: 0
+                    val wind = e.ctx["wind"] ?: 0
+                    // «на север» — подстрока «на северо-восток», поэтому
+                    // совпадение засчитывается только по границе слова.
+                    fun hit(txt: String, needle: String): Boolean {
+                        var i = txt.indexOf(needle)
+                        while (i >= 0) {
+                            val j = i + needle.length
+                            val nxt = if (j < txt.length) txt[j] else ' '
+                            if (nxt != '-' && !nxt.isLetter()) return true
+                            i = txt.indexOf(needle, i + 1)
+                        }
+                        return false
+                    }
+                    // «с юго-запада» — только если ветер сегодня оттуда
+                    for (k in 0 until 8) {
+                        if (hit(txt, "с " + gen[k]) || hit(txt, "стороны " + gen[k])) {
+                            withDir++
+                            if (k != dir) lies++
+                            if (wind == 0) calmLies++
+                        }
+                        if (hit(txt, "на " + acc[k])) {
+                            withDir++
+                            if (k != Compass.downwind(dir)) lies++
+                            if (wind == 0) calmLies++
+                        }
+                    }
+                    // Падеж обязан отвечать числу: 2 зверя — верно,
+                    // 5 зверя — ложь. Проверяем ровно так: слово рядом с
+                    // числом должно совпасть с packWord этого числа.
+                    for (n in 1..12) {
+                        for (wd in listOf("зверь", "зверя", "зверей")) {
+                            if (txt.contains("" + n + " " + wd) &&
+                                wd != SurvivalEngine.packWord(n)) lies++
+                        }
+                    }
+                }
+        }
+        println("текст: сторон света названо " + withDir + " раз")
+        check("text.direction_matches_world", lies == 0, "" + lies)
+        check("text.no_direction_in_calm", calmLies == 0, "" + calmLies)
+        check("text.direction_actually_used", withDir > 0, "" + withDir)
     }
 
     if (failures == 0) {
