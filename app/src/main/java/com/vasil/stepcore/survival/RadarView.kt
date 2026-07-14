@@ -70,6 +70,7 @@ class RadarView @JvmOverloads constructor(
     private val cAnimal = ContextCompat.getColor(context, R.color.accent_violet_bright)
     private val cTrack = ContextCompat.getColor(context, R.color.accent_teal_bright)
     private val cHot = ContextCompat.getColor(context, R.color.accent_red_bright)
+    private val cHear = ContextCompat.getColor(context, R.color.accent_blue)
 
     private var noise = 0L
 
@@ -159,6 +160,7 @@ class RadarView @JvmOverloads constructor(
         if (rad <= 0f) return
 
         drawScent(canvas, r, cx, cy, rad)
+        drawSenses(canvas, r, cx, cy, rad)
         drawGrid(canvas, cx, cy, rad)
         if (r.hasWorld) drawWind(canvas, r, cx, cy, rad)
         for (m in r.marks.reversed()) drawMark(canvas, m, cx, cy, rad)
@@ -194,6 +196,60 @@ class RadarView @JvmOverloads constructor(
         val lx = cx + (rr * 0.62f * cos(la)).toFloat()
         val ly = cy + (rr * 0.62f * sin(la)).toFloat()
         c.drawText("запах " + RadarModel.kmRu(r.scentKm), lx, ly, label)
+    }
+
+    /**
+     * ГРАНИЦА ЗНАНИЯ. Два предела, за которыми человек сегодня слеп и глух.
+     *
+     * Зрение — плотное кольцо. Слух — лепесток: против ветра слышно далеко,
+     * по ветру почти никак. Это зеркало конуса запаха, и потому лепесток
+     * смотрит ровно в противоположную сторону: запах уносит ОТ тебя, звук
+     * приносит К тебе.
+     *
+     * Зверь за обоими пределами существует — просто ты о нём не узнаешь.
+     */
+    private fun drawSenses(c: Canvas, r: RadarModel.Recon, cx: Float, cy: Float, rad: Float) {
+        if (!r.hasWorld) return
+        val wind = if (r.calm) 0 else 2
+
+        // лепесток слуха
+        val ear = Path()
+        val n = 48
+        for (i in 0..n) {
+            val sec = i * 8.0 / n
+            val km = RadarModel.hearAt(r, sec, wind)
+            val a = ang(sec)
+            val rr = rpx(km, rad)
+            val x = cx + (rr * cos(a)).toFloat()
+            val y = cy + (rr * sin(a)).toFloat()
+            if (i == 0) ear.moveTo(x, y) else ear.lineTo(x, y)
+        }
+        ear.close()
+        fill.maskFilter = null
+        fill.color = withAlpha(cHear, 0.05)
+        c.drawPath(ear, fill)
+        stroke.color = withAlpha(cHear, 0.40)
+        stroke.strokeWidth = 1.1f * dm
+        c.drawPath(ear, stroke)
+
+        // кольцо зрения
+        val eye = Path()
+        ring(eye, cx, cy, rpx(r.sightKm, rad), 0.8f)
+        stroke.color = withAlpha(cMain, 0.55)
+        stroke.strokeWidth = 1.5f * dm
+        c.drawPath(eye, stroke)
+
+        label.textSize = 10f * dm
+        label.color = withAlpha(cMain, 0.75)
+        val ea = ang(1.0)
+        c.drawText("видно " + RadarModel.kmRu(r.sightKm),
+            cx + (rpx(r.sightKm, rad) * cos(ea)).toFloat(),
+            cy + (rpx(r.sightKm, rad) * sin(ea)).toFloat() - 4f * dm, label)
+        label.color = withAlpha(cHear, 0.85)
+        val ha = ang(r.windDir.toDouble())
+        val hr = rpx(RadarModel.hearAt(r, r.windDir.toDouble(), wind), rad)
+        c.drawText("слышно", cx + (hr * 0.72f * cos(ha)).toFloat(),
+            cy + (hr * 0.72f * sin(ha)).toFloat(), label)
     }
 
     private fun drawGrid(c: Canvas, cx: Float, cy: Float, rad: Float) {
@@ -279,7 +335,10 @@ class RadarView @JvmOverloads constructor(
         // Угловая неопределённость — следствие линейной: зверь, ушедший на
         // u километров от точки в трёх километрах, мог уйти вбок так же,
         // как вперёд. Чем ближе метка, тем шире раскрывается сомнение.
-        val half = min(1.3, atan(m.uncertaintyKm / max(0.5, m.distKm)))
+        // Ошибка стороны (слух в туман, гул ветра) раскрывает ореол вбок.
+        // Радар не ставит ложных меток — он честно расширяет сомнение.
+        val bearing = m.bearingErr * 22.5 * PI / 180.0
+        val half = min(1.5, atan(m.uncertaintyKm / max(0.5, m.distKm)) + bearing)
 
         val p = Path()
         wedge(p, cx, cy, rIn, rOut, a - half, a + half, 1.0f)

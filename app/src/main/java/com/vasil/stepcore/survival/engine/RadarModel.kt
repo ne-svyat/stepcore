@@ -93,10 +93,27 @@ object RadarModel {
         val uncertaintyKm: Double,
         val freshness: Double,
         val attention: Boolean,
+        /** Ошибка стороны в румбах на момент наблюдения (слух в туман). */
+        val bearingErr: Int = 0,
     ) {
         /** Сведения ещё показываем, но полагаться на них уже нельзя. */
         val stale: Boolean get() = uncertaintyKm > 3.0
     }
+
+    /**
+     * Зверь, о котором ЗНАЛИ, но сведения протухли.
+     *
+     * Реальный журнал: волки выли, обходили лагерь, оставили след на 52-й
+     * день — а на радаре 60-го дня их не было НИГДЕ. Ни метки, ни строки.
+     * Экран молчал так, будто волков не существует. Забыть — это не то же
+     * самое, что не знать, и человек имеет право видеть разницу.
+     */
+    data class Faded(
+        val kind: String,
+        val ageDays: Int,
+        val sector: Int,
+        val source: Int,
+    )
 
     /**
      * Снимок знания на конец дня `day`.
@@ -113,8 +130,18 @@ object RadarModel {
         val scentKm: Double,
         val marks: List<Mark>,
         val unknown: List<String>,
+        /** Знали, но сведения устарели: показываем строкой, без метки. */
+        val faded: List<Faded> = emptyList(),
+        /** Докуда сегодня видно. */
+        val sightKm: Double = 0.0,
+        /** Докуда сегодня слышно (без учёта стороны). */
+        val hearKm: Double = 0.0,
     ) {
         val downwind: Int get() = Compass.downwind(windDir)
+
+        /** Слышимость в конкретную сторону: против ветра дальше. */
+        fun hearIn(sector: Int, wind: Int): Double =
+            SenseModel.hearKmIn(hearKm, sector, windDir, wind)
     }
 
     fun build(obs: List<Obs>, day: DaySnap?, ticksDone: Int): Recon {
@@ -123,12 +150,18 @@ object RadarModel {
         for (o in obs) last[o.kind] = o
 
         val marks = ArrayList<Mark>()
+        val faded = ArrayList<Faded>()
         for (k in KINDS) {
             val o = last[k] ?: continue
             val age = ticksDone - o.tick
-            if (age < 0 || age > FORGET_DAYS) continue
+            if (age < 0) continue
             val u = uncertaintyKm(k, o.source, age)
-            if (u >= FORGET_KM) continue
+            if (age > FORGET_DAYS || u >= FORGET_KM) {
+                // Метку рисовать нельзя — она превратилась бы в ложь. Но и
+                // молчать нельзя: человек помнит, что зверь тут был.
+                faded.add(Faded(k, age, o.sector, o.source))
+                continue
+            }
 
             // Внимание — только про СЕГОДНЯ. Вчерашняя близость не значит
             // ничего: зверь давно ушёл. И лось не повод для тревоги.
@@ -144,6 +177,7 @@ object RadarModel {
                 kind = k, sector = o.sector, distKm = o.distKm, ageDays = age,
                 source = o.source, packSize = o.packSize,
                 uncertaintyKm = u, freshness = freshness(age), attention = hot,
+                bearingErr = o.bearingErr,
             ))
         }
         // Сверху — то, что горит; дальше — самое свежее.
@@ -161,7 +195,25 @@ object RadarModel {
                 else ScentModel.reachKm(day.wind, day.tempC, day.precip, day.fog),
             marks = marks,
             unknown = unknown,
+            faded = faded,
+            sightKm = if (day == null) 0.0 else SenseModel.sightKm(
+                day.cloud, day.precip, day.fog, day.wind, day.light, day.moon),
+            hearKm = if (day == null) 0.0
+                else SenseModel.hearKm(day.wind, day.precip, day.tempC, day.fog),
         )
+    }
+
+    /** Слышимость в сторону (дробный румб — для гладкого лепестка на экране). */
+    fun hearAt(r: Recon, sector: Double, wind: Int): Double {
+        if (r.calm) return r.hearKm
+        var d = Math.abs(sector - r.windDir)
+        if (d > 4.0) d = 8.0 - d
+        val k = when {
+            d <= 1.0 -> 1.45
+            d <= 2.0 -> 1.45 - 0.45 * (d - 1.0)
+            else -> 1.0 - 0.45 * (d - 2.0) / 2.0
+        }
+        return r.hearKm * k
     }
 
     // ---------- слова ----------
@@ -240,6 +292,10 @@ object RadarModel {
                     .append(" -> запах несёт на ").append(Compass.RU[r.downwind])
                     .append(", ").append(kmRu(r.scentKm)).append('\n')
             }
+            sb.append("видно ").append(kmRu(r.sightKm))
+                .append(" · слышно ").append(kmRu(r.hearKm))
+            if (!r.calm) sb.append(" (против ветра дальше)")
+            sb.append('\n')
         }
         sb.append('\n')
 
@@ -259,6 +315,11 @@ object RadarModel {
             else if (m.stale) sb.append(" · сведения устарели")
             sb.append('\n')
         }
+        for (f in r.faded) {
+            sb.append(kindRu(f.kind)).append(" — сведения устарели: ")
+                .append(ageRu(f.ageDays)).append(", ").append(Compass.RU[f.sector])
+                .append(", ").append(sourceRu(f.source)).append('\n')
+        }
         if (r.unknown.isNotEmpty()) {
             sb.append("Ни разу не встречены: ")
                 .append(r.unknown.joinToString(" · ") { kindRu(it) }).append('\n')
@@ -270,6 +331,8 @@ object RadarModel {
             .append(" down=").append(r.downwind)
             .append(" calm=").append(if (r.calm) 1 else 0)
             .append(" scent=").append(f1(r.scentKm))
+            .append(" sight=").append(f2(r.sightKm))
+            .append(" hear=").append(f2(r.hearKm))
             .append('\n')
         for (m in r.marks) {
             sb.append("# ").append(m.kind)
@@ -281,6 +344,14 @@ object RadarModel {
                 .append(" fresh=").append(f2(m.freshness))
                 .append(" hot=").append(if (m.attention) 1 else 0)
                 .append(" pack=").append(m.packSize)
+                .append(" berr=").append(m.bearingErr)
+                .append('\n')
+        }
+        for (f in r.faded) {
+            sb.append("# ").append(f.kind)
+                .append(" FADED age=").append(f.ageDays)
+                .append(" sec=").append(f.sector)
+                .append(" src=").append(srcTag(f.source))
                 .append('\n')
         }
         return sb.toString().trimEnd()

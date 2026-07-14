@@ -8,6 +8,7 @@ import com.vasil.stepcore.survival.engine.FaunaModel
 import com.vasil.stepcore.survival.engine.Obs
 import com.vasil.stepcore.survival.engine.RadarModel
 import com.vasil.stepcore.survival.engine.ScentModel
+import com.vasil.stepcore.survival.engine.SenseModel
 import com.vasil.stepcore.survival.engine.SplitMix64
 import com.vasil.stepcore.survival.engine.WeatherModel
 import com.vasil.stepcore.survival.engine.WindField
@@ -57,6 +58,12 @@ private const val WORLD_FINGERPRINT = "ab8e1d4f84aa0f82"
  * начатые экспедиции — он получает свою версию.
  */
 private const val WORLD_FINGERPRINT_V3 = "f6cc590484b7d5cb"
+
+/**
+ * Отпечаток мира версии 4 (v118: граница знания — видимость и слышимость).
+ * Заморожен так же, как v2 и v3.
+ */
+private const val WORLD_FINGERPRINT_V4 = "65bdb3c215e0ccc3"
 
 private fun check(name: String, ok: Boolean, detail: String = "") {
     if (!ok) {
@@ -592,6 +599,23 @@ fun main(args: Array<String>) {
         check("world.fingerprint_v3_frozen", fp3 == WORLD_FINGERPRINT_V3,
             "было " + WORLD_FINGERPRINT_V3 + ", стало " + fp3)
         check("world.v2_and_v3_differ", fp != fp3)
+
+        var h4 = 1125899906842597L
+        for (i in 0 until 50) {
+            val seed = 424242L + i * 977L
+            SurvivalEngine(seed, i % 4, SurvivalEngine.startOffsetFrom(seed), 4)
+                .run(0, 100 * SurvivalEngine.PHASES) { e ->
+                    val world = WORLD_CTX.joinToString(",") { k -> k + "=" + (e.ctx[k] ?: 0) }
+                    val sg = "" + e.tick + "|" + e.category + "|" + e.key + "|" + e.roll +
+                        "|" + e.phase + "|" + e.nth + "|" + world
+                    for (c in sg) h4 = 31 * h4 + c.code
+                }
+        }
+        val fp4 = java.lang.Long.toHexString(h4)
+        println("отпечаток мира v4: " + fp4)
+        check("world.fingerprint_v4_frozen", fp4 == WORLD_FINGERPRINT_V4,
+            "было " + WORLD_FINGERPRINT_V4 + ", стало " + fp4)
+        check("world.v3_and_v4_differ", fp3 != fp4)
     }
 
     // --- 9. РАДАР: наблюдения и туман войны (200 000 дней мира) ---
@@ -726,8 +750,13 @@ fun main(args: Array<String>) {
                 if (!txt.startsWith("РАДАР")) bad++
                 if (!txt.contains("# day=" + t)) bad++
                 // машинных строк ровно столько, сколько меток на экране
-                val lines = txt.lines().filter { it.startsWith("# ") && !it.contains("day=") }
+                val lines = txt.lines().filter {
+                    it.startsWith("# ") && !it.contains("day=") && !it.contains("FADED")
+                }
                 if (lines.size != rec.marks.size) bad++
+                // Устаревшие сведения тоже обязаны быть в отчёте — строкой.
+                val fadedLines = txt.lines().count { it.contains("FADED") }
+                if (fadedLines != rec.faded.size) bad++
                 machineLines += lines.size
                 // каждый зверь назван по-русски ровно один раз
                 for (m in rec.marks) {
@@ -959,6 +988,80 @@ fun main(args: Array<String>) {
         val seen = HashSet<Int>()
         for (yd in 0 until 30) seen.add(SurvivalEngine.moonPhase(yd, 777L))
         check("sky.moon_cycles", seen.size >= 7, "" + seen.size)
+    }
+
+    // --- 14. v4: ГРАНИЦА ЗНАНИЯ (200 000 дней) ---
+    //
+    // Радара в тайге нет: есть человек, который видит, слышит и читает следы.
+    // Значит, в непогоду прибор не шумит — прибор ПУСТЕЕТ. Ложных меток мы
+    // не ставим: в игре про честность одна выдуманная метка убила бы доверие
+    // к экрану навсегда. Вместо этого расширяется ореол — признание в том,
+    // что человек не уверен.
+    run {
+        var days = 0L
+        var blind = 0L
+        var deaf = 0L
+        var badRange = 0
+        var upwind = 0
+        var downwind = 0
+        var badErr = 0
+        var fadedShown = 0L
+        var radars = 0L
+        var seenInBlizzard = 0
+        for (i in 0 until 2000) {
+            val seed = 777000L + i * 13L
+            val eng = SurvivalEngine(seed, i % 4, SurvivalEngine.startOffsetFrom(seed), 4)
+            val snaps = eng.daySnapshots(100)
+            for (d in snaps) {
+                days++
+                val sg = SenseModel.sightKm(d.cloud, d.precip, d.fog, d.wind, d.light, d.moon)
+                val hr = SenseModel.hearKm(d.wind, d.precip, d.tempC, d.fog)
+                if (sg < 0.08 || sg > 2.5) badRange++
+                if (hr < 0.3 || hr > 6.5) badRange++
+                if (sg < 0.4) blind++
+                if (hr < 1.5) deaf++
+            }
+            val obs = eng.observations(100 * SurvivalEngine.PHASES)
+            for (o in obs) {
+                if (o.bearingErr < 0 || o.bearingErr > 2) badErr++
+                // Глазами и по следу сторона известна точно — иначе это ложь.
+                if (o.source != Obs.HEARD && o.bearingErr != 0) badErr++
+                val d = snaps[o.tick - 1]
+                val sg = SenseModel.sightKm(d.cloud, d.precip, d.fog, d.wind, d.light, d.moon)
+                // В пургу зверя НЕ ВИДНО. Далёкое наблюдение глазами в такой
+                // день — это ровно тот баг, ради которого всё затевалось.
+                // Глазами дальше трёх границ видимости не увидишь НИКАК.
+                if (o.source == Obs.SEEN && o.distKm > sg * 3.05) seenInBlizzard++
+                if (o.source == Obs.HEARD && d.wind > 0) {
+                    val df = Compass.diff(o.sector, d.windDir)
+                    if (df <= 1) upwind++ else if (df >= 3) downwind++
+                }
+            }
+            for (t in intArrayOf(20, 50, 80, 100)) {
+                radars++
+                val rec = RadarModel.build(obs.filter { it.tick <= t }, snaps[t - 1], t)
+                if (rec.faded.isNotEmpty()) fadedShown++
+                if (rec.sightKm <= 0.0 || rec.hearKm <= 0.0) badRange++
+                // Метка и «устаревшее» — непересекающиеся множества.
+                for (m in rec.marks) if (rec.faded.any { it.kind == m.kind }) badRange++
+            }
+        }
+        println("чувства: слепых дней " + (blind * 100 / days) + " проц. · глухих " +
+            (deaf * 100 / days) + " проц. · вой против ветра " + upwind +
+            " против " + downwind + " по ветру · радаров с устаревшими сведениями " +
+            (fadedShown * 100 / radars) + " проц.")
+
+        check("sense.ranges_sane", badRange == 0, "" + badRange)
+        check("sense.bearing_err_sane", badErr == 0, "" + badErr)
+        // Мир не должен ослепнуть насовсем — но и не видеть всё насквозь.
+        check("sense.blind_days_exist", blind * 100 / days in 5..35, "" + (blind * 100 / days))
+        // Против ветра слышно ощутимо лучше — это зеркало конуса запаха.
+        check("sense.upwind_hears_better", upwind > downwind * 2, upwind.toString() + "/" + downwind)
+        // В пургу зверя не видно. Совсем.
+        check("sense.blizzard_blinds", seenInBlizzard == 0, "" + seenInBlizzard)
+        // Забытое показывается строкой, а не исчезает молча.
+        check("radar.faded_is_shown", fadedShown * 100 / radars >= 30,
+            "" + (fadedShown * 100 / radars))
     }
 
     if (failures == 0) {

@@ -200,6 +200,8 @@ object FaunaModel {
         seed: Long,
         tick: Int,
         version: Int,
+        lightX10: Int = 120,
+        moon: Int = 0,
     ): DayResult {
         val rng = SplitMix64.forTick(seed xor SALT, tick)
         val scent = ScentModel.campScentKm(st)
@@ -380,7 +382,8 @@ object FaunaModel {
         val trackChance = if ((near?.distKm ?: 9.0) < 1.0) 0.5 else 0.3
         val tracker = if (near != null && rng.nextDouble() < trackChance) near else null
 
-        val event = pickEvent(agents, kill, wolvesNear, st, rng, tick, version)
+        val event = pickEvent(agents, kill, wolvesNear, st, rng, tick, version,
+            windDir, lightX10, moon)
 
         // ПОСЛЕДСТВИЕ ВИЗИТА. Этого не хватало, и без него зверь, дошедший до
         // лагеря, там и оставался: росомаха жила у палатки треть экспедиции.
@@ -430,7 +433,14 @@ object FaunaModel {
         rng: SplitMix64,
         tick: Int,
         version: Int,
+        windDir: Int,
+        lightX10: Int,
+        moon: Int,
     ): FaunaEvent? {
+        // Граница знания этого дня. Считается один раз: она общая для всех
+        // зверей — это не их свойство, а свойство человека и погоды.
+        val sight = SenseModel.sightKm(st.cloud, st.precip, st.fog, st.wind, lightX10, moon)
+        val hearBase = SenseModel.hearKm(st.wind, st.precip, st.tempC, st.fog)
         fun a(kind: String) = agents.firstOrNull { it.kind == kind && it.alive && !it.asleep }
 
         /**
@@ -463,7 +473,29 @@ object FaunaModel {
          */
         fun notices(x: Agent): Boolean {
             if (version < 3) return true
-            var p = (1.0 - 0.55 * x.distKm).coerceIn(0.15, 0.95)
+            var p: Double
+            if (version >= 4) {
+                // v4. Заметность держится не на расстоянии, а на ВИДИМОСТИ.
+                //
+                // В v3 вероятность зависела только от того, как далеко зверь.
+                // Но полтора километра ясным днём и полтора километра в метель
+                // — это не одно и то же расстояние, это два разных мира.
+                // Теперь в пургу медведь может пройти в трёхстах шагах, и в
+                // журнале не будет ни строчки. Человек узнает об этом потом,
+                // по следу, — и это честно.
+                p = when {
+                    x.distKm <= sight -> 0.90
+                    x.distKm <= sight * 1.8 -> 0.35      // угадал движение, не разглядел
+                    x.distKm <= sight * 3.0 -> 0.06      // повезло: просвет, силуэт
+                    else -> 0.0                          // за пределом — никак
+                }
+                // Потолок жёсткий. Иначе в пургу с видимостью в сто шагов
+                // зверя всё равно «замечали» за километр — с шансом в шесть
+                // процентов, но замечали (инвариант поймал 376 таких случаев).
+                // Шести процентов невозможного достаточно, чтобы экран врал.
+            } else {
+                p = (1.0 - 0.55 * x.distKm).coerceIn(0.15, 0.95)
+            }
             if (x.kind == MOOSE) p = minOf(0.95, p * 1.4)   // лось велик и шумен
             if (x.kind == LYNX) p *= 0.8                    // рысь — призрак, но не миф
             return rng.nextDouble() < p
@@ -510,7 +542,15 @@ object FaunaModel {
         // Пауза обязательна. Когда стая стала патрулировать ближе, вой пошёл
         // через день и перестал быть событием — а событие, которое случается
         // всегда, событием быть перестаёт.
-        if (wolf != null && wolvesNear < 4.5 && st.wind <= 1 &&
+        // v4. Вой слышно ровно настолько, насколько сегодня слышно вообще —
+        // и лучше с наветренной стороны. Старое правило «ветер не сильнее
+        // единицы, ближе 4,5 км» было грубой заготовкой этой же мысли.
+        val howlHeard = if (wolf == null) false else if (version >= 4) {
+            wolvesNear <= SenseModel.hearKmIn(hearBase, wolf.sector, windDir, st.wind)
+        } else {
+            wolvesNear < 4.5 && st.wind <= 1
+        }
+        if (wolf != null && howlHeard &&
             wolf.quietDays >= HOWL_PAUSE && rng.nextDouble() < 0.28) {
             wolf.quietDays = 0
             return FaunaEvent("fauna.wolf.howl", WOLF, wolvesNear, wolf.packSize, wolf.sector)

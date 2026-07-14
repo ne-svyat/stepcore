@@ -45,6 +45,12 @@ data class Obs(
     val distKm: Double,   // расстояние в МОМЕНТ наблюдения
     val source: Int,      // SEEN / TRACK / HEARD
     val packSize: Int,
+    /**
+     * Насколько человек мог ошибиться со стороной. 0 — уверен, 2 — «эхо
+     * множит, направление не угадать». Считается по погоде того дня, а не
+     * броском: в туман и пургу слух врёт всегда одинаково.
+     */
+    val bearingErr: Int = 0,
 ) {
     companion object {
         const val SEEN = 0
@@ -70,6 +76,10 @@ data class DaySnap(
     val snowCm: Int,
     val riverIce: Int,
     val windDir: Int, // румб, откуда дует: 0 С .. 7 СЗ
+    // v118: показания неба. Нужны, чтобы посчитать границу знания дня,
+    // не пересобирая весь мир: снимок дня несёт всё, от чего она зависит.
+    val light: Int = 120,
+    val moon: Int = 0,
 )
 
 /** Сводка по прожитым дням — для финальной истории и архива. */
@@ -171,7 +181,8 @@ class SurvivalEngine(
 
             windDir = WindField.step(seed, t, windDir, state.front)
             val fr = if (fauna.isEmpty()) null
-                else FaunaModel.step(fauna, state, windDir, seasonOf(t), seed, t, version)
+                else FaunaModel.step(fauna, state, windDir, seasonOf(t), seed, t, version,
+                    lightX10(yearDay(t)), moonPhase(yearDay(t), seed))
 
             emit(t, prev, state, rng, windDir, fr, seen, fromExclusive, toInclusive,
                 sink, obsSink)
@@ -219,6 +230,7 @@ class SurvivalEngine(
                 tick = t, tempC = state.tempC, cloud = state.cloud, wind = state.wind,
                 precip = state.precip, fog = state.fog,
                 snowCm = state.snowCm, riverIce = state.riverIce, windDir = dir,
+                light = lightX10(yearDay(t)), moon = moonPhase(yearDay(t), seed),
             ))
         }
         return out
@@ -248,7 +260,11 @@ class SurvivalEngine(
         fun observe(ph: Int, kind: String, sector: Int, distKm: Double,
                     source: Int, pack: Int) {
             if (globalPhase(t, ph) <= toPhase) {
-                obsSink(Obs(t, ph, kind, sector, distKm, source, pack))
+                // Глазами и по следу сторона известна точно. На слух — как
+                // повезёт с погодой: в туман и в гул ветра направление плывёт.
+                val err = if (source == Obs.HEARD)
+                    SenseModel.bearingErrHeardCalm(st.wind, st.precip, st.fog) else 0
+                obsSink(Obs(t, ph, kind, sector, distKm, source, pack, err))
             }
         }
 
@@ -308,6 +324,14 @@ class SurvivalEngine(
             // зависит; от них зависит то, что человек видит и пишет.
             "light" to lightX10(yearDay(t)),
             "moon" to moonPhase(yearDay(t), seed),
+            // Граница знания: докуда сегодня видно и слышно, в сотнях метров.
+            // Корпус может на это опереться — и человек в журнале скажет то,
+            // что и должен: «в такую метель я не увижу зверя, даже если он
+            // сядет рядом».
+            "sight" to (SenseModel.sightKm(
+                st.cloud, st.precip, st.fog, st.wind,
+                lightX10(yearDay(t)), moonPhase(yearDay(t), seed)) * 10).toInt(),
+            "hear" to (SenseModel.hearKm(st.wind, st.precip, st.tempC, st.fog) * 10).toInt(),
         )
 
         if (t > 1 && seasonOf(t) != seasonOf(t - 1)) {
@@ -442,10 +466,21 @@ class SurvivalEngine(
                 "packw" to packWord(ev.packSize),
                 "temp" to fmtTemp(st.tempC),
             ), ctx)
-            // Вой и возня на добыче — это СЛУХ: сторона примерно, дальность
-            // на глазок. Всё остальное человек видел своими глазами.
-            val src = if (ev.key == "fauna.wolf.howl" || ev.key == "fauna.wolf.kill")
-                Obs.HEARD else Obs.SEEN
+            // Откуда человек это узнал — решает не тип события, а ПОГОДА.
+            //
+            // Вой и возня на добыче — всегда слух. Остальное: если зверь был
+            // в пределах видимости — видел своими глазами. Если нет (пурга,
+            // туман, чёрная ночь) — не видел никого: нашёл разорённый лабаз,
+            // прочёл кольцо следов вокруг палатки. Это тот же факт, но
+            // добытый иначе — и радар обязан это различать.
+            val sightNow = SenseModel.sightKm(
+                st.cloud, st.precip, st.fog, st.wind,
+                lightX10(yearDay(t)), moonPhase(yearDay(t), seed))
+            val src = when {
+                ev.key == "fauna.wolf.howl" || ev.key == "fauna.wolf.kill" -> Obs.HEARD
+                ev.distKm <= sightNow * 3.0 -> Obs.SEEN
+                else -> Obs.TRACK
+            }
             observe(phaseOf("animal", ev.key), ev.kind, ev.sector, ev.distKm,
                 src, ev.packSize)
         } else if (track == null && wolvesKm < 2.5 &&
@@ -473,7 +508,7 @@ class SurvivalEngine(
         /** Как часто пустой лес под стаей становится строкой. Только v3. */
     private const val QUIET_P = 0.40
 
-    const val ENGINE_VERSION = 3
+    const val ENGINE_VERSION = 4
 
         /**
          * Вероятность бытовой зарисовки в тихий день. 0.18 подобрано
@@ -554,13 +589,20 @@ class SurvivalEngine(
          * Расстояние словами. Человек в тайге не меряет километрами —
          * он меряет тем, что слышно и что видно.
          */
+        /**
+         * Расстояние словами. Пороги подтянуты в v118: радар показывал
+         * 0,4 км, а текст в ту же ночь говорил «в двух сотнях шагов» —
+         * это полтораста метров. Экран и журнал обязаны говорить об одном
+         * и том же одинаково.
+         */
         fun distWord(km: Double): String = when {
-            km < 0.25 -> "у самого лагеря"
-            km < 0.6 -> "в двух сотнях шагов"
-            km < 1.2 -> "в полукилометре"
-            km < 2.5 -> "в километре с небольшим"
-            km < 5.0 -> "километрах в трёх"
-            km < 8.0 -> "далеко, километрах в пяти"
+            km < 0.2 -> "у самого лагеря"
+            km < 0.35 -> "в двух сотнях шагов"
+            km < 0.7 -> "метрах в пятистах"
+            km < 1.3 -> "в километре"
+            km < 2.2 -> "километрах в двух"
+            km < 4.0 -> "километрах в трёх"
+            km < 7.0 -> "далеко, километрах в пяти"
             else -> "где-то далеко"
         }
 

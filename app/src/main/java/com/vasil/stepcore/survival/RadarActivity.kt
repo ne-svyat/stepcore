@@ -109,6 +109,11 @@ class RadarActivity : AppCompatActivity() {
                     .append(" — ").append(RadarModel.kmRu(r.scentKm))
             }
         }
+        if (r.hasWorld) {
+            sb.append("\nВидно ").append(RadarModel.kmRu(r.sightKm))
+                .append(" · слышно ").append(RadarModel.kmRu(r.hearKm))
+            if (!r.calm) sb.append(", против ветра дальше")
+        }
         factsText.text = sb.toString()
 
         legendBox.removeAllViews()
@@ -157,13 +162,25 @@ class RadarActivity : AppCompatActivity() {
                 R.color.text_dim, R.color.accent_violet))
         }
 
+        // Забыть — не то же самое, что не знать. Тусклая строка вместо метки:
+        // рисовать метку было бы враньём, молчать — тоже.
+        for (f in r.faded) {
+            legendBox.addView(dim(
+                RadarModel.kindRu(f.kind) + " — сведения устарели: " +
+                RadarModel.ageRu(f.ageDays) + ", " + Compass.RU[f.sector] +
+                ", " + RadarModel.sourceRu(f.source)))
+        }
+
         val unknown = r.unknown.joinToString(" · ") { RadarModel.kindRu(it) }
         if (unknown.isNotEmpty()) {
             legendBox.addView(dim("Ни разу не встречены: " + unknown))
         }
         legendBox.addView(dim(
             "Ярче — свежее. Шире ореол — меньше уверенности: зверь ушёл, а сведения остались. " +
-            "Красным — то, что чует лагерь сегодня."))
+            "Красным — то, что чует лагерь сегодня.\n\n" +
+            "Белое кольцо — докуда сегодня видно. Синий лепесток — докуда слышно: " +
+            "против ветра дальше, по ветру почти никак. За этими границами зверь есть — " +
+            "просто ты о нём не узнаешь."))
     }
 
     private fun card(
