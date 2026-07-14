@@ -38,6 +38,13 @@ private var failures = 0
  */
 private const val WORLD_FINGERPRINT = "e40d82116ae5da8"
 
+/**
+ * Отпечаток мира версии 3 (v116: зверь идёт, а не прыгает).
+ * Заморожен так же, как v2. Правило прежнее: новый слой не двигает уже
+ * начатые экспедиции — он получает свою версию.
+ */
+private const val WORLD_FINGERPRINT_V3 = "8d5d4c89a03e410d"
+
 private fun check(name: String, ok: Boolean, detail: String = "") {
     if (!ok) {
         failures++
@@ -378,7 +385,7 @@ fun main(args: Array<String>) {
             for (t in 1..90) {
                 st = WeatherModel.step(2, st, eng.yearDay(t), SplitMix64.forTick(seed, t))
                 dir = WindField.step(seed, t, dir, st.front)
-                FaunaModel.step(agents, st, dir, eng.seasonOf(t), seed, t)
+                FaunaModel.step(agents, st, dir, eng.seasonOf(t), seed, t, 3)
                 for (a in agents) {
                     if (a.distKm < 0.0 || a.distKm > 30.0) outOfRange++
                     if (a.kind == FaunaModel.BEAR && !a.asleep && st.tempC <= -12) bearInFrost++
@@ -551,9 +558,25 @@ fun main(args: Array<String>) {
                 }
         }
         val fp = java.lang.Long.toHexString(h)
-        println("отпечаток мира: " + fp)
+        println("отпечаток мира v2: " + fp)
         check("world.fingerprint_frozen", fp == WORLD_FINGERPRINT,
             "было " + WORLD_FINGERPRINT + ", стало " + fp)
+
+        var h3 = 1125899906842597L
+        for (i in 0 until 50) {
+            val seed = 424242L + i * 977L
+            SurvivalEngine(seed, i % 4, SurvivalEngine.startOffsetFrom(seed), 3)
+                .run(0, 100 * SurvivalEngine.PHASES) { e ->
+                    val sg = "" + e.tick + "|" + e.category + "|" + e.key + "|" + e.roll +
+                        "|" + e.phase + "|" + e.nth + "|" + e.ctx
+                    for (c in sg) h3 = 31 * h3 + c.code
+                }
+        }
+        val fp3 = java.lang.Long.toHexString(h3)
+        println("отпечаток мира v3: " + fp3)
+        check("world.fingerprint_v3_frozen", fp3 == WORLD_FINGERPRINT_V3,
+            "было " + WORLD_FINGERPRINT_V3 + ", стало " + fp3)
+        check("world.v2_and_v3_differ", fp != fp3)
     }
 
     // --- 9. РАДАР: наблюдения и туман войны (200 000 дней мира) ---
@@ -791,6 +814,69 @@ fun main(args: Array<String>) {
         check("text.direction_matches_world", lies == 0, "" + lies)
         check("text.no_direction_in_calm", calmLies == 0, "" + calmLies)
         check("text.direction_actually_used", withDir > 0, "" + withDir)
+    }
+
+    // --- 12. v3: ЗВЕРЬ ИДЁТ, А НЕ ПРЫГАЕТ (200 000 дней) ---
+    run {
+        var days = 0L
+        var animalDays = 0L
+        var teleports = 0        // прыжок больше суточного предела
+        var closing = 0          // наблюдений «ближе, чем в прошлый раз»
+        var mooseSeen = 0
+        var mooseTracks = 0
+        var wolverine = 0
+        var atFloor = 0          // наблюдений ровно на минимуме (признак телепорта)
+        var obsTotal = 0
+        for (i in 0 until 2000) {
+            val seed = 777000L + i * 13L
+            val eng = SurvivalEngine(seed, i % 4, SurvivalEngine.startOffsetFrom(seed), 3)
+            eng.run(0, 100 * SurvivalEngine.PHASES) { e ->
+                if (e.category == "animal" && e.key != "fauna.quiet") animalDays++
+                if (e.key == "fauna.moose.near") mooseSeen++
+                if (e.key == "track.moose") mooseTracks++
+                if (e.key.startsWith("fauna.wolverine")) wolverine++
+            }
+            val obs = eng.observations(100 * SurvivalEngine.PHASES)
+            val seq = HashMap<String, MutableList<Pair<Int, Double>>>()
+            for (o in obs) {
+                obsTotal++
+                if (o.distKm <= 0.16) atFloor++
+                seq.getOrPut(o.kind) { ArrayList() }.add(o.tick to o.distKm)
+            }
+            for ((_, l) in seq) {
+                for (j in 1 until l.size) {
+                    val dt = l[j].first - l[j - 1].first
+                    val drop = l[j - 1].second - l[j].second
+                    if (drop > 0) closing++
+                    // За сутки зверь не может сократить расстояние больше,
+                    // чем ему позволено на этом расстоянии: вдали он волен
+                    // мотать по тайге, вблизи — осторожничает.
+                    val limit = minOf(3.05, l[j - 1].second * 0.5 + 0.35)
+                    if (dt == 1 && drop > limit) teleports++
+                }
+            }
+            days += 100
+        }
+        val floorPct = atFloor * 100 / maxOf(1, obsTotal)
+        println("v3: дней со зверем " + (animalDays * 100 / days) + " проц. · росомаха " +
+            (wolverine * 100L / days) + " проц. · шагов навстречу " + closing +
+            " · лось: встреч " + mooseSeen + ", следов " + mooseTracks +
+            " · наблюдений в упор " + floorPct + " проц.")
+
+        check("v3.no_teleport", teleports == 0, "" + teleports)
+        // Главное, ради чего всё затевалось: зверь ВИДНО, как подходит.
+        check("v3.approach_is_visible", closing > 8000, "" + closing)
+        // Лось перестал быть мёртвым кодом.
+        check("v3.moose_is_alive", mooseSeen > 100 && mooseTracks > 100,
+            mooseSeen.toString() + "/" + mooseTracks)
+        // Росомаха не поселилась в журнале.
+        check("v3.wolverine_not_wallpaper", wolverine * 100L / days <= 10,
+            "" + (wolverine * 100L / days))
+        // Зверь не стоит вечно у палатки и не исчезает из мира.
+        check("v3.animal_days_sane", animalDays * 100 / days in 10..35,
+            "" + (animalDays * 100 / days))
+        // В v2 97% наблюдений медведя были ровно на 150 м. Теперь — полоса.
+        check("v3.not_everything_at_the_tent", floorPct <= 35, "" + floorPct)
     }
 
     if (failures == 0) {

@@ -171,7 +171,7 @@ class SurvivalEngine(
 
             windDir = WindField.step(seed, t, windDir, state.front)
             val fr = if (fauna.isEmpty()) null
-                else FaunaModel.step(fauna, state, windDir, seasonOf(t), seed, t)
+                else FaunaModel.step(fauna, state, windDir, seasonOf(t), seed, t, version)
 
             emit(t, prev, state, rng, windDir, fr, seen, fromExclusive, toInclusive,
                 sink, obsSink)
@@ -444,9 +444,14 @@ class SurvivalEngine(
             observe(phaseOf("animal", ev.key), ev.kind, ev.sector, ev.distKm,
                 src, ev.packSize)
         } else if (track == null && wolvesKm < 2.5 &&
-            st.snowCm >= TrackModel.MIN_SNOW_CM && st.precip < 3) {
+            st.snowCm >= TrackModel.MIN_SNOW_CM && st.precip < 3 &&
+            (version < 3 || rng.nextDouble() < QUIET_P)) {
             // Пустой лес под стаей — тоже сообщение. Отсутствие следов
             // информативно ровно настолько же, насколько их наличие.
+            //
+            // v3: со стаей, которая теперь ходит рядом, а не за горизонтом,
+            // эта строка стала самой частой в журнале — 7% всех дней.
+            // Тишина, звучащая каждый день, перестаёт быть тишиной.
             fire("animal", "fauna.quiet", rng.nextLong(), emptyMap(), ctx)
         }
     }
@@ -460,7 +465,10 @@ class SurvivalEngine(
          * номер версии лежит в их паспорте, WeatherModel хранит обе ветки.
          * Архив остаётся честным — он прожит тем миром, в котором начинался.
          */
-        const val ENGINE_VERSION = 2
+        /** Как часто пустой лес под стаей становится строкой. Только v3. */
+    private const val QUIET_P = 0.40
+
+    const val ENGINE_VERSION = 3
 
         /**
          * Вероятность бытовой зарисовки в тихий день. 0.18 подобрано

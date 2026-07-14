@@ -38,10 +38,41 @@ object FaunaModel {
     /** Минимум дней молчания между воями стаи. */
     private const val HOWL_PAUSE = 9
 
+    /** Через сколько дней зверь, стоящий рядом, снова становится новостью. */
+    private const val NEAR_PAUSE = 6
+
+    /** Насколько ближе надо подойти, чтобы это стоило строки в журнале. */
+    private const val NEAR_STEP_KM = 0.35
+
+    /** Шанс за сутки бросить начатое: передумал, отвлёкся, нашёл падаль. */
+    private const val GIVE_UP_P = 0.07
+
+    /** Сколько дней зверь не возвращается после визита в лагерь. */
+    private const val VISIT_COOLDOWN = 3
+
     /** Ближе этого зверь без запаха лагеря не подходит: у него свои дела.
      *  Порог выбран ЗА радиусом чтения следов (2,2 км) — иначе тропа зверя
      *  пересекала мою каждый день, и след из события превращался в фон. */
     private const val SHY_KM = 2.6
+
+    // --- v3: зверь ИДЁТ, а не прыгает ---
+
+    /** Дальше этого за сутки к лагерю не подойти. Даже волк. */
+    private const val MAX_APPROACH_KM = 1.5
+
+    /** Мягкая стена: зверь не любит лагерь, но не заперт за ней. */
+    private fun shyKmV3(kind: String): Double = when (kind) {
+        WOLVERINE -> 2.0
+        MOOSE -> 1.2
+        else -> 2.6
+    }
+
+    /** Ближе этого без запаха лагеря не подходит никто и никогда. */
+    private fun floorV3(kind: String): Double = when (kind) {
+        WOLVERINE -> 0.6
+        MOOSE -> 0.8
+        else -> 0.5
+    }
 
     const val WOLF = "wolf"
     const val BEAR = "bear"
@@ -101,6 +132,13 @@ object FaunaModel {
         var alive: Boolean = true,
         var packSize: Int = 1,   // только для волков
         var asleep: Boolean = false, // медведь в берлоге
+        // v3: о чём уже рассказали. «Рядом» — это НОВОСТЬ (зверь подошёл
+        // ближе, чем в прошлый раз), а не состояние («всё ещё в километре»).
+        var reportedKm: Double = 99.0,
+        var reportedTick: Int = -99,
+        // v3: зверь, взявший след дыма, ИДЁТ, а не решает заново каждое утро.
+        var approaching: Boolean = false,
+        var visitCooldown: Int = 0,
         var smelledDays: Int = 0,    // сколько дней подряд чует лагерь
         var quietDays: Int = 0,      // сколько дней стая молчит (пауза между воями)
     )
@@ -161,6 +199,7 @@ object FaunaModel {
         season: Int,
         seed: Long,
         tick: Int,
+        version: Int,
     ): DayResult {
         val rng = SplitMix64.forTick(seed xor SALT, tick)
         val scent = ScentModel.campScentKm(st)
@@ -187,6 +226,8 @@ object FaunaModel {
             }
 
             if (a.kind == WOLF) a.quietDays++
+            // Ушёл за горизонт — его возвращение снова будет новостью.
+            if (version >= 3 && a.distKm > 3.0) a.reportedKm = 99.0
 
             // Голод. Зимой еда даётся тяжелее — голод копится быстрее.
             val hungerRate = if (st.snowCm > 20) 0.055 else 0.035
@@ -200,8 +241,56 @@ object FaunaModel {
             val pull = if (a.kind == MOOSE) 0.0 else a.hunger * boldness(a.kind)
             val sp = speed(a.kind)
 
-            if (smells && rng.nextDouble() < pull) {
-                // Идёт на запах. Не по прямой — по ветру, забирая в сторону.
+            // v3. РЕШЕНИЕ ИДТИ — УСТОЙЧИВОЕ.
+            //
+            // Первая версия шага переигрывала выбор каждое утро: чтобы дойти
+            // за четверо суток, зверю надо было выиграть четыре броска подряд.
+            // Он не выигрывал: встречи с медведем упали с 4086 до 66 на
+            // 200 000 дней. Мир стал не осторожным, а пустым.
+            //
+            // Голодный зверь, взявший запах дыма, не бросает его через сутки.
+            // Он идёт, пока запах есть и пока не передумал. Ветер, сменивший
+            // сторону, — законный повод потерять след и уйти.
+            if (version >= 3) {
+                if (a.visitCooldown > 0) {
+                    a.visitCooldown--
+                    a.approaching = false
+                } else {
+                    if (!a.approaching && smells && rng.nextDouble() < pull) a.approaching = true
+                    if (a.approaching && !smells) a.approaching = false
+                    if (a.approaching && rng.nextDouble() < GIVE_UP_P) a.approaching = false
+                }
+            }
+
+            if (version >= 3 && a.approaching) {
+                // v3. Идёт на запах ШАГОМ, а не прыжком.
+                //
+                // В v2 шаг равнялся скорости зверя: медведь покрывал 3-6 км
+                // за сутки и падал из-за горизонта прямо к палатке. Замер на
+                // 240 000 днях: 97% всех наблюдений медведя приходились ровно
+                // на 150 м — промежуточных расстояний не существовало в мире.
+                // Тревоги не было, потому что не было приближения.
+                //
+                // Теперь суточное сближение ограничено втройне: не больше
+                // MAX_APPROACH_KM, не больше восьмушки суточного хода и не
+                // больше трети текущего расстояния. Зверь заходит на лагерь
+                // трое-четверо суток — и все эти сутки его видно на радаре.
+                val step = minOf(MAX_APPROACH_KM, sp * 0.12, a.distKm * 0.35 + 0.08)
+                var nd = a.distKm - step
+                if (nd < 0.25) {
+                    nd = 0.15                       // дошёл: он у палатки
+                    a.approaching = false
+                    a.visitCooldown = VISIT_COOLDOWN // визит состоялся, теперь уйдёт
+                }
+                a.distKm = maxOf(0.15, nd)
+                if (rng.nextDouble() < 0.35) a.sector = (a.sector + (if (rng.nextDouble() < 0.5) 1 else 7)) % 8
+            } else if (version < 3 && smells && rng.nextDouble() < pull) {
+                // v2 (заморожена): прыжок длиной в суточный ход.
+                //
+                // ГАРД version < 3 ОБЯЗАТЕЛЕН. Без него эта ветка работала
+                // как «второй шанс» для v3: если бросок на шаг не выпал,
+                // зверь проваливался сюда и прыгал по-старому. Телепорт
+                // возвращался через чёрный ход (замер: 574 прыжка).
                 a.distKm = maxOf(0.15, a.distKm - sp * (0.25 + 0.25 * a.hunger))
                 if (rng.nextDouble() < 0.35) a.sector = (a.sector + (if (rng.nextDouble() < 0.5) 1 else 7)) % 8
             } else if (smells && a.kind != MOOSE && a.distKm < 1.5) {
@@ -224,11 +313,34 @@ object FaunaModel {
                     if (a.kind == MOOSE || a.distKm < FAR_KM) 0.0 else a.hunger * 0.25
                 val drift = (rng.nextDouble() - 0.45 - curiosity) * sp * 0.35
                 var nd = a.distKm + drift
-                // Не чуя лагеря, зверь не подходит вплотную просто так: у него
-                // свои дела. Исключение — росомаха, ей чужие дела интересны.
-                val floor = if (a.kind == WOLVERINE) WOLVERINE_SHY_KM else SHY_KM
-                if (nd < floor) nd = floor + rng.nextDouble() * 0.6
-                a.distKm = nd.coerceIn(0.4, homeRange(a.kind))
+                if (version >= 3) {
+                    // v3. Бродя по участку, зверь тоже не сваливается на
+                    // лагерь как снег на голову. Вдали он волен мотать по
+                    // десять километров — это его дело. Но чем он ближе, тем
+                    // короче его суточный подход: рядом с человеком зверь
+                    // осторожничает, а не летит. Иначе телепорт возвращался
+                    // с другой стороны — не через запах, а через блуждание
+                    // (замер: 391 прыжок больше 1,5 км за сутки).
+                    val maxIn = minOf(3.0, a.distKm * 0.5 + 0.3)
+                    var din = drift
+                    if (din < -maxIn) din = -maxIn
+                    nd = a.distKm + din
+                    // Стена стала МЯГКОЙ. В v2 зверь, не чующий лагеря,
+                    // отбрасывался за 2,6 км жёстко — и потому лось, который
+                    // на дым не идёт НИКОГДА, физически не мог оказаться
+                    // ближе. «Лось рядом» был мёртвым кодом: 0 срабатываний
+                    // на 240 000 дней. Теперь зверь может пройти в километре
+                    // просто по своим делам — редко, но может.
+                    val shy = shyKmV3(a.kind)
+                    if (nd < shy) nd += (shy - nd) * 0.6
+                    a.distKm = nd.coerceIn(floorV3(a.kind), homeRange(a.kind))
+                } else {
+                    // Не чуя лагеря, зверь не подходит вплотную просто так: у него
+                    // свои дела. Исключение — росомаха, ей чужие дела интересны.
+                    val floor = if (a.kind == WOLVERINE) WOLVERINE_SHY_KM else SHY_KM
+                    if (nd < floor) nd = floor + rng.nextDouble() * 0.6
+                    a.distKm = nd.coerceIn(0.4, homeRange(a.kind))
+                }
                 if (rng.nextDouble() < 0.3) {
                     a.sector = (a.sector + (if (rng.nextDouble() < 0.5) 1 else 7) + 8) % 8
                 }
@@ -268,7 +380,7 @@ object FaunaModel {
         val trackChance = if ((near?.distKm ?: 9.0) < 1.0) 0.5 else 0.3
         val tracker = if (near != null && rng.nextDouble() < trackChance) near else null
 
-        val event = pickEvent(agents, kill, wolvesNear, st, rng)
+        val event = pickEvent(agents, kill, wolvesNear, st, rng, tick, version)
 
         // ПОСЛЕДСТВИЕ ВИЗИТА. Этого не хватало, и без него зверь, дошедший до
         // лагеря, там и оставался: росомаха жила у палатки треть экспедиции.
@@ -316,31 +428,80 @@ object FaunaModel {
         wolvesNear: Double,
         st: WeatherState,
         rng: SplitMix64,
+        tick: Int,
+        version: Int,
     ): FaunaEvent? {
         fun a(kind: String) = agents.firstOrNull { it.kind == kind && it.alive && !it.asleep }
+
+        /**
+         * Стоит ли рассказывать про зверя, который просто РЯДОМ.
+         *
+         * v2 выпускала строку каждый день, пока зверь был в полосе. Пока
+         * зверь телепортировался, это было незаметно. Как только он пошёл
+         * шагом, росомаха начала жить в журнале: 12% всех дней. Событие,
+         * которое случается всегда, событием быть перестаёт.
+         *
+         * Новость — это ПРИБЛИЖЕНИЕ: подошёл ощутимо ближе, чем в прошлый
+         * раз. Либо прошло достаточно дней, чтобы напомнить о себе.
+         */
+        fun news(x: Agent): Boolean {
+            if (version < 3) return true
+            return x.distKm <= x.reportedKm - NEAR_STEP_KM ||
+                tick - x.reportedTick >= NEAR_PAUSE
+        }
+
+        /**
+         * Заметил ли человек зверя, который прошёл в километре.
+         *
+         * Чаще всего — НЕТ. Тайга густая, зверь тихий, человек занят дровами.
+         * Вероятность падает с расстоянием: у самой палатки не заметить
+         * нельзя, в полутора километрах — почти наверняка не заметишь.
+         *
+         * Без этого росомаха, пойдя шагом вместо прыжка, поселилась в
+         * журнале: 10% всех дней были про неё. Дело было не в расстоянии —
+         * дело в том, что мир докладывал о ней то, чего человек видеть не мог.
+         */
+        fun notices(x: Agent): Boolean {
+            if (version < 3) return true
+            var p = (1.0 - 0.55 * x.distKm).coerceIn(0.15, 0.95)
+            if (x.kind == MOOSE) p = minOf(0.95, p * 1.4)   // лось велик и шумен
+            if (x.kind == LYNX) p *= 0.8                    // рысь — призрак, но не миф
+            return rng.nextDouble() < p
+        }
+
+        fun told(x: Agent): FaunaEvent? {
+            x.reportedKm = x.distKm
+            x.reportedTick = tick
+            return null
+        }
 
         // Встреча глаза в глаза — редчайшее событие, и такой она должна
         // остаться. Медведь подходит вплотную, только если по-настоящему
         // голоден; сытый обойдёт стороной, и это будет «медведь рядом».
         val bear = a(BEAR)
         if (bear != null && bear.distKm < 0.35 && bear.hunger > 0.82) {
+            told(bear)
             return FaunaEvent("fauna.bear.encounter", BEAR, bear.distKm, 1, bear.sector)
         }
         val wolverine = a(WOLVERINE)
         if (wolverine != null && wolverine.distKm < 0.35) {
+            told(wolverine)
             return FaunaEvent("fauna.wolverine.camp", WOLVERINE, wolverine.distKm, 1, wolverine.sector)
         }
         val wolf = a(WOLF)
         if (wolf != null && wolf.distKm < 0.9) {
+            told(wolf)
             return FaunaEvent("fauna.wolf.circle", WOLF, wolf.distKm, wolf.packSize, wolf.sector)
         }
         if (kill != null && wolf != null && wolf.distKm < 3.5) {
             return FaunaEvent("fauna.wolf.kill", WOLF, wolf.distKm, wolf.packSize, wolf.sector)
         }
-        if (bear != null && bear.distKm < 1.6) {
+        if (bear != null && bear.distKm < 1.6 && news(bear) && notices(bear)) {
+            told(bear)
             return FaunaEvent("fauna.bear.near", BEAR, bear.distKm, 1, bear.sector)
         }
-        if (wolverine != null && wolverine.distKm < 1.2) {
+        if (wolverine != null && wolverine.distKm < 1.2 && news(wolverine) && notices(wolverine)) {
+            told(wolverine)
             return FaunaEvent("fauna.wolverine.near", WOLVERINE, wolverine.distKm, 1, wolverine.sector)
         }
         // Вой слышно далеко, но только в тихую погоду: в бурю не слышно
@@ -355,11 +516,13 @@ object FaunaModel {
             return FaunaEvent("fauna.wolf.howl", WOLF, wolvesNear, wolf.packSize, wolf.sector)
         }
         val lynx = a(LYNX)
-        if (lynx != null && lynx.distKm < 1.0) {
+        if (lynx != null && lynx.distKm < 1.0 && news(lynx) && notices(lynx)) {
+            told(lynx)
             return FaunaEvent("fauna.lynx.near", LYNX, lynx.distKm, 1, lynx.sector)
         }
         val moose = a(MOOSE)
-        if (moose != null && moose.distKm < 1.0) {
+        if (moose != null && moose.distKm < 1.0 && news(moose) && notices(moose)) {
+            told(moose)
             return FaunaEvent("fauna.moose.near", MOOSE, moose.distKm, 1, moose.sector)
         }
         return null
