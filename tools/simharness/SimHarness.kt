@@ -27,6 +27,80 @@ import java.io.File
 private var failures = 0
 
 /**
+ * ЗОНД МИРА. Посуточно печатает то, что журнал никогда не покажет:
+ * где стоит каждый зверь, насколько он голоден, идёт ли он на лагерь,
+ * докуда сегодня видно и слышно, куда несёт запах — и какие строки в
+ * итоге легли в журнал.
+ *
+ * Инструмент разбора, а не игры: он не участвует в инвариантах и не влияет
+ * на мир. Но именно из-за его отсутствия каждый разбор реального журнала
+ * превращался в гадание.
+ */
+private fun probe(seed: Long, season: Int, days: Int, version: Int, corpus: Corpus) {
+    val off = SurvivalEngine.startOffsetFrom(seed)
+    val eng = SurvivalEngine(seed, season, off, version)
+
+    val lines = HashMap<Int, MutableList<String>>()
+    eng.run(0, days * SurvivalEngine.PHASES) { e ->
+        val txt = corpus.renderOrNull(e.key, e.roll, e.params, e.ctx, e.nth, seed)
+        if (txt != null) {
+            lines.getOrPut(e.tick) { ArrayList() }
+                .add("[" + e.category + "/" + e.key + "] " + txt)
+        }
+    }
+
+    val agents = FaunaModel.spawn(seed, season)
+    var state = WeatherModel.initial(version, SplitMix64.forTick(seed, 0), eng.yearDay(0), season)
+    var dir = 0
+
+    println("ЗОНД · seed=" + seed + " сезон=" + season + " версия мира=" + version +
+        " · " + days + " дней")
+    println()
+    for (t in 1..days) {
+        val rng = SplitMix64.forTick(seed, t)
+        state = WeatherModel.step(version, state, eng.yearDay(t), rng)
+        dir = WindField.step(seed, t, dir, state.front)
+        val light = SurvivalEngine.lightX10(eng.yearDay(t))
+        val moon = SurvivalEngine.moonPhase(eng.yearDay(t), seed)
+        val fr = FaunaModel.step(agents, state, dir, eng.seasonOf(t), seed, t, version, light, moon)
+
+        val sight = SenseModel.sightKm(state.cloud, state.precip, state.fog, state.wind, light, moon)
+        val hear = SenseModel.hearKm(state.wind, state.precip, state.tempC, state.fog)
+        val scent = ScentModel.reachKm(state.wind, state.tempC, state.precip, state.fog)
+
+        println("Д" + t + "  " + SurvivalEngine.headerOf(eng.daySnapshots(t).last()))
+        println("     небо: свет " + (light / 10.0) + " ч · луна " + moon +
+            " | чувства: видно " + String.format("%.2f", sight) +
+            " км · слышно " + String.format("%.2f", hear) + " км" +
+            " | запах: " + String.format("%.2f", scent) + " км на " +
+            Compass.RU[Compass.downwind(dir)])
+        for (a in agents) {
+            if (!a.alive) { println("     " + a.kind.padEnd(10) + " МЁРТВ"); continue }
+            if (a.asleep) { println("     " + a.kind.padEnd(10) + " спит"); continue }
+            val smells = ScentModel.smells(a.distKm, a.sector, state, dir, FaunaModel.nose(a.kind))
+            println("     " + a.kind.padEnd(10) +
+                String.format("%5.2f км", a.distKm) + " " + Compass.RU[a.sector].padEnd(3) +
+                " голод " + String.format("%.2f", a.hunger) +
+                (if (smells) " ЧУЕТ" else "     ") +
+                (if (a.approaching) " ИДЁТ" else "     ") +
+                (if (a.visitCooldown > 0) " отходит(" + a.visitCooldown + ")" else "") +
+                (if (a.distKm <= sight) " <- ВИДЕН" else "") +
+                (if (a.kind == FaunaModel.WOLF) " стая=" + a.packSize else ""))
+        }
+        if (fr?.event != null) {
+            println("     СОБЫТИЕ: " + fr.event!!.key + " на " +
+                String.format("%.2f", fr.event!!.distKm) + " км, " + Compass.RU[fr.event!!.sector])
+        }
+        if (fr?.trackKind != null) {
+            println("     СЛЕД: " + fr.trackKind + " на " +
+                String.format("%.2f", fr.trackDistKm) + " км, " + Compass.RU[fr.trackSector])
+        }
+        for (l in lines[t] ?: emptyList<String>()) println("     ЖУРНАЛ " + l)
+        println()
+    }
+}
+
+/**
  * Отпечаток мира версии 2. Считается по событиям 50 сидов x 100 дней.
  * Пока ENGINE_VERSION не меняется, эта константа неприкосновенна: любой
  * новый слой обязан жить в своём потоке случайности и не двигать погоду,
@@ -118,6 +192,23 @@ private fun claimsCalm(txt: String): Boolean {
 
 fun main(args: Array<String>) {
     val corpus = Corpus(File(args[0]).readText())
+
+    // ЗОНД МИРА: посуточный дамп внутренностей одной экспедиции.
+    //   kotlin SimHarness.jar corpus.txt --probe <seed> <season 0-3> <дней> [версия]
+    // Нужен затем, что журнал показывает мир через щёлочку: видно строку, но
+    // не видно, где на самом деле стоял зверь, насколько он был голоден и
+    // докуда в тот день было видно. Разбор реальных журналов раз за разом
+    // упирался именно в это.
+    if (args.size >= 2 && args[1] == "--probe") {
+        probe(
+            seed = args.getOrElse(2) { "42" }.toLong(),
+            season = args.getOrElse(3) { "0" }.toInt(),
+            days = args.getOrElse(4) { "30" }.toInt(),
+            version = args.getOrElse(5) { "4" }.toInt(),
+            corpus = corpus,
+        )
+        return
+    }
 
     // --- 1. Детерминизм: два прогона одного seed идентичны ---
     run {
@@ -642,7 +733,7 @@ fun main(args: Array<String>) {
             for (t in 1..100) {
                 days++
                 val upto = obs.filter { it.tick <= t }
-                val rec = RadarModel.build(upto, snaps[t - 1], t)
+                val rec = RadarModel.build(upto, snaps[t - 1], t, 2)
                 if (rec.marks.isNotEmpty()) knownDays++
                 if (rec.marks.any { it.attention }) attentionDays++
                 for (m in rec.marks) {
@@ -702,16 +793,90 @@ fun main(args: Array<String>) {
     // --- 9c. Туман войны: знание расползается и в конце концов гаснет ---
     run {
         check("radar.uncertainty_grows",
-            RadarModel.uncertaintyKm(FaunaModel.WOLF, Obs.SEEN, 1) >
-                RadarModel.uncertaintyKm(FaunaModel.WOLF, Obs.SEEN, 0))
+            RadarModel.uncertaintyKm(FaunaModel.WOLF, Obs.SEEN, 1, 4) >
+                RadarModel.uncertaintyKm(FaunaModel.WOLF, Obs.SEEN, 0, 4))
         check("radar.freshness_fades", RadarModel.freshness(3) < RadarModel.freshness(0))
         check("radar.hearing_is_vaguer_than_sight",
             RadarModel.baseErrKm(Obs.HEARD) > RadarModel.baseErrKm(Obs.SEEN))
-        // волк за неделю забывается полностью, лось помнится дольше
-        check("radar.wolf_forgotten_fast",
-            RadarModel.uncertaintyKm(FaunaModel.WOLF, Obs.SEEN, 5) >= RadarModel.FORGET_KM)
-        check("radar.moose_remembered_longer",
-            RadarModel.uncertaintyKm(FaunaModel.MOOSE, Obs.SEEN, 5) < RadarModel.FORGET_KM)
+        // Знание НАСЫЩАЕТСЯ: прирост неопределённости за седьмые сутки
+        // должен быть заметно меньше, чем за первые. Зверь живёт в участке,
+        // а не уходит по прямой.
+        val d1 = RadarModel.uncertaintyKm(FaunaModel.WOLF, Obs.SEEN, 1, 4) -
+            RadarModel.uncertaintyKm(FaunaModel.WOLF, Obs.SEEN, 0, 4)
+        val d7 = RadarModel.uncertaintyKm(FaunaModel.WOLF, Obs.SEEN, 7, 4) -
+            RadarModel.uncertaintyKm(FaunaModel.WOLF, Obs.SEEN, 6, 4)
+        check("radar.memory_saturates", d7 < d1 * 0.25, String.format("%.3f/%.3f", d1, d7))
+        // Росомаха мотается широко и забывается; лось топчется и помнится.
+        check("radar.wolverine_forgotten_first",
+            RadarModel.uncertaintyKm(FaunaModel.WOLVERINE, Obs.SEEN, 10, 4) >
+                RadarModel.uncertaintyKm(FaunaModel.MOOSE, Obs.SEEN, 10, 4) * 3)
+        // И главное: росомаху, разорившую лагерь ТРИ дня назад, помнят.
+        check("radar.wolverine_remembered_3_days",
+            RadarModel.uncertaintyKm(FaunaModel.WOLVERINE, Obs.SEEN, 3, 4) < RadarModel.FORGET_KM,
+            String.format("%.2f", RadarModel.uncertaintyKm(FaunaModel.WOLVERINE, Obs.SEEN, 3, 4)))
+    }
+
+    // --- 15. ПАМЯТЬ РАДАРА СВЕРЯЕТСЯ С МИРОМ ---
+    //
+    // Радар предполагает, как быстро зверь уходит. Мир знает это точно.
+    // Здесь они встречаются. Если походка зверя изменится, а таблицу забудут
+    // пересчитать — прогон упадёт ЗДЕСЬ, а не в журнале у человека.
+    //
+    // Это же и главный диагностический стол: таблица печатается каждый раз.
+    run {
+        for (version in intArrayOf(2, 3, 4)) {
+            val kinds = listOf(FaunaModel.WOLF, FaunaModel.BEAR, FaunaModel.WOLVERINE,
+                FaunaModel.LYNX, FaunaModel.MOOSE)
+            val disp = HashMap<String, Array<MutableList<Double>>>()
+            for (k in kinds) disp[k] = Array(22) { mutableListOf<Double>() }
+
+            for (i in 0 until 200) {
+                val seed = 313000L + i * 37L
+                val season = i % 4
+                val eng = SurvivalEngine(seed, season, SurvivalEngine.startOffsetFrom(seed), version)
+                val hist = HashMap<String, DoubleArray>()
+                for (k in kinds) hist[k] = DoubleArray(121)
+                val agents = FaunaModel.spawn(seed, season)
+                var state = WeatherModel.initial(
+                    version, SplitMix64.forTick(seed, 0), eng.yearDay(0), season)
+                var dir = 0
+                for (t in 1..120) {
+                    val rng = SplitMix64.forTick(seed, t)
+                    state = WeatherModel.step(version, state, eng.yearDay(t), rng)
+                    dir = WindField.step(seed, t, dir, state.front)
+                    FaunaModel.step(agents, state, dir, eng.seasonOf(t), seed, t, version,
+                        SurvivalEngine.lightX10(eng.yearDay(t)),
+                        SurvivalEngine.moonPhase(eng.yearDay(t), seed))
+                    for (a in agents) if (a.alive) hist[a.kind]!![t] = a.distKm
+                }
+                for (k in kinds) {
+                    val h = hist[k]!!
+                    for (t in 1..120) for (dt in 1..21) {
+                        if (t + dt <= 120 && h[t] > 0.0 && h[t + dt] > 0.0) {
+                            disp[k]!![dt].add(Math.abs(h[t + dt] - h[t]))
+                        }
+                    }
+                }
+            }
+
+            println("смещение зверя, мир v" + version + " (80-й процентиль -> что помнит радар):")
+            var wrong = 0
+            for (k in kinds) {
+                val line = StringBuilder("  " + k.padEnd(11))
+                for (dt in intArrayOf(1, 3, 7, 14)) {
+                    val l = disp[k]!![dt].sorted()
+                    if (l.isEmpty()) continue
+                    val real = l[l.size * 8 / 10]
+                    val model = RadarModel.uncertaintyKm(k, Obs.SEEN, dt, version) -
+                        RadarModel.baseErrKm(Obs.SEEN)
+                    line.append(String.format("%dсут %.2f/%.2f  ", dt, real, model))
+                    // Радар вправе ошибаться в пределах трети — но не в разы.
+                    if (model < real * 0.65 || model > real * 1.45) wrong++
+                }
+                println(line)
+            }
+            check("radar.memory_matches_world_v" + version, wrong == 0, "" + wrong)
+        }
     }
 
     // --- 9d. Запах радара == запах зверя. Одна физика, две ветки кода ---
@@ -744,7 +909,7 @@ fun main(args: Array<String>) {
             val obs = eng.observations(80 * SurvivalEngine.PHASES)
             val snaps = eng.daySnapshots(80)
             for (t in intArrayOf(1, 7, 30, 80)) {
-                val rec = RadarModel.build(obs.filter { it.tick <= t }, snaps[t - 1], t)
+                val rec = RadarModel.build(obs.filter { it.tick <= t }, snaps[t - 1], t, 4)
                 val txt = RadarModel.report(1L, SurvivalEngine.headerOf(snaps[t - 1]), rec)
                 reports++
                 if (!txt.startsWith("РАДАР")) bad++
@@ -1039,7 +1204,7 @@ fun main(args: Array<String>) {
             }
             for (t in intArrayOf(20, 50, 80, 100)) {
                 radars++
-                val rec = RadarModel.build(obs.filter { it.tick <= t }, snaps[t - 1], t)
+                val rec = RadarModel.build(obs.filter { it.tick <= t }, snaps[t - 1], t, 4)
                 if (rec.faded.isNotEmpty()) fadedShown++
                 if (rec.sightKm <= 0.0 || rec.hearKm <= 0.0) badRange++
                 // Метка и «устаревшее» — непересекающиеся множества.

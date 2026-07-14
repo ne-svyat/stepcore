@@ -46,19 +46,61 @@ object RadarModel {
     )
 
     /**
-     * Насколько расползается знание о звере за сутки, км.
+     * КАК РАСПОЛЗАЕТСЯ ЗНАНИЕ. Кривая, а не прямая.
      *
-     * Это НЕ скорость зверя (волк за день намотает двадцать километров) —
-     * это его типичное СМЕЩЕНИЕ от вчерашней точки. Взято из шага модели:
-     * дрейф зверя за день = случайная доля от speed(kind) * 0.35.
+     * До v119 радар считал неопределённость линейно: ореол = скорость x дни.
+     * Это модель зверя, который уходит от лагеря ПО ПРЯМОЙ и не возвращается.
+     * Такого зверя в мире нет.
+     *
+     * Замер (500 экспедиций x 120 дней, 80-й процентиль смещения):
+     *
+     *      волк:      за 1 сут 2,4 км · за 7 сут 3,5 · за 21 сут 3,8
+     *      росомаха:  за 1 сут 3,0 км · за 7 сут 6,5 · за 21 сут 9,3
+     *      медведь:   за 1 сут 1,1 км · за 7 сут 1,9 · за 21 сут 2,3
+     *      рысь:      за 1 сут 1,1 км · за 7 сут 1,5 · за 21 сут 1,5
+     *      лось:      за 1 сут 0,7 км · за 7 сут 1,4 · за 21 сут 1,9
+     *
+     * Смещение ВЫХОДИТ НА ПЛАТО. Зверь мотается по своему участку, а не
+     * уходит за горизонт: через неделю он всё ещё «где-то тут».
+     *
+     * Старая формула давала волку 16,8 км неопределённости за неделю вместо
+     * 3,5 — и метка стиралась как бесполезная. Реальный журнал: росомаху
+     * забыли через ТРИ дня после того, как она разорила лагерь, хотя она за
+     * это время сместилась на два километра. Экран написал «Пока ничего».
+     *
+     * Теперь кривая насыщения:  u(age) = A * (1 - exp(-age / tau))
+     * где A — плато (радиус, в котором зверь сидит с вероятностью ~80%),
+     * tau — за сколько суток знание «размазывается» в основном.
+     *
+     * ТАБЛИЦА ПРИВЯЗАНА К ВЕРСИИ МИРА. v2 (телепорт) и v3+ (шаг) — разные
+     * миры, и радар обязан читать каждый по его собственным правилам.
+     * Числа не выдуманы: их печатает песочница, и инвариант
+     * `radar.memory_matches_world` сверяет их с миром на каждом прогоне.
+     * Изменится походка зверя — прогон упадёт, и таблицу придётся пересчитать.
      */
-    fun driftPerDay(kind: String): Double = when (kind) {
-        FaunaModel.WOLVERINE -> 3.0
-        FaunaModel.WOLF -> 2.4
-        FaunaModel.BEAR -> 1.5
-        FaunaModel.LYNX -> 1.0
-        FaunaModel.MOOSE -> 0.7
-        else -> 1.5
+    data class Spread(val plateauKm: Double, val tauDays: Double)
+
+    /** Мир v2: зверь телепортировался к лагерю и мотался широко. */
+    private val SPREAD_V2 = mapOf(
+        FaunaModel.WOLF to Spread(3.40, 0.99),
+        FaunaModel.BEAR to Spread(2.44, 1.83),
+        FaunaModel.WOLVERINE to Spread(10.85, 2.44),
+        FaunaModel.LYNX to Spread(1.23, 0.82),
+        FaunaModel.MOOSE to Spread(1.75, 1.87),
+    )
+
+    /** Мир v3 и v4: зверь ходит шагом. Движение у них одинаковое. */
+    private val SPREAD_V3 = mapOf(
+        FaunaModel.WOLF to Spread(3.77, 0.98),
+        FaunaModel.BEAR to Spread(2.33, 1.56),
+        FaunaModel.WOLVERINE to Spread(9.33, 2.58),
+        FaunaModel.LYNX to Spread(1.50, 0.82),
+        FaunaModel.MOOSE to Spread(1.87, 2.02),
+    )
+
+    fun spread(kind: String, version: Int): Spread {
+        val t = if (version <= 2) SPREAD_V2 else SPREAD_V3
+        return t[kind] ?: Spread(3.0, 1.5)
     }
 
     /** Насколько врёт сам источник, км. */
@@ -68,8 +110,11 @@ object RadarModel {
         else -> 1.8        // на слух
     }
 
-    fun uncertaintyKm(kind: String, source: Int, ageDays: Int): Double =
-        baseErrKm(source) + driftPerDay(kind) * max(0, ageDays)
+    fun uncertaintyKm(kind: String, source: Int, ageDays: Int, version: Int): Double {
+        val age = max(0, ageDays).toDouble()
+        val sp = spread(kind, version)
+        return baseErrKm(source) + sp.plateauKm * (1.0 - Math.exp(-age / sp.tauDays))
+    }
 
     /** Яркость метки: свежее — ярче. Пол нужен, чтобы старьё не пропадало
      *  раньше, чем его признают устаревшим по неопределённости. */
@@ -144,7 +189,7 @@ object RadarModel {
             SenseModel.hearKmIn(hearKm, sector, windDir, wind)
     }
 
-    fun build(obs: List<Obs>, day: DaySnap?, ticksDone: Int): Recon {
+    fun build(obs: List<Obs>, day: DaySnap?, ticksDone: Int, version: Int = 4): Recon {
         // Наблюдения приходят по времени — последнее по каждому зверю побеждает.
         val last = HashMap<String, Obs>()
         for (o in obs) last[o.kind] = o
@@ -155,7 +200,7 @@ object RadarModel {
             val o = last[k] ?: continue
             val age = ticksDone - o.tick
             if (age < 0) continue
-            val u = uncertaintyKm(k, o.source, age)
+            val u = uncertaintyKm(k, o.source, age, version)
             if (age > FORGET_DAYS || u >= FORGET_KM) {
                 // Метку рисовать нельзя — она превратилась бы в ложь. Но и
                 // молчать нельзя: человек помнит, что зверь тут был.

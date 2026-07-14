@@ -73,7 +73,8 @@ class SurvivalRepo(private val context: Context) {
         val eng = SurvivalEngine(e.seed, e.startSeason, e.startOffset, e.engineVersion)
         val obs = eng.observations(e.phasesDone)
         val day = eng.daySnapshots(e.ticksDone).lastOrNull()
-        return RadarModel.build(obs, day, e.ticksDone)
+        // Радар читает мир по правилам ТОЙ версии, в которой этот мир живёт.
+        return RadarModel.build(obs, day, e.ticksDone, e.engineVersion)
     }
 
     /**
