@@ -303,6 +303,11 @@ class SurvivalEngine(
             "scent" to (ScentModel.campScentKm(st) * 10).toInt(),
             "wolfkm" to minOf(99, wolvesKm.toInt()),
             "dist" to ((fr?.event?.distKm ?: 99.0) * 10).toInt(),
+            // Читаемые с неба величины. Ни одного нового броска кубика: и
+            // свет, и луна — чистые функции от дня года. Мир от них не
+            // зависит; от них зависит то, что человек видит и пишет.
+            "light" to lightX10(yearDay(t)),
+            "moon" to moonPhase(yearDay(t), seed),
         )
 
         if (t > 1 && seasonOf(t) != seasonOf(t - 1)) {
@@ -632,6 +637,36 @@ class SurvivalEngine(
 
         /** Куда уносит — то есть подветренная сторона. */
         fun windTo(windDir: Int): String = WIND_TO[Compass.downwind(windDir)]
+
+        /**
+         * Длина светового дня, в десятых долях часа. Северная тайга, ~62°N.
+         *
+         * Середина зимы — около пяти часов света, середина лета — почти
+         * девятнадцать. Ничего не бросается: это косинус от дня года.
+         * Зачем: зимний журнал должен знать, что человек живёт в темноте.
+         */
+        fun lightX10(yearDay: Int): Int {
+            val yd = ((yearDay % WeatherModel.YEAR_DAYS) + WeatherModel.YEAR_DAYS) %
+                WeatherModel.YEAR_DAYS
+            // максимум в середине лета (день 225), минимум в середине зимы (45)
+            val a = 2.0 * Math.PI * (yd - 225.0) / WeatherModel.YEAR_DAYS
+            val hours = 12.0 + 6.8 * Math.cos(a)
+            return Math.round(hours * 10.0).toInt()
+        }
+
+        /**
+         * Фаза луны: 0 — новолуние, 4 — полнолуние. Цикл 30 дней.
+         *
+         * Тоже без кубика: сдвиг цикла берётся из сида, дальше — календарь.
+         * Мир луне не подчиняется (зверь не воет на полную луну — это миф),
+         * но человек её видит, и в ясную ночь при полной луне по снегу можно
+         * идти без огня. Это уже повод для строки.
+         */
+        fun moonPhase(yearDay: Int, seed: Long): Int {
+            val off = ((seed % 30L) + 30L) % 30L
+            val d = ((yearDay + off) % 30L).toInt()
+            return (d * 8 / 30) % 8
+        }
 
         fun daysWord(n: Int): String {
             val m10 = n % 10

@@ -36,14 +36,27 @@ private var failures = 0
  * по ctx: это сырое состояние мира на день, из которого слова и лепятся.
  * Проверено: до и после v115 значение одинаково — мир не шелохнулся.
  */
-private const val WORLD_FINGERPRINT = "e40d82116ae5da8"
+/**
+ * Поля, которые ЕСТЬ мир. Отпечаток берётся только по ним.
+ *
+ * v117 добавил в ctx показания неба (длина дня, фаза луны). Это не мир —
+ * это то, что человек с неба считывает; ни одного броска кубика за ними
+ * нет. Отпечаток обязан ловить сдвиг ПОГОДЫ, ВЕТРА и ЗВЕРЯ, а не факт
+ * появления новой строчки в справке. Поэтому список явный и закрытый.
+ */
+private val WORLD_CTX = listOf(
+    "day", "t", "dt", "season", "cloud", "wind", "precip", "fog", "snowseen",
+    "snowcm", "snowage", "ice", "winter", "track", "windir", "scent", "wolfkm", "dist",
+)
+
+private const val WORLD_FINGERPRINT = "ab8e1d4f84aa0f82"
 
 /**
  * Отпечаток мира версии 3 (v116: зверь идёт, а не прыгает).
  * Заморожен так же, как v2. Правило прежнее: новый слой не двигает уже
  * начатые экспедиции — он получает свою версию.
  */
-private const val WORLD_FINGERPRINT_V3 = "8d5d4c89a03e410d"
+private const val WORLD_FINGERPRINT_V3 = "f6cc590484b7d5cb"
 
 private fun check(name: String, ok: Boolean, detail: String = "") {
     if (!ok) {
@@ -552,8 +565,9 @@ fun main(args: Array<String>) {
             val seed = 424242L + i * 977L
             SurvivalEngine(seed, season, SurvivalEngine.startOffsetFrom(seed), 2)
                 .run(0, 100 * SurvivalEngine.PHASES) { e ->
+                    val world = WORLD_CTX.joinToString(",") { k -> k + "=" + (e.ctx[k] ?: 0) }
                     val sg = "" + e.tick + "|" + e.category + "|" + e.key + "|" + e.roll +
-                        "|" + e.phase + "|" + e.nth + "|" + e.ctx
+                        "|" + e.phase + "|" + e.nth + "|" + world
                     for (c in sg) h = 31 * h + c.code
                 }
         }
@@ -567,8 +581,9 @@ fun main(args: Array<String>) {
             val seed = 424242L + i * 977L
             SurvivalEngine(seed, i % 4, SurvivalEngine.startOffsetFrom(seed), 3)
                 .run(0, 100 * SurvivalEngine.PHASES) { e ->
+                    val world = WORLD_CTX.joinToString(",") { k -> k + "=" + (e.ctx[k] ?: 0) }
                     val sg = "" + e.tick + "|" + e.category + "|" + e.key + "|" + e.roll +
-                        "|" + e.phase + "|" + e.nth + "|" + e.ctx
+                        "|" + e.phase + "|" + e.nth + "|" + world
                     for (c in sg) h3 = 31 * h3 + c.code
                 }
         }
@@ -877,6 +892,73 @@ fun main(args: Array<String>) {
             "" + (animalDays * 100 / days))
         // В v2 97% наблюдений медведя были ровно на 150 м. Теперь — полоса.
         check("v3.not_everything_at_the_tent", floorPct <= 35, "" + floorPct)
+    }
+
+    // --- 13. ЖУРНАЛ НЕ ПОВТОРЯЕТСЯ ---
+    //
+    // Реальный зимний журнал за 60 дней: «Ходил за водой к полынье» пять раз,
+    // «Росомаха. След косой...» четыре, из них дважды ПОДРЯД. Причина была не
+    // в бедности корпуса, а в том, что обещанная ротация не работала: точка
+    // отсчёта бралась из свежего броска и затирала счётчик срабатываний.
+    run {
+        var backToBack = 0      // один и тот же текст два раза подряд у ключа
+        var rendered = 0L
+        var dupes = 0L          // повтор текста ключа внутри экспедиции
+        var tightDays = 0L      // дней, где выбирать было не из чего (пул = 1)
+        var poolSum = 0L
+        var poolMin = 99
+        for (i in 0 until 1500) {
+            val seed = 505000L + i * 29L
+            val eng = SurvivalEngine(seed, i % 4, SurvivalEngine.startOffsetFrom(seed), 3)
+            val prev = HashMap<String, String>()
+            val used = HashMap<String, HashSet<String>>()
+            eng.run(0, 90 * SurvivalEngine.PHASES) { e ->
+                val txt = corpus.renderOrNull(e.key, e.roll, e.params, e.ctx, e.nth, seed)
+                if (txt != null) {
+                    rendered++
+                    val p = corpus.poolSize(e.key, e.ctx)
+                    poolSum += p
+                    if (p < poolMin) poolMin = p
+                    if (p <= 1) tightDays++
+                    if (prev[e.key] == txt) backToBack++
+                    if (used.getOrPut(e.key) { HashSet() }.add(txt)) Unit else dupes++
+                    prev[e.key] = txt
+                }
+            }
+        }
+        println("текст: строк " + rendered + " · повторов подряд " + backToBack +
+            " · повторов внутри экспедиции " + (dupes * 100 / rendered) + " проц." +
+            " · пул: мин " + poolMin + ", средний " + (poolSum / rendered))
+
+        // Главное: один и тот же текст не может выйти два раза подряд.
+        check("text.no_back_to_back", backToBack == 0, "" + backToBack)
+        // Кубику должно быть где развернуться в любой день мира.
+        check("text.pool_never_single", tightDays == 0L, "" + tightDays)
+        check("text.pool_is_wide", poolSum / rendered >= 5, "" + (poolSum / rendered))
+        // Полностью без повторов за 90 дней не выйдет — но их должно быть мало.
+        check("text.repeats_are_rare", dupes * 100 / rendered <= 30,
+            "" + (dupes * 100 / rendered))
+    }
+
+    // --- 13b. Показания неба: свет и луна — календарь, а не кубик ---
+    run {
+        // зимой темно, летом светло — и это не мнение
+        val winterLight = SurvivalEngine.lightX10(45)
+        val summerLight = SurvivalEngine.lightX10(225)
+        check("sky.winter_is_dark", winterLight in 45..60, "" + winterLight)
+        check("sky.summer_is_bright", summerLight in 180..195, "" + summerLight)
+        var bad = 0
+        for (yd in 0 until 360) {
+            val l = SurvivalEngine.lightX10(yd)
+            if (l < 50 || l > 190) bad++
+            val m = SurvivalEngine.moonPhase(yd, 12345L)
+            if (m < 0 || m > 7) bad++
+        }
+        check("sky.always_sane", bad == 0, "" + bad)
+        // луна проходит полный круг примерно за месяц
+        val seen = HashSet<Int>()
+        for (yd in 0 until 30) seen.add(SurvivalEngine.moonPhase(yd, 777L))
+        check("sky.moon_cycles", seen.size >= 7, "" + seen.size)
     }
 
     if (failures == 0) {

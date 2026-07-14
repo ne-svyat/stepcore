@@ -218,7 +218,7 @@ class SurvivalRepo(private val context: Context) {
         val now = System.currentTimeMillis()
         val fresh = ArrayList<ExpeditionEvent>()
         val summary = engine.run(e.phasesDone, newPhasesDone) { ev ->
-            val text = renderEvent(ev)
+            val text = renderEvent(ev, e.seed)
             if (text != null) {
                 fresh.add(ExpeditionEvent(
                     expeditionId = e.id, tick = ev.tick, realTimeMs = now,
@@ -282,9 +282,9 @@ class SurvivalRepo(private val context: Context) {
      * - ключ есть, но ни один вариант не допустим в этот день -> строка
      *   не печатается вовсе. Молчание честнее физической лжи.
      */
-    private fun renderEvent(ev: WorldEvent): String? {
+    private fun renderEvent(ev: WorldEvent, salt: Long): String? {
         if (!corpus.has(ev.key)) return "[" + ev.key + "]"
-        return corpus.renderOrNull(ev.key, ev.roll, ev.params, ev.ctx, ev.nth)
+        return corpus.renderOrNull(ev.key, ev.roll, ev.params, ev.ctx, ev.nth, salt)
     }
 
     private fun finalText(s: ExpeditionSummary): String {
