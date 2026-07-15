@@ -138,6 +138,13 @@ class SurvivalEngine(
         fromExclusive: Int,
         toInclusive: Int,
         obsSink: (Obs) -> Unit = {},
+        // v6. Курс дня: 0..7 — заданный игроком (из сохранённой тропы), -1 —
+        // решает автопилот. plannedHeading отдаёт заданный курс уже прожитых
+        // дней (архив стабилен), headingSink принимает фактически пройденный
+        // курс КАЖДОГО дня — чтобы автопилотные дни тоже легли в тропу и мир
+        // не переигрывался, если логика автопилота однажды поумнеет.
+        plannedHeading: (Int) -> Int = { -1 },
+        headingSink: (Int, Int) -> Unit = { _, _ -> },
         sink: (WorldEvent) -> Unit,
     ): ExpeditionSummary {
         var state = WeatherModel.initial(
@@ -156,6 +163,15 @@ class SurvivalEngine(
         // старых экспедиций остаются теми же, какими были.
         var windDir = WindField.initial(seed)
         val fauna = if (version >= 2) FaunaModel.spawn(seed, startSeason) else emptyList()
+
+        // v6. Позиция игрока (км, абсолютные). Лагерь стоит там, где игрок.
+        // Старт — начало координат: в первый день ты там, где высадился.
+        var playerX = 0.0; var playerY = 0.0
+        // То, что игрок УЖЕ знает о зверях — ровно радарные наблюдения, не
+        // истинные позиции. Автопилот смотрит только сюда: он слеп там, где
+        // слеп ты, и не имеет права рулить по тому, чего человек не видел.
+        val lastObs = HashMap<String, Obs>()
+        val obsSink2: (Obs) -> Unit = { o -> lastObs[o.kind] = o; obsSink(o) }
 
         // Мир считается до последнего ЗАТРОНУТОГО дня, даже если он прожит
         // наполовину: утренние события этого дня уже случились.
@@ -180,12 +196,25 @@ class SurvivalEngine(
             }
 
             windDir = WindField.step(seed, t, windDir, state.front)
+
+            // v6. Игрок проходит дневной переход по выбранному курсу — и мир
+            // сегодня считается вокруг НОВОГО места стоянки. Курс: заданный
+            // тропой, иначе — честный автопилот по тому, что на радаре.
+            if (version >= 6) {
+                val planned = plannedHeading(t)
+                val heading = if (planned in 0..7) planned
+                    else autopilotHeading(seed, t, lastObs, playerX, playerY)
+                playerX += TRAVEL_KM_PER_DAY * Math.sin(heading * Math.PI / 4.0)
+                playerY += TRAVEL_KM_PER_DAY * Math.cos(heading * Math.PI / 4.0)
+                headingSink(t, heading)
+            }
+
             val fr = if (fauna.isEmpty()) null
                 else FaunaModel.step(fauna, state, windDir, seasonOf(t), seed, t, version,
-                    lightX10(yearDay(t)), moonPhase(yearDay(t), seed))
+                    lightX10(yearDay(t)), moonPhase(yearDay(t), seed), playerX, playerY)
 
             emit(t, prev, state, rng, windDir, fr, seen, fromExclusive, toInclusive,
-                sink, obsSink)
+                sink, obsSink2)
         }
 
         val d = maxOf(fullDays, 0)
@@ -198,6 +227,46 @@ class SurvivalEngine(
             snowCoverDays = coverDays,
             maxSnowCm = maxSnow,
         )
+    }
+
+    /**
+     * КУРС АВТОПИЛОТА, когда игрок не выбрал сам.
+     *
+     * Железное правило: автопилот видит РОВНО то, что человек на радаре —
+     * последние наблюдения (`lastObs`), а не истинные позиции зверей. Он
+     * слеп там, где слеп ты. Никакого подглядывания в мир.
+     *
+     * Логика простая и читаемая: опасность близко — прочь; свежий след или
+     * добыча поодаль — посмотреть; иначе — разведка по плавной дуге, чтобы
+     * не уходить из обжитого края и день за днём менять соседей.
+     */
+    private fun autopilotHeading(
+        seed: Long, day: Int, lastObs: Map<String, Obs>, px: Double, py: Double,
+    ): Int {
+        val rng = SplitMix64.forTick(seed xor AUTOPILOT_SALT, day)
+        // 1. Опасность рядом и свежая — уходим строго в противоположную сторону.
+        val danger = lastObs.values.firstOrNull {
+            (day - it.tick) <= 3 && it.distKm < 2.5 &&
+                (it.kind == FaunaModel.WOLF || it.kind == FaunaModel.BEAR)
+        }
+        if (danger != null) return (danger.sector + 4) % 8
+        // 2. Свежая добыча или чей-то след поодаль — идём смотреть.
+        val interest = lastObs.values
+            .filter {
+                (day - it.tick) <= 4 && it.distKm >= 1.0 && it.distKm <= 6.0 &&
+                    (it.kind == FaunaModel.MOOSE || it.source == Obs.TRACK)
+            }
+            .minByOrNull { it.distKm }
+        if (interest != null) {
+            val j = if (rng.nextDouble() < 0.3) (if (rng.nextDouble() < 0.5) 1 else 7) else 0
+            return (interest.sector + j) % 8
+        }
+        // 3. Разведка: старт-направление стабильно на экспедицию, курс плавно
+        //    поворачивает (~румб за 5 дней) — игрок обходит обжитой край по
+        //    розетке, а не улетает в пустую тайгу по прямой.
+        val start = SplitMix64.forTick(seed xor AUTOPILOT_SALT, 0).nextInt(8)
+        val wobble = if (rng.nextDouble() < 0.15) (if (rng.nextDouble() < 0.5) 1 else 7) else 0
+        return (start + day / 5 + wobble + 8) % 8
     }
 
     /**
@@ -508,7 +577,14 @@ class SurvivalEngine(
         /** Как часто пустой лес под стаей становится строкой. Только v3. */
     private const val QUIET_P = 0.40
 
-    const val ENGINE_VERSION = 5
+    const val ENGINE_VERSION = 6
+
+        /** Дневной переход игрока по выбранному курсу, км. Подобран так, чтобы
+         *  за экспедицию исходить обжитой край, а не улететь в пустоту. */
+        const val TRAVEL_KM_PER_DAY = 1.5
+
+        /** Своя струя случайности для автопилота — не двигает мир. */
+        const val AUTOPILOT_SALT = 0x40B7_1C3E_9A55_2D08L
 
         /**
          * Вероятность бытовой зарисовки в тихий день. 0.18 подобрано

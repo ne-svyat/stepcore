@@ -173,10 +173,18 @@ object FaunaModel {
         return s
     }
 
-    /** Записать полярный вид от лагеря — то, что читают чутьё, радар и охота. */
+    // v6. Лагерь больше не приколочен к началу координат: он едет с игроком.
+    // Позиция лагеря на текущий тик кладётся сюда в начале step(). Для v<6
+    // остаётся (0,0) — старые миры проецируются от центра, как и раньше.
+    private var campX = 0.0
+    private var campY = 0.0
+
+    /** Записать полярный вид ОТ ЛАГЕРЯ — то, что читают чутьё, радар и охота.
+     *  Лагерь = позиция игрока (v6); для v<6 это по-прежнему начало координат. */
     private fun syncPolar(a: Agent) {
-        a.distKm = maxOf(0.15, Math.hypot(a.x, a.y))
-        a.sector = bearingSector(a.x, a.y)
+        val dx = a.x - campX; val dy = a.y - campY
+        a.distKm = maxOf(0.15, Math.hypot(dx, dy))
+        a.sector = bearingSector(dx, dy)
     }
 
     /** Визит окончен — зверь ушёл в сердце своего участка. */
@@ -191,10 +199,11 @@ object FaunaModel {
 
     /** Стая обошла лагерь и отступила по своей стороне на пару километров. */
     private fun backOffV5(a: Agent) {
-        val d = Math.hypot(a.x, a.y)
+        val dx = a.x - campX; val dy = a.y - campY
+        val d = Math.hypot(dx, dy)
         val target = maxOf(2.5, d)
         val k = if (d > 1e-9) target / d else 0.0
-        a.x *= k; a.y *= k
+        a.x = campX + dx * k; a.y = campY + dy * k
         syncPolar(a)
     }
 
@@ -216,11 +225,12 @@ object FaunaModel {
             // К лагерю шагом. Ограничения те же, что в полярном v3: не больше
             // MAX_APPROACH_KM, не больше восьмушки суточного хода, не больше
             // трети текущего расстояния — зверь заходит трое-четверо суток.
-            val d0 = Math.hypot(a.x, a.y)
+            val dx = a.x - campX; val dy = a.y - campY
+            val d0 = Math.hypot(dx, dy)
             val step = minOf(MAX_APPROACH_KM, sp * 0.12, d0 * 0.35 + 0.08)
             val nd = maxOf(0.15, d0 - step)
             val k = if (d0 > 1e-9) nd / d0 else 0.0
-            a.x *= k; a.y *= k
+            a.x = campX + dx * k; a.y = campY + dy * k
             if (nd <= 0.25) { a.approaching = false; a.visitCooldown = VISIT_COOLDOWN }
         } else {
             // Дома: mean-reverting блуждание вокруг центра участка.
@@ -344,7 +354,12 @@ object FaunaModel {
         version: Int,
         lightX10: Int = 120,
         moon: Int = 0,
+        campKmX: Double = 0.0,
+        campKmY: Double = 0.0,
     ): DayResult {
+        // v6: лагерь стоит там, где сейчас игрок. Для v<6 это (0,0) — мир
+        // проецируется от начала координат, как во всех прежних версиях.
+        campX = campKmX; campY = campKmY
         val rng = SplitMix64.forTick(seed xor SALT, tick)
         val scent = ScentModel.campScentKm(st)
 

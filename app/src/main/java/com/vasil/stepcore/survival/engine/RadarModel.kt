@@ -112,11 +112,28 @@ object RadarModel {
         FaunaModel.MOOSE to Spread(1.08, 1.64),
     )
 
+    /**
+     * Мир v6: лагерь едет с игроком. Для v6 поля Spread читаются ИНАЧе —
+     * это не насыщение, а ПРЯМАЯ: plateauKm = свободный член c0, tauDays =
+     * наклон (км за сутки). Причина: пока ты идёшь, вчерашняя метка не просто
+     * размывается, она ОСТАЁТСЯ ПОЗАДИ — расхождение растёт линейно, а не
+     * выходит на плато. Метки на радаре теперь живут и гаснут по мере хода.
+     * Числа замерены песочницей на типичном ходе (разведка автопилота).
+     */
+    private val SPREAD_V6 = mapOf(
+        FaunaModel.WOLF to Spread(1.19, 0.90),
+        FaunaModel.BEAR to Spread(0.89, 0.74),
+        FaunaModel.WOLVERINE to Spread(1.64, 0.89),
+        FaunaModel.LYNX to Spread(1.10, 0.91),
+        FaunaModel.MOOSE to Spread(1.05, 0.92),
+    )
+
     fun spread(kind: String, version: Int): Spread {
         val t = when {
             version <= 2 -> SPREAD_V2
             version <= 4 -> SPREAD_V3
-            else -> SPREAD_V5
+            version <= 5 -> SPREAD_V5
+            else -> SPREAD_V6
         }
         return t[kind] ?: Spread(3.0, 1.5)
     }
@@ -131,6 +148,9 @@ object RadarModel {
     fun uncertaintyKm(kind: String, source: Int, ageDays: Int, version: Int): Double {
         val age = max(0, ageDays).toDouble()
         val sp = spread(kind, version)
+        // v6: лагерь едет с игроком, вчерашняя метка отстаёт — расхождение
+        // растёт линейно (plateauKm=c0, tauDays=наклон), а не выходит на плато.
+        if (version >= 6) return baseErrKm(source) + sp.plateauKm + sp.tauDays * age
         return baseErrKm(source) + sp.plateauKm * (1.0 - Math.exp(-age / sp.tauDays))
     }
 

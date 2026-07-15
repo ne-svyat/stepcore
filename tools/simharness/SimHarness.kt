@@ -146,6 +146,12 @@ private const val WORLD_FINGERPRINT_V4 = "65bdb3c215e0ccc3"
  */
 private const val WORLD_FINGERPRINT_V5 = "d627ec198ce3487e"
 
+/**
+ * Отпечаток мира версии 6 (v121: ты идёшь — лагерь едет с игроком, мир
+ * считается вокруг него; курс по умолчанию ведёт честный автопилот).
+ */
+private const val WORLD_FINGERPRINT_V6 = "e1b40f2e308f8172"
+
 private fun check(name: String, ok: Boolean, detail: String = "") {
     if (!ok) {
         failures++
@@ -731,6 +737,23 @@ fun main(args: Array<String>) {
         check("world.fingerprint_v5_frozen", fp5 == WORLD_FINGERPRINT_V5,
             "было " + WORLD_FINGERPRINT_V5 + ", стало " + fp5)
         check("world.v4_and_v5_differ", fp4 != fp5)
+
+        var h6 = 1125899906842597L
+        for (i in 0 until 50) {
+            val seed = 424242L + i * 977L
+            SurvivalEngine(seed, i % 4, SurvivalEngine.startOffsetFrom(seed), 6)
+                .run(0, 100 * SurvivalEngine.PHASES, {}, { -1 }, { _, _ -> }) { e ->
+                    val world = WORLD_CTX.joinToString(",") { k -> k + "=" + (e.ctx[k] ?: 0) }
+                    val sg = "" + e.tick + "|" + e.category + "|" + e.key + "|" + e.roll +
+                        "|" + e.phase + "|" + e.nth + "|" + world
+                    for (c in sg) h6 = 31 * h6 + c.code
+                }
+        }
+        val fp6 = java.lang.Long.toHexString(h6)
+        println("отпечаток мира v6: " + fp6)
+        check("world.fingerprint_v6_frozen", fp6 == WORLD_FINGERPRINT_V6,
+            "было " + WORLD_FINGERPRINT_V6 + ", стало " + fp6)
+        check("world.v5_and_v6_differ", fp5 != fp6)
     }
 
     // --- 9. РАДАР: наблюдения и туман войны (200 000 дней мира) ---
@@ -848,7 +871,7 @@ fun main(args: Array<String>) {
     //
     // Это же и главный диагностический стол: таблица печатается каждый раз.
     run {
-        for (version in intArrayOf(2, 3, 4, 5)) {
+        for (version in intArrayOf(2, 3, 4, 5, 6)) {
             val kinds = listOf(FaunaModel.WOLF, FaunaModel.BEAR, FaunaModel.WOLVERINE,
                 FaunaModel.LYNX, FaunaModel.MOOSE)
             val disp = HashMap<String, Array<MutableList<Double>>>()
@@ -864,13 +887,23 @@ fun main(args: Array<String>) {
                 var state = WeatherModel.initial(
                     version, SplitMix64.forTick(seed, 0), eng.yearDay(0), season)
                 var dir = 0
+                // v6: лагерь едет с игроком. Типичный ход — разведка автопилота
+                // по плавной дуге (старт-сторона + день/5). Смещение distKm
+                // меряем именно на нём — оно и есть «типичное» для памяти радара.
+                var px = 0.0; var py = 0.0
+                val startDir = SplitMix64.forTick(seed xor SurvivalEngine.AUTOPILOT_SALT, 0).nextInt(8)
                 for (t in 1..120) {
                     val rng = SplitMix64.forTick(seed, t)
                     state = WeatherModel.step(version, state, eng.yearDay(t), rng)
                     dir = WindField.step(seed, t, dir, state.front)
+                    if (version >= 6) {
+                        val h = (startDir + t / 5) % 8
+                        px += SurvivalEngine.TRAVEL_KM_PER_DAY * Math.sin(h * Math.PI / 4.0)
+                        py += SurvivalEngine.TRAVEL_KM_PER_DAY * Math.cos(h * Math.PI / 4.0)
+                    }
                     FaunaModel.step(agents, state, dir, eng.seasonOf(t), seed, t, version,
                         SurvivalEngine.lightX10(eng.yearDay(t)),
-                        SurvivalEngine.moonPhase(eng.yearDay(t), seed))
+                        SurvivalEngine.moonPhase(eng.yearDay(t), seed), px, py)
                     for (a in agents) if (a.alive) hist[a.kind]!![t] = a.distKm
                 }
                 for (k in kinds) {
