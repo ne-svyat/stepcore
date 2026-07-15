@@ -98,8 +98,26 @@ object RadarModel {
         FaunaModel.MOOSE to Spread(1.87, 2.02),
     )
 
+    /**
+     * Мир v5: у зверя свой участок, он мотается вокруг СВОЕГО центра, а не
+     * вокруг лагеря. Смещение distKm (дальности от лагеря) стало другим —
+     * и таблица пересчитана под него. Числа печатает песочница, инвариант
+     * `radar.memory_matches_world_v5` сверяет их с миром на каждом прогоне.
+     */
+    private val SPREAD_V5 = mapOf(
+        FaunaModel.WOLF to Spread(2.30, 1.70),
+        FaunaModel.BEAR to Spread(1.82, 2.08),
+        FaunaModel.WOLVERINE to Spread(3.52, 1.84),
+        FaunaModel.LYNX to Spread(1.72, 1.76),
+        FaunaModel.MOOSE to Spread(1.08, 1.64),
+    )
+
     fun spread(kind: String, version: Int): Spread {
-        val t = if (version <= 2) SPREAD_V2 else SPREAD_V3
+        val t = when {
+            version <= 2 -> SPREAD_V2
+            version <= 4 -> SPREAD_V3
+            else -> SPREAD_V5
+        }
         return t[kind] ?: Spread(3.0, 1.5)
     }
 

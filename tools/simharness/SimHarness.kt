@@ -139,6 +139,13 @@ private const val WORLD_FINGERPRINT_V3 = "f6cc590484b7d5cb"
  */
 private const val WORLD_FINGERPRINT_V4 = "65bdb3c215e0ccc3"
 
+/**
+ * Отпечаток мира версии 5 (v120: свой участок — абсолютные координаты,
+ * центр и радиус на зверя). Заморожен так же, как v2..v4. Погода и ветер
+ * не тронуты — отличие от v4 идёт только по фауне (dist, wolfkm, track).
+ */
+private const val WORLD_FINGERPRINT_V5 = "d627ec198ce3487e"
+
 private fun check(name: String, ok: Boolean, detail: String = "") {
     if (!ok) {
         failures++
@@ -707,6 +714,23 @@ fun main(args: Array<String>) {
         check("world.fingerprint_v4_frozen", fp4 == WORLD_FINGERPRINT_V4,
             "было " + WORLD_FINGERPRINT_V4 + ", стало " + fp4)
         check("world.v3_and_v4_differ", fp3 != fp4)
+
+        var h5 = 1125899906842597L
+        for (i in 0 until 50) {
+            val seed = 424242L + i * 977L
+            SurvivalEngine(seed, i % 4, SurvivalEngine.startOffsetFrom(seed), 5)
+                .run(0, 100 * SurvivalEngine.PHASES) { e ->
+                    val world = WORLD_CTX.joinToString(",") { k -> k + "=" + (e.ctx[k] ?: 0) }
+                    val sg = "" + e.tick + "|" + e.category + "|" + e.key + "|" + e.roll +
+                        "|" + e.phase + "|" + e.nth + "|" + world
+                    for (c in sg) h5 = 31 * h5 + c.code
+                }
+        }
+        val fp5 = java.lang.Long.toHexString(h5)
+        println("отпечаток мира v5: " + fp5)
+        check("world.fingerprint_v5_frozen", fp5 == WORLD_FINGERPRINT_V5,
+            "было " + WORLD_FINGERPRINT_V5 + ", стало " + fp5)
+        check("world.v4_and_v5_differ", fp4 != fp5)
     }
 
     // --- 9. РАДАР: наблюдения и туман войны (200 000 дней мира) ---
@@ -824,7 +848,7 @@ fun main(args: Array<String>) {
     //
     // Это же и главный диагностический стол: таблица печатается каждый раз.
     run {
-        for (version in intArrayOf(2, 3, 4)) {
+        for (version in intArrayOf(2, 3, 4, 5)) {
             val kinds = listOf(FaunaModel.WOLF, FaunaModel.BEAR, FaunaModel.WOLVERINE,
                 FaunaModel.LYNX, FaunaModel.MOOSE)
             val disp = HashMap<String, Array<MutableList<Double>>>()

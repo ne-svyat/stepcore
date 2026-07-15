@@ -508,7 +508,7 @@ class SurvivalEngine(
         /** Как часто пустой лес под стаей становится строкой. Только v3. */
     private const val QUIET_P = 0.40
 
-    const val ENGINE_VERSION = 4
+    const val ENGINE_VERSION = 5
 
         /**
          * Вероятность бытовой зарисовки в тихий день. 0.18 подобрано

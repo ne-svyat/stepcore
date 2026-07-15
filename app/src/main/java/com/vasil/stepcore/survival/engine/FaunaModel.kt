@@ -124,6 +124,122 @@ object FaunaModel {
         else -> 0.2
     }
 
+    // --- v5 «Свой участок»: у зверя есть СВОЯ земля, а не круг вокруг лагеря ---
+    //
+    // ЧТО МЕНЯЕТСЯ. До сих пор «участок» был потолком на расстояние ОТ ЛАГЕРЯ:
+    // каждый зверь мотался в кольце вокруг палатки, и центр этого кольца всегда
+    // совпадал с человеком. Это неявно ставило человека в середину мира. Теперь
+    // мир абсолютный: лагерь — начало координат (0,0), а у каждого зверя свой
+    // центр участка где-то на карте и свой радиус. Полярный вид (румб + дальность)
+    // ВЫВОДИТСЯ из абсолютной позиции — чутьё, радар и охота его и читают, ничего
+    // не заметив. Отсюда три следствия, которых раньше не было:
+    //   · плато смещения — из физики: зверь возвращается к своему центру, а не
+    //     диффундирует в бесконечность;
+    //   · разные экспедиции: лагерь может лечь в сердце участка или на отшибе —
+    //     это свойство сида, а не сценария;
+    //   · абсолютные координаты — без них лагерь нельзя будет сдвинуть (v124).
+    //
+    // ОТДЕЛЬНЫЙ ПОТОК. Расстановка участков живёт в своей струе случайности
+    // (соль на seed). Погодный и основной фаунный потоки не сдвигаются ни на
+    // бросок — миры экспедиций v2..v4 остаются побайтово теми же.
+
+    /** Соль расстановки участков: своя струя, чтобы не двигать старые миры. */
+    const val TERRITORY_SALT = 0x7E44_0A19_5C3D_88F1L
+
+    /** Радиус СВОЕГО участка зверя (дом), км. Не путать со старым homeRange —
+     *  тот был потолком на дальность от лагеря и остаётся жить для v<5. */
+    private fun homeRangeV5(kind: String): Double = when (kind) {
+        WOLVERINE -> 6.0   // ходит невероятно много
+        WOLF -> 4.0        // стая патрулирует широкий, но свой участок
+        BEAR -> 4.0
+        LYNX -> 3.0
+        MOOSE -> 2.0       // топчется на своей мари — потому и «резидент»
+        else -> 3.0
+    }
+
+    /** Насколько далеко от лагеря МОЖЕТ лечь центр участка: [min .. min+span]. */
+    private fun centerMinKm(kind: String): Double = when (kind) {
+        MOOSE -> 0.5; LYNX -> 1.5; WOLF -> 2.5; WOLVERINE -> 2.0; BEAR -> 4.0; else -> 2.0
+    }
+    private fun centerSpanKm(kind: String): Double = when (kind) {
+        MOOSE -> 3.0; LYNX -> 4.5; WOLF -> 5.0; WOLVERINE -> 6.5; BEAR -> 9.0; else -> 4.0
+    }
+
+    /** Румб от лагеря по абсолютной точке. 0 С(+y) · 2 В(+x) · 4 Ю · 6 З. */
+    private fun bearingSector(x: Double, y: Double): Int {
+        val ang = Math.atan2(x, y)                 // 0 на север(+y), +pi/2 на восток(+x)
+        var s = Math.round(ang / (Math.PI / 4.0)).toInt() % 8
+        if (s < 0) s += 8
+        return s
+    }
+
+    /** Записать полярный вид от лагеря — то, что читают чутьё, радар и охота. */
+    private fun syncPolar(a: Agent) {
+        a.distKm = maxOf(0.15, Math.hypot(a.x, a.y))
+        a.sector = bearingSector(a.x, a.y)
+    }
+
+    /** Визит окончен — зверь ушёл в сердце своего участка. */
+    private fun sendHomeV5(a: Agent, rng: SplitMix64) {
+        a.approaching = false
+        val ang = rng.nextDouble() * 2.0 * Math.PI
+        val r = rng.nextDouble() * a.terrR * 0.35
+        a.x = a.homeX + r * Math.sin(ang)
+        a.y = a.homeY + r * Math.cos(ang)
+        syncPolar(a)
+    }
+
+    /** Стая обошла лагерь и отступила по своей стороне на пару километров. */
+    private fun backOffV5(a: Agent) {
+        val d = Math.hypot(a.x, a.y)
+        val target = maxOf(2.5, d)
+        val k = if (d > 1e-9) target / d else 0.0
+        a.x *= k; a.y *= k
+        syncPolar(a)
+    }
+
+    /**
+     * Один день движения в АБСОЛЮТНЫХ координатах (только v5+).
+     *
+     * Два режима, и решение между ними уже принято выше по коду (флаг
+     * approaching, та же логика тяги/срыва, что и в v3): либо зверь взял
+     * запах дыма и ИДЁТ к лагерю (к началу координат) шагом, либо он дома —
+     * и тогда бродит по своему участку с возвратом к центру (процесс
+     * Орнштейна-Уленбека). Возврат к центру и даёт плато смещения: зверь
+     * никуда не уходит навсегда, через неделю он всё ещё «где-то тут».
+     */
+    private fun stepMoveV5(a: Agent, sp: Double, seed: Long, tick: Int) {
+        // Своя струя на КАЖДОГО зверя (terrSalt уникален) — два лося не ходят
+        // след в след, и новый вид, добавленный позже, не сдвинет этих.
+        val w = SplitMix64.forTick(seed xor SALT xor a.terrSalt, tick)
+        if (a.approaching) {
+            // К лагерю шагом. Ограничения те же, что в полярном v3: не больше
+            // MAX_APPROACH_KM, не больше восьмушки суточного хода, не больше
+            // трети текущего расстояния — зверь заходит трое-четверо суток.
+            val d0 = Math.hypot(a.x, a.y)
+            val step = minOf(MAX_APPROACH_KM, sp * 0.12, d0 * 0.35 + 0.08)
+            val nd = maxOf(0.15, d0 - step)
+            val k = if (d0 > 1e-9) nd / d0 else 0.0
+            a.x *= k; a.y *= k
+            if (nd <= 0.25) { a.approaching = false; a.visitCooldown = VISIT_COOLDOWN }
+        } else {
+            // Дома: mean-reverting блуждание вокруг центра участка.
+            val theta = 0.16                  // сила возврата к центру
+            val sigma = a.terrR * 0.20        // суточный шум, доля радиуса
+            a.x += theta * (a.homeX - a.x) + sigma * w.nextGaussian()
+            a.y += theta * (a.homeY - a.y) + sigma * w.nextGaussian()
+            // Мягкая стена на радиусе: за чужую землю зверь почти не заходит,
+            // но и не липнет к стене — выброс отражается внутрь на три четверти.
+            val dx = a.x - a.homeX; val dy = a.y - a.homeY
+            val rr = Math.hypot(dx, dy)
+            if (rr > a.terrR && rr > 1e-9) {
+                val k = (a.terrR + (rr - a.terrR) * 0.25) / rr
+                a.x = a.homeX + dx * k; a.y = a.homeY + dy * k
+            }
+        }
+        syncPolar(a)
+    }
+
     data class Agent(
         val kind: String,
         var distKm: Double,
@@ -141,6 +257,14 @@ object FaunaModel {
         var visitCooldown: Int = 0,
         var smelledDays: Int = 0,    // сколько дней подряд чует лагерь
         var quietDays: Int = 0,      // сколько дней стая молчит (пауза между воями)
+        // v5. Абсолютные координаты (км). Лагерь — начало (0,0). Пока version<5
+        // эти поля мертвы: полярная модель их не читает и не пишет.
+        var x: Double = 0.0,
+        var y: Double = 0.0,
+        var homeX: Double = 0.0,     // центр СВОЕГО участка
+        var homeY: Double = 0.0,
+        var terrR: Double = 0.0,     // радиус участка
+        var terrSalt: Long = 0L,     // своя струя блуждания на этого зверя
     )
 
     /**
@@ -182,6 +306,24 @@ object FaunaModel {
         out.add(Agent(LYNX, 4.0 + rng.nextDouble() * 4.0, rng.nextInt(8), 0.4 + rng.nextDouble() * 0.3))
         out.add(Agent(MOOSE, 3.0 + rng.nextDouble() * 4.0, rng.nextInt(8), 0.2))
         out.add(Agent(MOOSE, 4.0 + rng.nextDouble() * 4.0, rng.nextInt(8), 0.2))
+
+        // v5. Расстановка участков. Отдельная струя (соль на seed) — основной
+        // фаунный поток выше не сдвинут ни на бросок, миры v2..v4 те же. Поля
+        // пишутся ВСЕГДА, но читает их только движение v5; для v<5 они инертны.
+        val terr = SplitMix64.forTick(seed xor SALT xor TERRITORY_SALT, 0)
+        for (a in out) {
+            a.terrSalt = terr.nextLong()
+            val bearing = terr.nextDouble() * 2.0 * Math.PI
+            val cdist = centerMinKm(a.kind) + terr.nextDouble() * centerSpanKm(a.kind)
+            a.homeX = cdist * Math.sin(bearing)
+            a.homeY = cdist * Math.cos(bearing)
+            a.terrR = homeRangeV5(a.kind)
+            // Стартовая точка — внутри участка, ближе к центру.
+            val a0 = terr.nextDouble() * 2.0 * Math.PI
+            val r0 = terr.nextDouble() * a.terrR * 0.5
+            a.x = a.homeX + r0 * Math.sin(a0)
+            a.y = a.homeY + r0 * Math.cos(a0)
+        }
         return out
     }
 
@@ -264,7 +406,12 @@ object FaunaModel {
                 }
             }
 
-            if (version >= 3 && a.approaching) {
+            if (version >= 5) {
+                // v5. Движение в абсолютных координатах вокруг своего участка.
+                // Решение идти/стоять уже принято выше (флаг approaching той же
+                // логикой, что и в v3). Полярный вид проецируется внутри.
+                stepMoveV5(a, sp, seed, tick)
+            } else if (version >= 3 && a.approaching) {
                 // v3. Идёт на запах ШАГОМ, а не прыжком.
                 //
                 // В v2 шаг равнялся скорости зверя: медведь покрывал 3-6 км
@@ -390,7 +537,16 @@ object FaunaModel {
         // В жизни визит всегда чем-то кончается — и зверь уходит.
         if (event != null) {
             val who = agents.firstOrNull { it.kind == event.kind && it.alive }
-            when (event.key) {
+            if (version >= 5) {
+                // v5. После визита зверь уходит В СВОЙ участок, а не на случайную
+                // дальность от лагеря: теперь ему есть куда возвращаться.
+                when (event.key) {
+                    "fauna.wolverine.camp" -> if (who != null) { who.hunger = 0.0; sendHomeV5(who, rng) }
+                    "fauna.bear.encounter" -> if (who != null) sendHomeV5(who, rng)
+                    "fauna.wolf.circle"    -> if (who != null) backOffV5(who)
+                    else -> {}
+                }
+            } else when (event.key) {
                 // Наелась — и ушла отсыпаться. Голод сброшен, участок сменён.
                 "fauna.wolverine.camp" -> if (who != null) {
                     who.hunger = 0.0
