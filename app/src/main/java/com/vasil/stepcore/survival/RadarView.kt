@@ -7,6 +7,7 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Typeface
 import android.util.AttributeSet
+import android.view.MotionEvent
 import android.view.View
 import androidx.core.content.ContextCompat
 import com.vasil.stepcore.R
@@ -14,7 +15,9 @@ import com.vasil.stepcore.survival.engine.Compass
 import com.vasil.stepcore.survival.engine.RadarModel
 import kotlin.math.PI
 import kotlin.math.atan
+import kotlin.math.atan2
 import kotlin.math.cos
+import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
@@ -84,9 +87,60 @@ class RadarView @JvmOverloads constructor(
         invalidate()
     }
 
+    /**
+     * Тап по радару отдаёт выбранный курс наружу:
+     *  - ткнул в сторону — сектор 0..7;
+     *  - ткнул рядом со зверем — тот же сектор + сама метка (идём к нему);
+     *  - ткнул в лагерь (центр) — сектор -1: вернуть честный автопилот.
+     */
+    var onCourse: ((Int, RadarModel.Mark?) -> Unit)? = null
+
+    /** Куда игрок держит курс сейчас: 0..7 рисуем стрелкой, -1 (автопилот) — нет. */
+    var currentCourse: Int = -1
+        set(value) { field = value; invalidate() }
+
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val w = MeasureSpec.getSize(widthMeasureSpec)
         setMeasuredDimension(w, w)
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked != MotionEvent.ACTION_UP) return true
+        if (onCourse == null) return super.onTouchEvent(event)
+        val cx = width / 2f; val cy = height / 2f
+        val rad = min(cx, cy) - 24f * dm
+        if (rad <= 0f) return true
+        val tx = event.x; val ty = event.y
+        val dx = tx - cx; val dy = ty - cy
+        // Тап в лагерь (центр) — вернуть автопилот.
+        if (hypot(dx, dy) < 14f * dm) { onCourse?.invoke(-1, null); performClick(); return true }
+        // Тап рядом с меткой зверя — идём к нему (та же геометрия, что в drawMark).
+        val r = recon
+        if (r != null) {
+            var best: RadarModel.Mark? = null
+            var bestD = 28f * dm
+            for (m in r.marks) {
+                val a = ang(m.sector.toDouble())
+                val mr = rpx(m.distKm, rad)
+                val mx = cx + (mr * cos(a)).toFloat()
+                val my = cy + (mr * sin(a)).toFloat()
+                val d = hypot(tx - mx, ty - my)
+                if (d < bestD) { bestD = d; best = m }
+            }
+            if (best != null) { onCourse?.invoke(best.sector, best); performClick(); return true }
+        }
+        // Иначе — сектор по направлению тапа. Обратно к ang(): угол = сектор·45−90.
+        val deg = atan2(dy.toDouble(), dx.toDouble()) * 180.0 / PI
+        var sector = Math.round((deg + 90.0) / 45.0).toInt() % 8
+        if (sector < 0) sector += 8
+        onCourse?.invoke(sector, null)
+        performClick()
+        return true
+    }
+
+    override fun performClick(): Boolean {
+        super.performClick()
+        return true
     }
 
     // ---------- сеяный шум ----------
@@ -165,6 +219,34 @@ class RadarView @JvmOverloads constructor(
         if (r.hasWorld) drawWind(canvas, r, cx, cy, rad)
         for (m in r.marks.reversed()) drawMark(canvas, m, cx, cy, rad)
         drawCamp(canvas, cx, cy)
+        if (currentCourse in 0..7) drawCourse(canvas, cx, cy, rad)
+    }
+
+    /** Стрелка выбранного курса: куда ты держишь путь из лагеря. */
+    private fun drawCourse(c: Canvas, cx: Float, cy: Float, rad: Float) {
+        val a = ang(currentCourse.toDouble())
+        val r1 = rad * 0.5f
+        val x1 = cx + (r1 * cos(a)).toFloat()
+        val y1 = cy + (r1 * sin(a)).toFloat()
+        fill.maskFilter = null
+        stroke.color = withAlpha(cMain, 0.9)
+        stroke.strokeWidth = 3f * dm
+        val p = Path()
+        p.moveTo(cx, cy); p.lineTo(x1, y1)
+        c.drawPath(p, stroke)
+        val head = 12f * dm
+        for (k in intArrayOf(-1, 1)) {
+            val ha = a + PI + k * 0.5
+            val q = Path()
+            q.moveTo(x1, y1)
+            q.lineTo(x1 + (head * cos(ha)).toFloat(), y1 + (head * sin(ha)).toFloat())
+            c.drawPath(q, stroke)
+        }
+        label.textSize = 11f * dm
+        label.color = withAlpha(cMain, 0.95)
+        c.drawText("курс " + Compass.RU[currentCourse],
+            cx + (r1 * 0.62f * cos(a)).toFloat(),
+            cy + (r1 * 0.62f * sin(a)).toFloat() - 4f * dm, label)
     }
 
     /**

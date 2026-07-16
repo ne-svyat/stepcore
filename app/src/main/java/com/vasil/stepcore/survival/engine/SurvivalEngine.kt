@@ -276,9 +276,9 @@ class SurvivalEngine(
      * наружу не выдаётся: интересны только наблюдения. Гейт по фазе тот же,
      * что у журнала, — радар не забегает вперёд журнала даже на четверть дня.
      */
-    fun observations(toPhase: Int): List<Obs> {
+    fun observations(toPhase: Int, plannedHeading: (Int) -> Int = { -1 }): List<Obs> {
         val out = ArrayList<Obs>()
-        run(toPhase, toPhase, { out.add(it) }) { }
+        run(toPhase, toPhase, { out.add(it) }, plannedHeading, { _, _ -> }) { }
         return out
     }
 

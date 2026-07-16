@@ -30,6 +30,7 @@ object SurvivalBackup {
                 status = e.status, createdMs = e.createdMs, finishedMs = e.finishedMs,
                 ticksDone = e.ticksDone, syncDate = e.syncDate,
                 syncDaySteps = e.syncDaySteps, stepRemainder = e.stepRemainder,
+                path = e.path, courseHeading = e.courseHeading,
                 events = evs.map { BackupCodec.EvBackup(it.tick, it.realTimeMs, it.category, it.text) },
             ))
         }
@@ -72,6 +73,8 @@ object SurvivalBackup {
                 syncDate = o.optString("syncDate", "1970-01-01"),
                 syncDaySteps = o.optInt("syncDaySteps", 0),
                 stepRemainder = o.optInt("stepRemainder", 0),
+                path = o.optString("path", ""),
+                courseHeading = o.optInt("courseHeading", -1),
                 events = evs,
             ))
         }
@@ -95,6 +98,7 @@ object SurvivalBackup {
                         status = e.status, createdMs = e.createdMs, finishedMs = e.finishedMs,
                         ticksDone = e.ticksDone, syncDate = e.syncDate,
                         syncDaySteps = e.syncDaySteps, stepRemainder = e.stepRemainder,
+                        path = e.path, courseHeading = e.courseHeading,
                         // Файл бэкапа не знает про фазы. Восстанавливаем их из
                         // прожитых дней: иначе импортированная активная
                         // экспедиция начала бы догон с нуля и переписала бы

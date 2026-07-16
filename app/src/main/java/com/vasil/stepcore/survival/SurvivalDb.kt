@@ -42,6 +42,10 @@ data class Expedition(
     val syncDate: String,       // до какой даты шаги съедены
     val syncDaySteps: Int = 0,  // съедено шагов этой даты
     val stepRemainder: Int = 0, // несожжённый остаток (< stepsPerTick)
+    // v122. Ты идёшь по выбранному курсу. Мир=f(seed) остаётся, но КУДА ты
+    // шёл — это ввод, которого в seed нет, поэтому он хранится здесь.
+    val path: String = "",      // фактический курс каждого прожитого дня: символ '0'..'7'
+    val courseHeading: Int = -1, // приказ игрока на будущие дни; -1 — решает честный автопилот
 )
 
 @Entity(tableName = "expedition_events", indices = [Index("expeditionId")])
@@ -80,7 +84,7 @@ interface SurvivalDao {
 }
 
 @Database(entities = [Expedition::class, ExpeditionEvent::class],
-    version = 2, exportSchema = false)
+    version = 3, exportSchema = false)
 abstract class SurvivalDb : RoomDatabase() {
     abstract fun dao(): SurvivalDao
 
@@ -99,12 +103,24 @@ abstract class SurvivalDb : RoomDatabase() {
             }
         }
 
+        /**
+         * 2 -> 3: у экспедиции появилась тропа. Уже прожитые экспедиции —
+         * версии мира v<6, они стоят на месте: пустая тропа и курс -1 для них
+         * ничего не меняют (движение только с v6). Новые стартуют на v6 и идут.
+         */
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE expeditions ADD COLUMN path TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE expeditions ADD COLUMN courseHeading INTEGER NOT NULL DEFAULT -1")
+            }
+        }
+
         @Volatile private var instance: SurvivalDb? = null
         fun get(context: Context): SurvivalDb =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
                     context.applicationContext, SurvivalDb::class.java, "survival.db"
-                ).addMigrations(MIGRATION_1_2).build().also { instance = it }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { instance = it }
             }
     }
 }

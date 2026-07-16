@@ -87,6 +87,30 @@ class RadarActivity : AppCompatActivity() {
             val day = repo.days(e).lastOrNull()
             val header = if (day == null) "" else SurvivalEngine.headerOf(day)
             render(e, repo.recon(e), header)
+
+            // v122. По активной экспедиции радар — руль: тап задаёт курс. По
+            // архивной руля нет — это уже история, её не переиграть.
+            if (e.status == "active" && e.engineVersion >= 6) {
+                radar.currentCourse = e.courseHeading
+                radar.onCourse = { sector, mark ->
+                    lifecycleScope.launch {
+                        repo.setCourse(e.id, sector)
+                        radar.currentCourse = sector
+                        val msg = when {
+                            sector < 0 -> "Курс: сам выбираю (автопилот)"
+                            mark != null -> "Иду к: " + RadarModel.kindRu(mark.kind) +
+                                " (" + Compass.RU[sector] + ")"
+                            else -> "Курс: " + Compass.RU[sector]
+                        }
+                        android.widget.Toast.makeText(
+                            this@RadarActivity, msg, android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
+                legendBox.addView(card(
+                    "Ткни в сторону — пойдёшь туда. Ткни в зверя — пойдёшь к нему. " +
+                    "Ткни в лагерь — вернёшь автопилот. Новый курс — со следующего дня.",
+                    R.color.text_main, R.color.accent_violet), 0)
+            }
         }
     }
 

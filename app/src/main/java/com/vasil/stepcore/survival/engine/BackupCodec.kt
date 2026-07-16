@@ -26,6 +26,7 @@ object BackupCodec {
         val finishedMs: Long, val ticksDone: Int, val syncDate: String,
         val syncDaySteps: Int, val stepRemainder: Int,
         val events: List<EvBackup>,
+        val path: String = "", val courseHeading: Int = -1,
     )
 
     data class EvBackup(
@@ -73,6 +74,8 @@ object BackupCodec {
                 append(",\"syncDate\":\"").append(esc(e.syncDate)).append('"')
                 append(",\"syncDaySteps\":").append(e.syncDaySteps)
                 append(",\"stepRemainder\":").append(e.stepRemainder)
+                append(",\"path\":\"").append(esc(e.path)).append('"')
+                append(",\"courseHeading\":").append(e.courseHeading)
                 append(",\n\"events\":[")
                 append(e.events.joinToString(",\n") { ev ->
                     "{\"tick\":" + ev.tick +

@@ -53,6 +53,29 @@ class SurvivalRepo(private val context: Context) {
     suspend fun events(id: Long): List<ExpeditionEvent> = db.dao().eventsOf(id)
 
     /**
+     * Курс дня для переигрыша мира. Прожитый день читается из тропы (фиксирован
+     * навсегда), день за её концом — из приказа игрока courseHeading. -1 значит
+     * «решает честный автопилот». Пустая тропа + приказ -1 = поведение v121
+     * (чистый автопилот), поэтому экспедиции, начатые до v122, переигрываются
+     * ровно так, как были прожиты.
+     */
+    private fun courseOf(e: Expedition, day: Int): Int =
+        if (day >= 1 && day - 1 < e.path.length) Character.getNumericValue(e.path[day - 1])
+        else e.courseHeading
+
+    /**
+     * Игрок задаёт курс на БУДУЩИЕ дни. Прожитые дни в тропе не трогаются —
+     * прошлое неизменно. heading: 0..7 (румб) либо -1 (вернуть автопилот).
+     * Текущий начатый день уже записан в тропу, поэтому новый курс вступает в
+     * силу со следующего свежего дня — ты уже вышел, поворачиваешь назавтра.
+     */
+    suspend fun setCourse(id: Long, heading: Int) {
+        val e = db.dao().byId(id) ?: return
+        if (e.status != "active") return
+        db.dao().updateExpedition(e.copy(courseHeading = heading.coerceIn(-1, 7)))
+    }
+
+    /**
      * Состояния дней экспедиции. Не читаются из базы — пересчитываются
      * из seed по правилам ТОЙ версии движка, на которой экспедиция начата.
      * Поэтому шапки карточек честны и для старых, уже прожитых миров.
@@ -71,7 +94,7 @@ class SurvivalRepo(private val context: Context) {
      */
     fun recon(e: Expedition): RadarModel.Recon {
         val eng = SurvivalEngine(e.seed, e.startSeason, e.startOffset, e.engineVersion)
-        val obs = eng.observations(e.phasesDone)
+        val obs = eng.observations(e.phasesDone) { day -> courseOf(e, day) }
         val day = eng.daySnapshots(e.ticksDone).lastOrNull()
         // Радар читает мир по правилам ТОЙ версии, в которой этот мир живёт.
         return RadarModel.build(obs, day, e.ticksDone, e.engineVersion)
@@ -218,7 +241,15 @@ class SurvivalRepo(private val context: Context) {
         val engine = SurvivalEngine(e.seed, e.startSeason, e.startOffset, e.engineVersion)
         val now = System.currentTimeMillis()
         val fresh = ArrayList<ExpeditionEvent>()
-        val summary = engine.run(e.phasesDone, newPhasesDone) { ev ->
+        // v122. Курс дня: прожитый день фиксирован тропой (архив неизменен),
+        // будущий — приказ игрока courseHeading; -1 отдаёт день автопилоту.
+        // headingSink пишет ФАКТИЧЕСКИЙ курс каждого дня (в т.ч. автопилотный)
+        // в новую тропу — переигрыш радара/журнала потом даст ровно этот путь.
+        val lastDay = (newPhasesDone + SurvivalEngine.PHASES - 1) / SurvivalEngine.PHASES
+        val heads = IntArray(lastDay + 1) { -1 }
+        val summary = engine.run(e.phasesDone, newPhasesDone, {},
+            { day -> courseOf(e, day) },
+            { day, h -> if (day in 1..lastDay) heads[day] = h }) { ev ->
             val text = renderEvent(ev, e.seed)
             if (text != null) {
                 fresh.add(ExpeditionEvent(
@@ -229,6 +260,9 @@ class SurvivalRepo(private val context: Context) {
                 ))
             }
         }
+        val newPath = if (e.engineVersion >= 6)
+            buildString { for (d in 1..lastDay) append(heads[d].coerceIn(0, 7)) }
+        else e.path
 
         if (finishing) {
             val endKey = if (planReached) "end.success" else "end.voluntary"
@@ -264,6 +298,7 @@ class SurvivalRepo(private val context: Context) {
                 else -> "active"
             },
             finishedMs = if (finishing) now else 0L,
+            path = newPath,
         )
 
         // Одна транзакция: журнал и паспорт меняются атомарно. Обрыв корутины
