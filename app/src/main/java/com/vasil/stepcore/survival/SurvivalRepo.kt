@@ -139,7 +139,7 @@ class SurvivalRepo(private val context: Context) {
      * радар есть и у экспедиций, начатых до этого обновления, и у архивных
      * — там он показывает знание на день, когда всё закончилось.
      */
-    fun recon(e: Expedition): RadarModel.Recon {
+    suspend fun recon(e: Expedition): RadarModel.Recon {
         val eng = SurvivalEngine(e.seed, e.startSeason, e.startOffset, e.engineVersion)
         val ch = choiceMap(e.id)
         val obs = eng.observations(e.phasesDone, { day -> courseOf(e, day) },
