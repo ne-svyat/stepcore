@@ -203,6 +203,15 @@ class MainActivity : AppCompatActivity() {
             toolsToggle.text = if (open) "⚙  Инструменты  ▾" else "⚙  Инструменты  ▴"
         }
 
+        // Метки местности (Сегмент 1): ручной уклон -> журнал + TerrainState.
+        val inclineUpBtn = findViewById<Button>(R.id.inclineUpButton)
+        val inclineFlatBtn = findViewById<Button>(R.id.inclineFlatButton)
+        val inclineDownBtn = findViewById<Button>(R.id.inclineDownButton)
+        val inclineLabel = findViewById<TextView>(R.id.inclineLabel)
+        inclineUpBtn.setOnClickListener { setIncline(TerrainState.Incline.UP) }
+        inclineFlatBtn.setOnClickListener { setIncline(TerrainState.Incline.FLAT) }
+        inclineDownBtn.setOnClickListener { setIncline(TerrainState.Incline.DOWN) }
+
         lifecycleScope.launch {
             val y = java.time.LocalDate.now().minusDays(1).toString()
             val d = AppDb.get(this@MainActivity).dao().day(y)
@@ -277,6 +286,18 @@ class MainActivity : AppCompatActivity() {
                     StepsState.mode.collect { m -> applyModeBadge(modeView, m) }
                 }
                 launch { StepsState.diag.collect { findViewById<TextView>(R.id.diagText).text = it } }
+                launch {
+                    TerrainState.incline.collect { v ->
+                        inclineLabel.text = when (v) {
+                            TerrainState.Incline.UP -> "Уклон: в гору"
+                            TerrainState.Incline.DOWN -> "Уклон: с горы"
+                            else -> "Уклон: ровно"
+                        }
+                        inclineUpBtn.alpha = if (v == TerrainState.Incline.UP) 1f else 0.45f
+                        inclineFlatBtn.alpha = if (v == TerrainState.Incline.FLAT) 1f else 0.45f
+                        inclineDownBtn.alpha = if (v == TerrainState.Incline.DOWN) 1f else 0.45f
+                    }
+                }
                 // Дорого (почасовой расчёт, БД) - по таймеру, не на каждый шаг.
                 // 20 с незаметно глазу, нагрузка на порядок ниже (V11.1).
                 launch {
@@ -558,6 +579,30 @@ class MainActivity : AppCompatActivity() {
         if (::ring.isInitialized) refreshRing(StepsState.steps.value)
         updateStats()
         if (::expeditionCard.isInitialized) lifecycleScope.launch { refreshExpeditionCard() }
+    }
+
+    /**
+     * Ручная метка уклона (Сегмент 1). Пишет строку в журнал и обновляет
+     * TerrainState. Пока НЕ влияет на ккал (это Сегмент 2). Значение
+     * транзиентно: при перезапуске сбрасывается на FLAT.
+     */
+    private fun setIncline(v: TerrainState.Incline) {
+        if (TerrainState.incline.value == v) return
+        TerrainState.incline.value = v
+        val text = when (v) {
+            TerrainState.Incline.UP -> "Уклон: в гору"
+            TerrainState.Incline.DOWN -> "Уклон: с горы"
+            else -> "Уклон: ровно"
+        }
+        lifecycleScope.launch {
+            AppDb.get(this@MainActivity).dao().addEvent(
+                EventRecord(
+                    timeMs = System.currentTimeMillis(),
+                    date = java.time.LocalDate.now().toString(),
+                    text = text,
+                )
+            )
+        }
     }
 
     private fun startTracking() {
