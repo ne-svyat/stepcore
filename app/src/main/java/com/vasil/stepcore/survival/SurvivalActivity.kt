@@ -14,6 +14,7 @@ import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.SwitchCompat
 import android.view.Gravity
 import androidx.core.content.ContextCompat
 import com.vasil.stepcore.DoodleIconDrawable
@@ -40,6 +41,7 @@ import java.util.Locale
 class SurvivalActivity : AppCompatActivity() {
 
     private lateinit var repo: SurvivalRepo
+    private lateinit var feedback: SurvivalFeedback
 
     // выбор в форме старта
     private var season = defaultSeason()
@@ -87,6 +89,8 @@ class SurvivalActivity : AppCompatActivity() {
         findViewById<com.vasil.stepcore.DoodleSceneView>(R.id.doodleHeader)
             .setScene(com.vasil.stepcore.DoodleSceneView.EXPEDITION)
         repo = SurvivalRepo(this)
+        feedback = SurvivalFeedback(this)
+        addFeedbackSettings()
 
         startBox = findViewById(R.id.startBox)
         activeBox = findViewById(R.id.activeBox)
@@ -265,6 +269,43 @@ class SurvivalActivity : AppCompatActivity() {
         refreshStartControls()
     }
 
+    private fun survPrefs() =
+        getSharedPreferences(com.vasil.stepcore.StepService.PREFS, MODE_PRIVATE)
+
+    /** Строка настроек сигналов: звук и вибро, оба по умолчанию включены. */
+    private fun addFeedbackSettings() {
+        val root = startBox.parent as? LinearLayout ?: return
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), dp(6), dp(14), dp(10))
+        }
+        val label = TextView(this).apply {
+            text = "Сигналы тайги"
+            setTextColor(ContextCompat.getColor(this@SurvivalActivity, R.color.text_dim))
+            textSize = 14f
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        val sound = SwitchCompat(this).apply {
+            text = "Звук"
+            isChecked = survPrefs().getBoolean("surv_sound", true)
+            setOnCheckedChangeListener { _, on -> survPrefs().edit().putBoolean("surv_sound", on).apply() }
+        }
+        val vibe = SwitchCompat(this).apply {
+            text = "Вибро"
+            isChecked = survPrefs().getBoolean("surv_vibe", true)
+            setPadding(dp(16), 0, 0, 0)
+            setOnCheckedChangeListener { _, on -> survPrefs().edit().putBoolean("surv_vibe", on).apply() }
+        }
+        row.addView(label); row.addView(sound); row.addView(vibe)
+        root.addView(row)
+    }
+
+    override fun onDestroy() {
+        feedback.release()
+        super.onDestroy()
+    }
+
     override fun onResume() {
         super.onResume()
         lifecycleScope.launch { refreshUi(runSync = viewingId < 0) }
@@ -282,6 +323,11 @@ class SurvivalActivity : AppCompatActivity() {
         if (e != null && runSync) {
             val o = repo.sync()
             if (o != null) {
+                if (o.signal != Signal.NONE) {
+                    val p = survPrefs()
+                    feedback.play(o.signal,
+                        p.getBoolean("surv_sound", true), p.getBoolean("surv_vibe", true))
+                }
                 if (o.newDays > 0) {
                     note = "+" + o.newDays + " " + SurvivalEngine.daysWord(o.newDays) +
                         " мира · " + o.consumedSteps + " шагов"

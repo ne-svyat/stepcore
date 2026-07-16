@@ -45,7 +45,27 @@ class SurvivalRepo(private val context: Context) {
         val newDays: Int,        // сколько дней мира созрело за этот догон
         val consumedSteps: Long, // сколько реальных шагов пришло с прошлого раза
         val completed: Boolean,  // экспедиция завершилась этим догоном
+        val signal: Signal = Signal.NONE, // что озвучить: новое знание с этого догона
     )
+
+    /**
+     * Классификатор голоса тайги. Смотрит радар ДО и ПОСЛЕ догона и решает,
+     * что нового узнал человек. Видит ровно то же, что игрок на радаре, — ни
+     * байтом больше. Приоритет: опасность важнее выбора и события.
+     */
+    private fun classifySignal(
+        before: RadarModel.Recon, after: RadarModel.Recon, courseHeading: Int,
+    ): Signal {
+        // Опасность: зверь стал чуять лагерь там, где раньше не чуял.
+        val beforeAttn = before.marks.filter { it.attention }.map { it.kind }.toHashSet()
+        val newAttn = after.marks.any { it.attention && it.kind !in beforeAttn }
+        if (newAttn) return Signal.DANGER
+        // Новое знание: метка (зверь+источник), которой раньше не было.
+        val beforeKeys = before.marks.map { it.kind + "/" + it.source }.toHashSet()
+        val gainedNew = after.marks.any { (it.kind + "/" + it.source) !in beforeKeys }
+        if (gainedNew) return if (courseHeading == -1) Signal.CHOICE else Signal.EVENT
+        return Signal.NONE
+    }
 
     suspend fun active(): Expedition? = db.dao().active()
     suspend fun byId(id: Long): Expedition? = db.dao().byId(id)
@@ -301,6 +321,12 @@ class SurvivalRepo(private val context: Context) {
             path = newPath,
         )
 
+        // Голос тайги: что нового узнал человек за этот догон. Считаем радар
+        // до и после — озвучиваем только НОВОЕ, поэтому сигнал не повторяется.
+        val signal = if (newPhasesDone > e.phasesDone && e.engineVersion >= 2)
+            classifySignal(recon(e), recon(updated), e.courseHeading)
+        else Signal.NONE
+
         // Одна транзакция: журнал и паспорт меняются атомарно. Обрыв корутины
         // до/во время транзакции безопасен: откат целиком, повторный догон
         // детерминированно построит те же события.
@@ -309,7 +335,7 @@ class SurvivalRepo(private val context: Context) {
             db.dao().updateExpedition(updated)
         }
 
-        return SyncOutcome(e.id, mint, res.consumedSteps, finishing)
+        return SyncOutcome(e.id, mint, res.consumedSteps, finishing, signal)
     }
 
     /**
