@@ -31,6 +31,7 @@ object SurvivalBackup {
                 ticksDone = e.ticksDone, syncDate = e.syncDate,
                 syncDaySteps = e.syncDaySteps, stepRemainder = e.stepRemainder,
                 path = e.path, courseHeading = e.courseHeading,
+                choices = dao.choicesOf(e.id).map { Pair(it.day, it.choice) },
                 events = evs.map { BackupCodec.EvBackup(it.tick, it.realTimeMs, it.category, it.text) },
             ))
         }
@@ -75,6 +76,15 @@ object SurvivalBackup {
                 stepRemainder = o.optInt("stepRemainder", 0),
                 path = o.optString("path", ""),
                 courseHeading = o.optInt("courseHeading", -1),
+                choices = run {
+                    val arr = o.optJSONArray("choices")
+                    val out = ArrayList<Pair<Int, Int>>()
+                    if (arr != null) for (ci in 0 until arr.length()) {
+                        val co = arr.optJSONObject(ci) ?: continue
+                        out.add(Pair(co.optInt("day", 0), co.optInt("choice", 0)))
+                    }
+                    out
+                },
                 events = evs,
             ))
         }
@@ -112,6 +122,10 @@ object SurvivalBackup {
                             category = ev.category, text = ev.text,
                         )
                     })
+                    // v124. Решения во встречах: без них переигрыш пошёл бы
+                    // не тем миром, который человек прожил.
+                    for (c in e.choices) dao.insertChoice(ExpeditionChoice(
+                        expeditionId = newId, day = c.first, choice = c.second))
                     added++
                 }
                 is BackupCodec.Action.Skip -> {

@@ -36,6 +36,8 @@ object JournalStyle {
     const val ANIMAL = "animal"
     /** Лагерь и снаряжение. */
     const val CAMP = "camp"
+    /** Рана и её заживание. Красный — тело. */
+    const val WOUND = "wound"
 
     fun colorRes(category: String): Int = when (category) {
         MILESTONE -> R.color.accent_amber_bright
@@ -47,6 +49,7 @@ object JournalStyle {
         TRACK -> R.color.accent_teal
         ANIMAL -> R.color.accent_violet_bright
         CAMP -> R.color.accent_amber
+        WOUND -> R.color.accent_red_bright
         else -> R.color.text_main
     }
 
@@ -59,6 +62,7 @@ object JournalStyle {
         RADIO -> "((•))"
         TRACK -> "~"
         ANIMAL -> "•"
+        WOUND -> "+"
         else -> "·"
     }
 

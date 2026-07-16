@@ -59,6 +59,19 @@ data class ExpeditionEvent(
     val phase: Int = 1,         // 0 утро - 1 день - 2 вечер - 3 ночь
 )
 
+/**
+ * v124. РЕШЕНИЕ игрока во встрече дня day (0..N-1 по списку вариантов).
+ * Выбор — это ввод, которого в seed нет: как тропа, он хранится и навсегда
+ * фиксирует прожитое. Переигрыш мира идёт по этим же решениям.
+ */
+@Entity(tableName = "expedition_choices")
+data class ExpeditionChoice(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val expeditionId: Long,
+    val day: Int,
+    val choice: Int,
+)
+
 @Dao
 interface SurvivalDao {
     @Insert
@@ -81,10 +94,16 @@ interface SurvivalDao {
 
     @Query("SELECT * FROM expedition_events WHERE expeditionId = :id ORDER BY tick DESC, id DESC")
     suspend fun eventsOf(id: Long): List<ExpeditionEvent>
+
+    @Insert
+    suspend fun insertChoice(c: ExpeditionChoice)
+
+    @Query("SELECT * FROM expedition_choices WHERE expeditionId = :id")
+    suspend fun choicesOf(id: Long): List<ExpeditionChoice>
 }
 
-@Database(entities = [Expedition::class, ExpeditionEvent::class],
-    version = 3, exportSchema = false)
+@Database(entities = [Expedition::class, ExpeditionEvent::class, ExpeditionChoice::class],
+    version = 4, exportSchema = false)
 abstract class SurvivalDb : RoomDatabase() {
     abstract fun dao(): SurvivalDao
 
@@ -115,12 +134,22 @@ abstract class SurvivalDb : RoomDatabase() {
             }
         }
 
+        /** 3 -> 4: появились решения во встречах (живая тайга v124). */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS expedition_choices (" +
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "expeditionId INTEGER NOT NULL, day INTEGER NOT NULL, " +
+                    "choice INTEGER NOT NULL)")
+            }
+        }
+
         @Volatile private var instance: SurvivalDb? = null
         fun get(context: Context): SurvivalDb =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
                     context.applicationContext, SurvivalDb::class.java, "survival.db"
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { instance = it }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build().also { instance = it }
             }
     }
 }

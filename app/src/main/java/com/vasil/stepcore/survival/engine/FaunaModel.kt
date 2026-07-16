@@ -338,6 +338,34 @@ object FaunaModel {
     }
 
     /**
+     * v7. ГАРАНТИЯ ЖИВОЙ ОКРУГИ: минимум один крупный зверь с участком в
+     * достижимости от старта. Не милость к игроку, а честная постановка:
+     * высаживаются не в мёртвую тайгу. Своя струя случайности (соль) —
+     * расстановка v5/v6 не сдвинута ни на бросок; зовётся только движком v7.
+     */
+    private const val NEAR_SALT = 0x7A57_C0DE_0BEDL
+
+    fun ensureNear(fauna: List<Agent>, seed: Long) {
+        if (fauna.isEmpty()) return
+        val near = fauna.any {
+            it.kind != LYNX && Math.hypot(it.homeX, it.homeY) - it.terrR <= 3.0
+        }
+        if (near) return
+        val rng = SplitMix64.forTick(seed xor SALT xor NEAR_SALT, 0)
+        // Двигаем ЛОСЯ: мирный сосед для первых дней. Лось всегда есть (двое).
+        val a = fauna.filter { it.kind == MOOSE }
+            .minByOrNull { Math.hypot(it.homeX, it.homeY) } ?: return
+        val bearing = rng.nextDouble() * 2.0 * Math.PI
+        val d = 2.0 + rng.nextDouble() * 2.0
+        a.homeX = d * Math.sin(bearing)
+        a.homeY = d * Math.cos(bearing)
+        val a0 = rng.nextDouble() * 2.0 * Math.PI
+        val r0 = rng.nextDouble() * a.terrR * 0.4
+        a.x = a.homeX + r0 * Math.sin(a0)
+        a.y = a.homeY + r0 * Math.cos(a0)
+    }
+
+    /**
      * Один день жизни зверей.
      *
      * Порядок важен: сначала каждый решает, чует ли он лагерь, потом

@@ -269,6 +269,35 @@ object RadarModel {
 
         val unknown = KINDS.filter { !last.containsKey(it) }
 
+        // v7. Мелкая дичь: место стоит, но жизнь в нём кочует — метка гаснет
+        // за неделю. Находки — «нашёл сам»: не гаснут и не расплываются, это
+        // ТВОЯ карта тайги, и она только накапливается.
+        if (version >= 7) {
+            for ((k, o) in last) {
+                if (k in KINDS) continue
+                val age = ticksDone - o.tick
+                if (age < 0) continue
+                if (o.source == WildModel.SRC_LANDMARK) {
+                    marks.add(Mark(
+                        kind = k, sector = o.sector, distKm = o.distKm,
+                        ageDays = age, source = o.source, packSize = 1,
+                        uncertaintyKm = 0.0, freshness = 1.0, attention = false,
+                        bearingErr = 0,
+                    ))
+                } else if (age <= 7) {
+                    marks.add(Mark(
+                        kind = k, sector = o.sector, distKm = o.distKm,
+                        ageDays = age, source = o.source, packSize = 1,
+                        uncertaintyKm = 0.25 + 0.08 * age,
+                        freshness = freshness(age), attention = false,
+                        bearingErr = o.bearingErr,
+                    ))
+                }
+            }
+            marks.sortWith(compareByDescending<Mark> { it.attention }
+                .thenBy { it.ageDays }.thenBy { it.distKm })
+        }
+
         return Recon(
             day = ticksDone,
             hasWorld = day != null,
@@ -301,28 +330,50 @@ object RadarModel {
 
     // ---------- слова ----------
 
-    fun kindRu(kind: String): String = when (kind) {
+    fun kindRu(kind: String): String = when (baseKind(kind)) {
         FaunaModel.WOLF -> "Волчья стая"
         FaunaModel.BEAR -> "Медведь"
         FaunaModel.WOLVERINE -> "Росомаха"
         FaunaModel.LYNX -> "Рысь"
         FaunaModel.MOOSE -> "Лось"
+        WildModel.HARE -> "Заячьи места"
+        WildModel.FOX -> "Лисьи угодья"
+        WildModel.SQUIRREL -> "Беличий бор"
+        WildModel.CAPER -> "Глухариное место"
+        WildModel.HAZEL -> "Рябчики"
+        WildModel.F_CABIN -> "Зимовьё"
+        WildModel.F_BERRY -> "Ягодник"
+        WildModel.F_ANTLER -> "Рога-сброс"
+        WildModel.F_SPRING -> "Родник"
         else -> kind
     }
 
+    /** Находки носят уникальный хвост «#id»: у метки — один вид, мест много. */
+    fun baseKind(kind: String): String = kind.substringBefore('#')
+
     /** Короткая подпись у метки на экране: места мало. */
-    fun kindShort(kind: String): String = when (kind) {
+    fun kindShort(kind: String): String = when (baseKind(kind)) {
         FaunaModel.WOLF -> "волки"
         FaunaModel.BEAR -> "медведь"
         FaunaModel.WOLVERINE -> "росомаха"
         FaunaModel.LYNX -> "рысь"
         FaunaModel.MOOSE -> "лось"
+        WildModel.HARE -> "зайцы"
+        WildModel.FOX -> "лиса"
+        WildModel.SQUIRREL -> "белки"
+        WildModel.CAPER -> "глухарь"
+        WildModel.HAZEL -> "рябчик"
+        WildModel.F_CABIN -> "зимовьё"
+        WildModel.F_BERRY -> "ягоды"
+        WildModel.F_ANTLER -> "рога"
+        WildModel.F_SPRING -> "родник"
         else -> kind
     }
 
     fun sourceRu(source: Int): String = when (source) {
         Obs.SEEN -> "видел сам"
         Obs.TRACK -> "по следу"
+        WildModel.SRC_LANDMARK -> "нашёл сам"
         else -> "на слух"
     }
 

@@ -152,6 +152,9 @@ private const val WORLD_FINGERPRINT_V5 = "d627ec198ce3487e"
  */
 private const val WORLD_FINGERPRINT_V6 = "e1b40f2e308f8172"
 
+/** v7. Пустая строка = ещё не заморожен; после первого прогона вписывается. */
+private const val WORLD_FINGERPRINT_V7 = "e630dea3e919f47f"
+
 private fun check(name: String, ok: Boolean, detail: String = "") {
     if (!ok) {
         failures++
@@ -754,6 +757,93 @@ fun main(args: Array<String>) {
         check("world.fingerprint_v6_frozen", fp6 == WORLD_FINGERPRINT_V6,
             "было " + WORLD_FINGERPRINT_V6 + ", стало " + fp6)
         check("world.v5_and_v6_differ", fp5 != fp6)
+
+        // v7: живая тайга. Выбор во встречах фиксирован (всегда вариант 1) —
+        // отпечаток детерминирован. Мир обязан отличаться от v6.
+        var h7 = 1125899906842597L
+        for (i in 0 until 50) {
+            val seed = 424242L + i * 977L
+            SurvivalEngine(seed, i % 4, SurvivalEngine.startOffsetFrom(seed), 7)
+                .run(0, 100 * SurvivalEngine.PHASES, {}, { -1 }, { _, _ -> }, { 1 }) { e ->
+                    val world = WORLD_CTX.joinToString(",") { k -> k + "=" + (e.ctx[k] ?: 0) }
+                    val sg = "" + e.tick + "|" + e.category + "|" + e.key + "|" + e.roll +
+                        "|" + e.phase + "|" + e.nth + "|" + world +
+                        "|" + (e.params["txt"] ?: "")
+                    for (c in sg) h7 = 31 * h7 + c.code
+                }
+        }
+        val fp7 = java.lang.Long.toHexString(h7)
+        println("отпечаток мира v7: " + fp7)
+        check("world.fingerprint_v7_frozen",
+            WORLD_FINGERPRINT_V7.isEmpty() || fp7 == WORLD_FINGERPRINT_V7,
+            "было " + WORLD_FINGERPRINT_V7 + ", стало " + fp7)
+        check("world.v6_and_v7_differ", fp6 != fp7)
+    }
+
+    // --- 9б. ЖИВАЯ ТАЙГА v7: остановки, выборы, раны, переигрыш ---
+    run {
+        var halts = 0; var badHalt = 0; var replayMism = 0
+        var encWorlds = 0; var totalObs = 0L; var emptyW = 0
+        var firstIn7 = 0
+        for (i in 0 until 300) {
+            val seed = 880000L + i * 61L
+            val season = i % 4
+            val phases = 30 * SurvivalEngine.PHASES
+            val eng = SurvivalEngine(seed, season, SurvivalEngine.startOffsetFrom(seed), 7)
+
+            // Прогон «жизнь»: решения принимаются по мере остановок (вариант 1),
+            // как их принимал бы игрок. Копим фактические выборы и тропу.
+            val choices = HashMap<Int, Int>()
+            val heads = IntArray(31) { -1 }
+            var from = 0
+            var guard = 0
+            val liveEv = ArrayList<String>()
+            while (from < phases && guard < 40) {
+                guard++
+                val s = eng.run(from, phases, {}, { d -> if (d in 1..30) heads[d].let { if (it >= 0) it else -1 } else -1 },
+                    { d, h -> if (d in 1..30) heads[d] = h },
+                    { d -> choices[d] ?: -1 }) { e ->
+                    liveEv.add(e.tick.toString() + "|" + e.key + "|" + (e.params["txt"] ?: "") + "|" + e.phase)
+                }
+                if (s.haltedDay > 0) {
+                    halts++
+                    if (s.haltedDay < 1 || s.haltedDay > 30) badHalt++
+                    if (choices.containsKey(s.haltedDay)) badHalt++ // одна встреча — одна остановка
+                    choices[s.haltedDay] = 1
+                    // прогресс не может уйти дальше кануна встречи
+                    from = (s.haltedDay - 1) * SurvivalEngine.PHASES
+                } else {
+                    from = phases
+                }
+            }
+            if (guard >= 40) badHalt++
+            if (choices.isNotEmpty()) encWorlds++
+
+            // Переигрыш одним куском с готовыми выборами и тропой обязан дать
+            // ровно те же события (журнал переигрывается честно).
+            val repEv = ArrayList<String>()
+            eng.run(0, phases, {}, { d -> if (d in 1..30 && heads[d] >= 0) heads[d] else -1 },
+                { _, _ -> }, { d -> choices[d] ?: -1 }) { e ->
+                repEv.add(e.tick.toString() + "|" + e.key + "|" + (e.params["txt"] ?: "") + "|" + e.phase)
+            }
+            if (repEv != liveEv) replayMism++
+
+            // Плотность: радар больше не пустой месяцами.
+            val obs = eng.observations(phases, { d -> if (d in 1..30 && heads[d] >= 0) heads[d] else -1 },
+                { d -> choices[d] ?: -1 })
+            totalObs += obs.size
+            if (obs.isEmpty()) emptyW++
+            if (obs.any { it.tick <= 7 }) firstIn7++
+        }
+        println("v7 живая тайга (300 миров × 30 дн): наблюдений/мир=" +
+            "%.1f".format(totalObs.toDouble() / 300) +
+            " · пустых миров=" + emptyW +
+            " · встреч-миров=" + encWorlds + " · остановок=" + halts +
+            " · след в первые 7 дн: " + (firstIn7 * 100 / 300) + "%")
+        check("wild.halt_sane", badHalt == 0, "badHalt=" + badHalt)
+        check("wild.replay_faithful", replayMism == 0, "мисматчей=" + replayMism)
+        check("wild.not_empty", emptyW == 0, "пустых=" + emptyW)
+        check("wild.first_week", firstIn7 >= 285, "лишь " + firstIn7 + "/300")
     }
 
     // --- 9. РАДАР: наблюдения и туман войны (200 000 дней мира) ---

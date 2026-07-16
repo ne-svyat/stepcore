@@ -11,6 +11,7 @@ import com.vasil.stepcore.survival.engine.StepLedger
 import com.vasil.stepcore.survival.engine.DaySnap
 import com.vasil.stepcore.survival.engine.RadarModel
 import com.vasil.stepcore.survival.engine.SurvivalEngine
+import com.vasil.stepcore.survival.engine.WildModel
 import com.vasil.stepcore.survival.engine.WorldEvent
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -46,6 +47,16 @@ class SurvivalRepo(private val context: Context) {
         val consumedSteps: Long, // сколько реальных шагов пришло с прошлого раза
         val completed: Boolean,  // экспедиция завершилась этим догоном
         val signal: Signal = Signal.NONE, // что озвучить: новое знание с этого догона
+        val pending: PendingEnc? = null,  // мир стоит и ждёт решения игрока
+    )
+
+    /** Встреча, которая остановила мир: день, кто, текст и варианты решения. */
+    data class PendingEnc(
+        val day: Int,
+        val kind: String,
+        val kindRu: String,
+        val text: String,
+        val options: List<String>,
     )
 
     /**
@@ -89,6 +100,22 @@ class SurvivalRepo(private val context: Context) {
      * Текущий начатый день уже записан в тропу, поэтому новый курс вступает в
      * силу со следующего свежего дня — ты уже вышел, поворачиваешь назавтра.
      */
+    private suspend fun choiceMap(id: Long): Map<Int, Int> =
+        db.dao().choicesOf(id).associate { it.day to it.choice }
+
+    /**
+     * Решение игрока во встрече дня day. Записывается навсегда: прожитое
+     * неизменно, переигрыш мира пойдёт по этому же решению. После записи
+     * зови sync() — мир двинется дальше с этого места.
+     */
+    suspend fun choose(id: Long, day: Int, choice: Int) {
+        val e = db.dao().byId(id) ?: return
+        if (e.status != "active") return
+        if (choiceMap(id).containsKey(day)) return // решение не переиграть
+        db.dao().insertChoice(ExpeditionChoice(
+            expeditionId = id, day = day, choice = choice.coerceAtLeast(0)))
+    }
+
     suspend fun setCourse(id: Long, heading: Int) {
         val e = db.dao().byId(id) ?: return
         if (e.status != "active") return
@@ -114,7 +141,9 @@ class SurvivalRepo(private val context: Context) {
      */
     fun recon(e: Expedition): RadarModel.Recon {
         val eng = SurvivalEngine(e.seed, e.startSeason, e.startOffset, e.engineVersion)
-        val obs = eng.observations(e.phasesDone) { day -> courseOf(e, day) }
+        val ch = choiceMap(e.id)
+        val obs = eng.observations(e.phasesDone, { day -> courseOf(e, day) },
+            { day -> ch[day] ?: -1 })
         val day = eng.daySnapshots(e.ticksDone).lastOrNull()
         // Радар читает мир по правилам ТОЙ версии, в которой этот мир живёт.
         return RadarModel.build(obs, day, e.ticksDone, e.engineVersion)
@@ -267,9 +296,11 @@ class SurvivalRepo(private val context: Context) {
         // в новую тропу — переигрыш радара/журнала потом даст ровно этот путь.
         val lastDay = (newPhasesDone + SurvivalEngine.PHASES - 1) / SurvivalEngine.PHASES
         val heads = IntArray(lastDay + 1) { -1 }
+        val choices = choiceMap(e.id)
         val summary = engine.run(e.phasesDone, newPhasesDone, {},
             { day -> courseOf(e, day) },
-            { day, h -> if (day in 1..lastDay) heads[day] = h }) { ev ->
+            { day, h -> if (day in 1..lastDay) heads[day] = h },
+            { day -> choices[day] ?: -1 }) { ev ->
             val text = renderEvent(ev, e.seed)
             if (text != null) {
                 fresh.add(ExpeditionEvent(
@@ -280,25 +311,39 @@ class SurvivalRepo(private val context: Context) {
                 ))
             }
         }
+        // v124. ВСТРЕЧА ОСТАНОВИЛА МИР. Прогресс не уходит дальше кануна дня
+        // встречи; шаги за неминченные фазы не сгорают, а возвращаются в
+        // остаток — решишь, и они двинут мир дальше. Тропа — по прожитое.
+        val halted = summary.haltedDay > 0 && !voluntary
+        val haltPhases = if (halted)
+            ((summary.haltedDay - 1) * SurvivalEngine.PHASES).coerceAtLeast(e.phasesDone)
+        else newPhasesDone
+        val phasesDone2 = if (halted) minOf(newPhasesDone, haltPhases) else newPhasesDone
+        val refundSteps = if (halted) (newPhasesDone - phasesDone2) * phaseSteps else 0
+        val ticksDone2 = phasesDone2 / SurvivalEngine.PHASES
+        val mint2 = ticksDone2 - e.ticksDone
+        val planReached2 = phasesDone2 >= maxPhases
+        val finishing2 = planReached2 || voluntary
+        val pathDays = if (halted) minOf(lastDay, summary.haltedDay - 1) else lastDay
         val newPath = if (e.engineVersion >= 6)
-            buildString { for (d in 1..lastDay) append(heads[d].coerceIn(0, 7)) }
+            buildString { for (d in 1..pathDays) if (heads[d] >= 0) append(heads[d].coerceIn(0, 7)) }
         else e.path
 
-        if (finishing) {
-            val endKey = if (planReached) "end.success" else "end.voluntary"
-            val roll = SplitMix64.forTick(e.seed, newTicksDone + 1).nextLong()
+        if (finishing2) {
+            val endKey = if (planReached2) "end.success" else "end.voluntary"
+            val roll = SplitMix64.forTick(e.seed, ticksDone2 + 1).nextLong()
             fresh.add(ExpeditionEvent(
-                expeditionId = e.id, tick = newTicksDone, realTimeMs = now,
+                expeditionId = e.id, tick = ticksDone2, realTimeMs = now,
                 category = "milestone",
                 phase = SurvivalEngine.NIGHT,
                 text = corpus.render(endKey, roll, mapOf(
-                    "days" to newTicksDone.toString(),
-                    "daysW" to SurvivalEngine.daysWord(newTicksDone),
+                    "days" to ticksDone2.toString(),
+                    "daysW" to SurvivalEngine.daysWord(ticksDone2),
                 )),
             ))
-            if (newTicksDone > 0) {
+            if (ticksDone2 > 0) {
                 fresh.add(ExpeditionEvent(
-                    expeditionId = e.id, tick = newTicksDone, realTimeMs = now,
+                    expeditionId = e.id, tick = ticksDone2, realTimeMs = now,
                     category = "system",
                     phase = SurvivalEngine.NIGHT,
                     text = finalText(summary),
@@ -307,25 +352,35 @@ class SurvivalRepo(private val context: Context) {
         }
 
         val updated = e.copy(
-            ticksDone = newTicksDone,
-            phasesDone = newPhasesDone,
+            ticksDone = ticksDone2,
+            phasesDone = phasesDone2,
             syncDate = res.sync.date,
             syncDaySteps = res.sync.daySteps,
-            stepRemainder = if (finishing) 0 else res.sync.remainder,
+            stepRemainder = if (finishing2) 0 else res.sync.remainder + refundSteps,
             status = when {
-                planReached -> "done_success"
+                planReached2 -> "done_success"
                 voluntary -> "done_voluntary"
                 else -> "active"
             },
-            finishedMs = if (finishing) now else 0L,
+            finishedMs = if (finishing2) now else 0L,
             path = newPath,
         )
 
+        // v124. Мир стоит и ждёт решения: наружу уходит встреча с вариантами.
+        val pending = if (halted && !finishing2)
+            PendingEnc(summary.haltedDay, summary.haltedKind,
+                RadarModel.kindRu(summary.haltedKind), summary.haltedText,
+                WildModel.optionsFor(summary.haltedKind))
+        else null
+
         // Голос тайги: что нового узнал человек за этот догон. Считаем радар
         // до и после — озвучиваем только НОВОЕ, поэтому сигнал не повторяется.
-        val signal = if (newPhasesDone > e.phasesDone && e.engineVersion >= 2)
-            classifySignal(recon(e), recon(updated), e.courseHeading)
-        else Signal.NONE
+        val signal = when {
+            pending != null -> Signal.CHOICE
+            phasesDone2 > e.phasesDone && e.engineVersion >= 2 ->
+                classifySignal(recon(e), recon(updated), e.courseHeading)
+            else -> Signal.NONE
+        }
 
         // Одна транзакция: журнал и паспорт меняются атомарно. Обрыв корутины
         // до/во время транзакции безопасен: откат целиком, повторный догон
@@ -335,7 +390,7 @@ class SurvivalRepo(private val context: Context) {
             db.dao().updateExpedition(updated)
         }
 
-        return SyncOutcome(e.id, mint, res.consumedSteps, finishing, signal)
+        return SyncOutcome(e.id, mint2, res.consumedSteps, finishing2, signal, pending)
     }
 
     /**
@@ -345,6 +400,8 @@ class SurvivalRepo(private val context: Context) {
      *   не печатается вовсе. Молчание честнее физической лжи.
      */
     private fun renderEvent(ev: WorldEvent, salt: Long): String? {
+        // v124. Живая тайга пишет готовым текстом: встречи, раны, находки.
+        if (ev.key == "raw") return ev.params["txt"]
         if (!corpus.has(ev.key)) return "[" + ev.key + "]"
         return corpus.renderOrNull(ev.key, ev.roll, ev.params, ev.ctx, ev.nth, salt)
     }

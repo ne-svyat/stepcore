@@ -42,6 +42,8 @@ class SurvivalActivity : AppCompatActivity() {
 
     private lateinit var repo: SurvivalRepo
     private lateinit var feedback: SurvivalFeedback
+    /** v124. Встреча, которая остановила мир и ждёт решения игрока. */
+    private var pendingEnc: SurvivalRepo.PendingEnc? = null
 
     // выбор в форме старта
     private var season = defaultSeason()
@@ -323,6 +325,7 @@ class SurvivalActivity : AppCompatActivity() {
         if (e != null && runSync) {
             val o = repo.sync()
             if (o != null) {
+                pendingEnc = o.pending
                 if (o.signal != Signal.NONE) {
                     val p = survPrefs()
                     feedback.play(o.signal,
@@ -521,6 +524,10 @@ class SurvivalActivity : AppCompatActivity() {
      */
     private suspend fun renderJournal(e: Expedition) {
         journalBox.removeAllViews()
+        // v124. Мир стоит: встреча ждёт решения. Карточка — над журналом,
+        // мимо неё не пройти: без решения новые дни не наступят.
+        val p = pendingEnc
+        if (p != null && e.status == "active") journalBox.addView(encounterCard(e, p))
         val events = repo.events(e.id)
         if (events.isEmpty()) {
             journalBox.addView(dimRow("Журнал пуст."))
@@ -543,6 +550,47 @@ class SurvivalActivity : AppCompatActivity() {
             journalBox.addView(dimRow("Показаны последние " + MAX_CARDS +
                 " дней. Полный журнал — в «Поделиться»."))
         }
+    }
+
+    /**
+     * v124. Карточка встречи. Мир остановлен: день D не наступит, пока не
+     * решишь. Кнопки — варианты; выбор записывается навсегда, догон
+     * продолжается сразу, и исход ложится строкой в журнал этого дня.
+     */
+    private fun encounterCard(e: Expedition, p: SurvivalRepo.PendingEnc): View {
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(10), dp(12), dp(10), dp(12))
+            setBackgroundColor(ContextCompat.getColor(
+                this@SurvivalActivity, R.color.accent_red) and 0x22FFFFFF.toInt())
+        }
+        card.addView(TextView(this).apply {
+            text = "Д" + p.day + " · " + p.kindRu.uppercase()
+            textSize = 16f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(ContextCompat.getColor(this@SurvivalActivity, R.color.accent_red_bright))
+        })
+        card.addView(TextView(this).apply {
+            text = p.text + "\n\nМир ждёт твоего решения."
+            textSize = 15f
+            setTextColor(ContextCompat.getColor(this@SurvivalActivity, R.color.text_main))
+            setPadding(0, dp(6), 0, dp(8))
+        })
+        for ((i, opt) in p.options.withIndex()) {
+            card.addView(Button(this).apply {
+                text = opt
+                isAllCaps = false
+                setOnClickListener {
+                    isEnabled = false
+                    lifecycleScope.launch {
+                        repo.choose(e.id, p.day, i)
+                        pendingEnc = null
+                        refreshUi(true)
+                    }
+                }
+            })
+        }
+        return card
     }
 
     private fun dayCard(

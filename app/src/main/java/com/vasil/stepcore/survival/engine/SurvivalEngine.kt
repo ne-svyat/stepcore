@@ -94,6 +94,11 @@ data class ExpeditionSummary(
     val firstSnowDay: Int,  // -1, если снега не было или он был с самого старта
     val snowCoverDays: Int, // дней, когда снег ЛЕЖАЛ (не путать со снежными днями)
     val maxSnowCm: Int,     // наибольшая глубина покрова
+    // v7. Мир остановился и ждёт решения игрока: встреча дня haltedDay не
+    // разрешена. -1 — остановки нет. Прогресс дальше (haltedDay-1) не минтится.
+    val haltedDay: Int = -1,
+    val haltedKind: String = "",
+    val haltedText: String = "",
 )
 
 /**
@@ -145,6 +150,9 @@ class SurvivalEngine(
         // не переигрывался, если логика автопилота однажды поумнеет.
         plannedHeading: (Int) -> Int = { -1 },
         headingSink: (Int, Int) -> Unit = { _, _ -> },
+        // v7. Выбор игрока во встрече дня t: 0..N-1, -1 — решения ещё нет.
+        // Нет решения на НОВОМ дне — мир останавливается и ждёт (halt).
+        choiceProvider: (Int) -> Int = { -1 },
         sink: (WorldEvent) -> Unit,
     ): ExpeditionSummary {
         var state = WeatherModel.initial(
@@ -163,6 +171,14 @@ class SurvivalEngine(
         // старых экспедиций остаются теми же, какими были.
         var windDir = WindField.initial(seed)
         val fauna = if (version >= 2) FaunaModel.spawn(seed, startSeason) else emptyList()
+
+        // v7. Живая тайга: места дичи и находки стоят в мире; контекст помнит,
+        // что найдено за прогон. Гарантия: крупный зверь есть в достижимости.
+        val pockets = if (version >= 7) WildModel.pockets(seed) else emptyList()
+        val finds = if (version >= 7) WildModel.finds(seed) else emptyList()
+        val wctx = WildModel.Ctx()
+        if (version >= 7) FaunaModel.ensureNear(fauna, seed)
+        var halted = -1; var haltKind = ""; var haltText = ""
 
         // v6. Позиция игрока (км, абсолютные). Лагерь стоит там, где игрок.
         // Старт — начало координат: в первый день ты там, где высадился.
@@ -197,16 +213,63 @@ class SurvivalEngine(
 
             windDir = WindField.step(seed, t, windDir, state.front)
 
-            // v6. Игрок проходит дневной переход по выбранному курсу — и мир
-            // сегодня считается вокруг НОВОГО места стоянки. Курс: заданный
-            // тропой, иначе — честный автопилот по тому, что на радаре.
+            // v7. ВСТРЕЧА решается ДО перехода: вы сошлись на утренней тропе.
+            // Нет решения на новом дне — мир останавливается и ждёт игрока.
+            var lostDay = false
+            if (version >= 7) {
+                val enc = WildModel.encounterAt(seed, t, fauna, wctx, playerX, playerY)
+                if (enc != null) {
+                    val ch = choiceProvider(t)
+                    if (ch < 0 && (t - 1) * PHASES >= fromExclusive) {
+                        halted = t; haltKind = enc.kind; haltText = enc.meetTxt
+                        break
+                    }
+                    val out = WildModel.resolve(seed, t, enc.kind,
+                        ch.coerceIn(0, enc.options.size - 1))
+                    lostDay = out.lostDay
+                    if (out.woundDays > 0) { wctx.woundDays = out.woundDays; wctx.woundKind = enc.kind }
+                    if (out.scared) WildModel.scare(fauna, enc.kind, playerX, playerY)
+                    val g = globalPhase(t, MORNING)
+                    if (g > fromExclusive && g <= toInclusive) {
+                        sink(WorldEvent(t, "animal", "raw", 0,
+                            params = mapOf("txt" to enc.meetTxt), phase = MORNING))
+                        sink(WorldEvent(t, "animal", "raw", 0,
+                            params = mapOf("txt" to out.txt), phase = MORNING))
+                    }
+                    // Зверь был вплотную — это знание, и оно на радаре.
+                    val (ed, es) = polarOf(fauna, enc.kind, playerX, playerY)
+                    obsSink2(Obs(t, MORNING, enc.kind, es, ed, Obs.SEEN,
+                        fauna.firstOrNull { it.kind == enc.kind }?.packSize ?: 1))
+                }
+            }
+
+            // v6/v7. Дневной переход. Рана режет ход, потерянный день — стоянка.
             if (version >= 6) {
                 val planned = plannedHeading(t)
                 val heading = if (planned in 0..7) planned
                     else autopilotHeading(seed, t, lastObs, playerX, playerY)
-                playerX += TRAVEL_KM_PER_DAY * Math.sin(heading * Math.PI / 4.0)
-                playerY += TRAVEL_KM_PER_DAY * Math.cos(heading * Math.PI / 4.0)
+                val pace = when {
+                    version < 7 -> TRAVEL_KM_PER_DAY
+                    lostDay -> 0.0
+                    wctx.woundDays > 0 -> TRAVEL_KM_PER_DAY * 0.4
+                    else -> TRAVEL_KM_PER_DAY
+                }
+                playerX += pace * Math.sin(heading * Math.PI / 4.0)
+                playerY += pace * Math.cos(heading * Math.PI / 4.0)
                 headingSink(t, heading)
+            }
+
+            // v7. Рана живёт днями: ноет в журнале, заживает — отпускает.
+            if (version >= 7 && wctx.woundDays > 0) {
+                wctx.woundDays--
+                val g = globalPhase(t, EVENING)
+                if (g > fromExclusive && g <= toInclusive) {
+                    val wr = SplitMix64.forTick(seed xor WildModel.ENC_SALT, t * 7 + 3).nextLong()
+                    val txt = if (wctx.woundDays == 0) WildModel.woundHealedLine(wr)
+                        else if (t % 2 == 0) WildModel.woundLine(wr, wctx.woundKind) else null
+                    if (txt != null) sink(WorldEvent(t, "wound", "raw", 0,
+                        params = mapOf("txt" to txt), phase = EVENING))
+                }
             }
 
             val fr = if (fauna.isEmpty()) null
@@ -215,9 +278,24 @@ class SurvivalEngine(
 
             emit(t, prev, state, rng, windDir, fr, seen, fromExclusive, toInclusive,
                 sink, obsSink2)
+
+            // v7. Дичь и находки вокруг НОВОЙ стоянки: радар полнится каждый
+            // день, журнал — когда есть что сказать.
+            if (version >= 7) {
+                for (n in WildModel.dayNotes(seed, t, seasonOf(t), pockets, finds,
+                        wctx, playerX, playerY)) {
+                    if (n.obs != null && globalPhase(t, n.phase) <= toInclusive)
+                        obsSink2(n.obs)
+                    val g = globalPhase(t, n.phase)
+                    if (n.journalTxt != null && g > fromExclusive && g <= toInclusive)
+                        sink(WorldEvent(t, n.category, "raw", 0,
+                            params = mapOf("txt" to n.journalTxt), phase = n.phase))
+                }
+            }
         }
 
-        val d = maxOf(fullDays, 0)
+        val d0 = maxOf(fullDays, 0)
+        val d = if (halted > 0) minOf(d0, halted - 1) else d0
         return ExpeditionSummary(
             days = d, rainDays = rain, snowDays = snow, stormDays = storm,
             fogMornings = fogs,
@@ -226,7 +304,23 @@ class SurvivalEngine(
             firstSnowDay = firstSnow,
             snowCoverDays = coverDays,
             maxSnowCm = maxSnow,
+            haltedDay = halted,
+            haltedKind = haltKind,
+            haltedText = haltText,
         )
+    }
+
+    /** Полярные координаты ближайшего зверя вида от игрока (для метки встречи). */
+    private fun polarOf(
+        fauna: List<FaunaModel.Agent>, kind: String, px: Double, py: Double,
+    ): Pair<Double, Int> {
+        val a = fauna.filter { it.kind == kind && it.alive }
+            .minByOrNull { Math.hypot(it.x - px, it.y - py) }
+            ?: return Pair(0.5, 0)
+        val dx = a.x - px; val dy = a.y - py
+        var deg = Math.toDegrees(Math.atan2(dx, dy))
+        if (deg < 0) deg += 360.0
+        return Pair(Math.hypot(dx, dy), Math.round(deg / 45.0).toInt() % 8)
     }
 
     /**
@@ -276,9 +370,13 @@ class SurvivalEngine(
      * наружу не выдаётся: интересны только наблюдения. Гейт по фазе тот же,
      * что у журнала, — радар не забегает вперёд журнала даже на четверть дня.
      */
-    fun observations(toPhase: Int, plannedHeading: (Int) -> Int = { -1 }): List<Obs> {
+    fun observations(
+        toPhase: Int,
+        plannedHeading: (Int) -> Int = { -1 },
+        choiceProvider: (Int) -> Int = { -1 },
+    ): List<Obs> {
         val out = ArrayList<Obs>()
-        run(toPhase, toPhase, { out.add(it) }, plannedHeading, { _, _ -> }) { }
+        run(toPhase, toPhase, { out.add(it) }, plannedHeading, { _, _ -> }, choiceProvider) { }
         return out
     }
 
@@ -577,7 +675,7 @@ class SurvivalEngine(
         /** Как часто пустой лес под стаей становится строкой. Только v3. */
     private const val QUIET_P = 0.40
 
-    const val ENGINE_VERSION = 6
+    const val ENGINE_VERSION = 7
 
         /** Дневной переход игрока по выбранному курсу, км. Подобран так, чтобы
          *  за экспедицию исходить обжитой край, а не улететь в пустоту. */
