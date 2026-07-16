@@ -90,7 +90,6 @@ class SurvivalActivity : AppCompatActivity() {
             .setScene(com.vasil.stepcore.DoodleSceneView.EXPEDITION)
         repo = SurvivalRepo(this)
         feedback = SurvivalFeedback(this)
-        addFeedbackSettings()
 
         startBox = findViewById(R.id.startBox)
         activeBox = findViewById(R.id.activeBox)
@@ -110,6 +109,7 @@ class SurvivalActivity : AppCompatActivity() {
         copyBtn = findViewById(R.id.copyBtn)
         shareBtn = findViewById(R.id.shareBtn)
         journalActions = findViewById(R.id.journalActions)
+        addFeedbackSettings() // после findViewById: строке настроек нужен startBox
 
         seasonBtns = listOf(
             findViewById(R.id.seasonWinterBtn), findViewById(R.id.seasonSpringBtn),
