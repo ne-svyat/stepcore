@@ -87,4 +87,32 @@ object EnergyModel {
         if (bmrPerDay <= 0f || secondsOfDay <= 0) return 0f
         return bmrPerDay * secondsOfDay.coerceAtMost(86_400L) / 86_400f
     }
+
+    // ==================== УКЛОН (Сегмент 2, Minetti et al. 2002) ==========
+    /**
+     * Множители стоимости передвижения по уклону относительно ровного (=1.0).
+     * Источник: Minetti et al. (2002), стоимость транспорта vs градиент.
+     * Ручная метка уклона грубая (вверх/ровно/вниз, без градуса), поэтому
+     * берём ОДНО репрезентативное значение для "заметного" подъёма, который
+     * человек помечает вручную (~+8% уклона -> ходьба дороже ровной ~в 1.5x).
+     * ВНИЗ = 1.0 на старте (решение проекта): стоимость спуска немонотонна
+     * (лёгкий спуск дешевле ровного, крутой - дороже); без градуса честно
+     * не оценить, уточним по данным (down-шаги всё равно пишутся в час).
+     * Значения ПРОВИЗОРНЫЕ - заменятся измеренными в фазе обучения.
+     */
+    const val INCLINE_UP_FACTOR = 1.5f
+    const val INCLINE_DOWN_FACTOR = 1.0f
+
+    /**
+     * Средневзвешенный множитель активных ккал часа по долям шагов под
+     * уклоном. flat = total - up - down (домножается на 1.0). Старые часы
+     * (до Сегмента 2) имеют up=down=0 -> множитель 1.0, полная совместимость.
+     */
+    fun inclineMultiplier(totalSteps: Int, upSteps: Int, downSteps: Int): Float {
+        if (totalSteps <= 0) return 1f
+        val up = upSteps.coerceIn(0, totalSteps)
+        val down = downSteps.coerceIn(0, totalSteps - up)
+        val flat = totalSteps - up - down
+        return (flat + up * INCLINE_UP_FACTOR + down * INCLINE_DOWN_FACTOR) / totalSteps
+    }
 }

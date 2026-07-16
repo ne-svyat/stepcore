@@ -140,7 +140,10 @@ object Stats {
         val wk = EnergyModel.walkKcal(hour.walkSteps, mass, walkStride, walkIntervalS)
         val rk = EnergyModel.runKcal(hour.runSteps * runStride / 1000f, mass)
         val distM = hour.walkSteps * walkStride + hour.runSteps * runStride
-        return (wk + rk).toInt() to distM
+        // Уклон (Сегмент 2): множитель активных ккал по долям up/down-шагов часа.
+        val inclineMult = EnergyModel.inclineMultiplier(
+            hour.walkSteps + hour.runSteps, hour.upSteps, hour.downSteps)
+        return ((wk + rk) * inclineMult).toInt() to distM
     }
 
     /** Сумма по уже загруженным часам. */

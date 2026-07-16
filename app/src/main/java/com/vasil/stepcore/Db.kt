@@ -47,6 +47,9 @@ data class HourRecord(
     @PrimaryKey val dateHour: String,
     val walkSteps: Int = 0,
     val runSteps: Int = 0,
+    // Сегмент 2: сколько шагов часа помечено уклоном (flat = total-up-down).
+    val upSteps: Int = 0,
+    val downSteps: Int = 0,
 )
 
 /**
@@ -145,8 +148,8 @@ interface StepDao {
     @Query("INSERT OR IGNORE INTO hours(dateHour, walkSteps, runSteps) VALUES(:k, 0, 0)")
     suspend fun ensureHour(k: String)
 
-    @Query("UPDATE hours SET walkSteps = walkSteps + :w, runSteps = runSteps + :r WHERE dateHour = :k")
-    suspend fun addHour(k: String, w: Int, r: Int)
+    @Query("UPDATE hours SET walkSteps = walkSteps + :w, runSteps = runSteps + :r, upSteps = upSteps + :up, downSteps = downSteps + :down WHERE dateHour = :k")
+    suspend fun addHour(k: String, w: Int, r: Int, up: Int, down: Int)
 
     @Query("SELECT * FROM hours WHERE dateHour LIKE :dayPrefix || '%' ORDER BY dateHour ASC")
     suspend fun hoursOfDay(dayPrefix: String): List<HourRecord>
@@ -231,8 +234,15 @@ val MIGRATION_4_5 = object : Migration(4, 5) {
     }
 }
 
+val MIGRATION_5_6 = object : Migration(5, 6) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE hours ADD COLUMN upSteps INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE hours ADD COLUMN downSteps INTEGER NOT NULL DEFAULT 0")
+    }
+}
+
 @Database(entities = [DayRecord::class, EventRecord::class, HourRecord::class, ProfileSnapshotRecord::class],
-    version = 5, exportSchema = false)
+    version = 6, exportSchema = false)
 abstract class AppDb : RoomDatabase() {
     abstract fun dao(): StepDao
 
@@ -242,7 +252,7 @@ abstract class AppDb : RoomDatabase() {
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
                     context.applicationContext, AppDb::class.java, "stepcore.db"
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5).build().also { instance = it }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6).build().also { instance = it }
             }
     }
 }

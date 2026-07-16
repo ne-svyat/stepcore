@@ -120,6 +120,8 @@ class StepService : Service(), SensorEventListener {
     private var pendKey = ""
     private var pendW = 0
     private var pendR = 0
+    private var pendUp = 0
+    private var pendDown = 0
 
     private var lastLoggedMode = "IDLE"
     private var idleSinceMs = 0L
@@ -905,15 +907,22 @@ class StepService : Service(), SensorEventListener {
         val k = hourKeyNow()
         if (k != pendKey) { flushHour(); pendKey = k }
         pendW += w; pendR += r
+        // Сегмент 2: атрибуция шагов текущему уклону (read-only метка из UI).
+        val d = w + r
+        when (TerrainState.incline.value) {
+            TerrainState.Incline.UP -> pendUp += d
+            TerrainState.Incline.DOWN -> pendDown += d
+            else -> {}
+        }
     }
 
     private fun flushHour() {
         if (pendKey.isEmpty() || (pendW == 0 && pendR == 0)) return
-        val k = pendKey; val w = pendW; val r = pendR
-        pendW = 0; pendR = 0
+        val k = pendKey; val w = pendW; val r = pendR; val up = pendUp; val down = pendDown
+        pendW = 0; pendR = 0; pendUp = 0; pendDown = 0
         scope.launch {
             val dao = AppDb.get(this@StepService).dao()
-            dao.ensureHour(k); dao.addHour(k, w, r)
+            dao.ensureHour(k); dao.addHour(k, w, r, up, down)
         }
     }
 
@@ -952,12 +961,12 @@ class StepService : Service(), SensorEventListener {
      * сервиса допустимо.
      */
     private fun persistDbBlocking() {
-        val k = pendKey; val w = pendW; val r = pendR
-        pendW = 0; pendR = 0
+        val k = pendKey; val w = pendW; val r = pendR; val up = pendUp; val down = pendDown
+        pendW = 0; pendR = 0; pendUp = 0; pendDown = 0
         val d = currentDay; val dw = walkSteps; val dr = runSteps
         runBlocking {
             val dao = AppDb.get(this@StepService).dao()
-            if (k.isNotEmpty() && (w > 0 || r > 0)) { dao.ensureHour(k); dao.addHour(k, w, r) }
+            if (k.isNotEmpty() && (w > 0 || r > 0)) { dao.ensureHour(k); dao.addHour(k, w, r, up, down) }
             dao.upsertDay(DayRecord(d, dw, dr))
         }
     }
