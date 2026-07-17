@@ -728,6 +728,14 @@ class DoodleSceneView @JvmOverloads constructor(
 
     private var scene = HEADER
     private val d = resources.displayMetrics.density
+    private val firLit = 0xFF2FA88A.toInt()
+    private val firShadow = 0xFF1A6350.toInt()
+    private val firTrunk = 0xFF3A2E22.toInt()
+    private val firFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val firOutline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeJoin = Paint.Join.ROUND; strokeCap = Paint.Cap.ROUND
+        strokeWidth = 2f * resources.displayMetrics.density; color = 0xFF0D1F18.toInt()
+    }
     private val onTick: () -> Unit = { invalidate() }
 
     override fun onAttachedToWindow() {
@@ -764,6 +772,56 @@ class DoodleSceneView @JvmOverloads constructor(
             style = Paint.Style.STROKE; color = c; alpha = a
             strokeWidth = wpx * d; strokeJoin = Paint.Join.ROUND; strokeCap = Paint.Cap.ROUND
         }
+
+    /** Один ярус пушистой ёлки: бахрома веток снизу (кончики вниз). */
+    private fun fluffyTier(x: Float, apexY: Float, botY: Float, tw: Float, w: Wobble): Path {
+        val p = Path()
+        p.moveTo(x, apexY)
+        p.lineTo(x - tw, botY)
+        val n = 5
+        for (s in 1..n) {
+            val xm = (x - tw) + (2f * tw) * ((s - 0.5f) / n)
+            val xr = (x - tw) + (2f * tw) * (s.toFloat() / n)
+            p.lineTo(xm + w.j(1.2f), botY + tw * 0.20f)
+            p.lineTo(xr, botY - tw * 0.03f)
+        }
+        p.lineTo(x, apexY)
+        p.close()
+        return p
+    }
+
+    /**
+     * Пушистая затенённая ёлка: ствол + 4 яруса с бахромой веток, цел-шейдинг
+     * (свет слева / тень справа), снег на верхних лапах с мерцающим бликом.
+     * Декор полупрозрачен (уступает тексту), но объёмнее прежнего контура.
+     */
+    private fun firRich(c: Canvas, x: Float, baseY: Float, h: Float, w: Wobble) {
+        val a = 175
+        val trunkW = h * 0.07f
+        firFill.color = firTrunk; firFill.alpha = a
+        c.drawRect(x - trunkW / 2f, baseY - h * 0.12f, x + trunkW / 2f, baseY, firFill)
+        for (i in 3 downTo 0) {
+            val apexY = baseY - h * (0.24f + 0.185f * i)
+            val botY = apexY + h * 0.26f
+            val tw = h * 0.46f * (1f - 0.17f * i)
+            val path = fluffyTier(x, apexY, botY, tw, w)
+            firFill.color = firLit; firFill.alpha = a
+            c.drawPath(path, firFill)
+            c.save()
+            c.clipRect(x, apexY - h, x + tw + 4f * d, botY + 6f * d)
+            firFill.color = firShadow; firFill.alpha = (a * 0.75f).toInt()
+            c.drawPath(path, firFill)
+            c.restore()
+            Doodle.ink(c, path, firOutline, 0.6f * d)
+            if (i >= 2) {
+                val ph = BoilClock.phase * 1.6f + x * 0.03f + i
+                val gl = 0.6f + 0.4f * kotlin.math.sin(ph.toDouble()).toFloat()
+                firFill.color = 0xFFFFFFFF.toInt(); firFill.alpha = (140f * gl).toInt().coerceIn(0, 255)
+                c.drawCircle(x - tw * 0.30f, apexY + h * 0.05f, h * 0.035f, firFill)
+            }
+        }
+        firFill.alpha = 255
+    }
     private fun fill(c: Int, a: Int = DECOR_ALPHA) = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL; color = c; alpha = a
     }
@@ -832,12 +890,10 @@ class DoodleSceneView @JvmOverloads constructor(
         val mt = Path(); val snow = Path()
         Doodle.mountains(mt, snow, w * 0.30f, base, w * 0.40f, h * 0.62f, r)
         Doodle.ink(c, mt, stroke(violet, 2f), 0.8f * d); Doodle.ink(c, snow, stroke(violetBr, 1f), 0.8f * d)
-        val trees = Path()
-        Doodle.fir(trees, w * 0.06f, base, h * 0.52f, r)
-        Doodle.fir(trees, w * 0.14f, base, h * 0.40f, r)
-        Doodle.fir(trees, w * 0.72f, base, h * 0.45f, r)
-        Doodle.fir(trees, w * 0.78f, base, h * 0.34f, r)
-        Doodle.ink(c, trees, stroke(teal, 2f), 0.8f * d)
+        firRich(c, w * 0.06f, base, h * 0.52f, r)
+        firRich(c, w * 0.14f, base, h * 0.40f, r)
+        firRich(c, w * 0.72f, base, h * 0.45f, r)
+        firRich(c, w * 0.78f, base, h * 0.34f, r)
         drifting(c, w, h, r, violet, listOf(
             Triple(0.22f, 0.13f, 26f), Triple(0.14f, 0.09f, 34f)))
         val mn = Path()
@@ -861,9 +917,7 @@ class DoodleSceneView @JvmOverloads constructor(
         val sn = Path()
         Doodle.sun(sn, w * 0.82f, h * 0.15f, h * 0.06f * k, r)
         Doodle.ink(c, sn, stroke(amber, 2f, (DECOR_ALPHA * (0.8f + 0.2f * k)).toInt()), 0.8f * d)
-        val trees = Path()
-        Doodle.fir(trees, w * 0.93f, h * 0.98f, h * 0.20f, r)
-        Doodle.ink(c, trees, stroke(tealBr, 2f), 0.8f * d)
+        firRich(c, w * 0.93f, h * 0.98f, h * 0.20f, r)
         dotPaint.color = amberBr
         c.drawCircle(w * 0.62f, h * 0.10f, 1.8f * d, dotPaint)
     }
@@ -893,10 +947,8 @@ class DoodleSceneView @JvmOverloads constructor(
             c.drawCircle(sx, sy, 1.6f * d, dotPaint)
         }
         dotPaint.alpha = DECOR_ALPHA
-        val trees = Path()
-        Doodle.fir(trees, w * 0.55f, base, h * 0.30f, r)
-        Doodle.fir(trees, w * 0.97f, base, h * 0.28f, r)
-        Doodle.ink(c, trees, stroke(teal, 2f), 0.8f * d)
+        firRich(c, w * 0.55f, base, h * 0.30f, r)
+        firRich(c, w * 0.97f, base, h * 0.28f, r)
         val mt = Path(); val snow = Path()
         Doodle.mountains(mt, snow, w * 0.78f, base, w * 0.18f, h * 0.36f, r)
         Doodle.ink(c, mt, stroke(tint, 2f), 0.8f * d); Doodle.ink(c, snow, stroke(tintBr, 1f), 0.8f * d)
@@ -959,10 +1011,8 @@ class DoodleSceneView @JvmOverloads constructor(
         val rv = Path()
         Doodle.river(rv, w * 0.05f, h * 0.72f, w * 0.60f, base, r)
         Doodle.ink(c, rv, stroke(blueBr, 2f), 0.8f * d)
-        val trees = Path()
-        Doodle.fir(trees, w * 0.14f, base, h * 0.36f, r)
-        Doodle.fir(trees, w * 0.90f, base, h * 0.42f, r)
-        Doodle.ink(c, trees, stroke(teal, 2f), 0.8f * d)
+        firRich(c, w * 0.14f, base, h * 0.36f, r)
+        firRich(c, w * 0.90f, base, h * 0.42f, r)
         drifting(c, w, h, r, violet, listOf(Triple(0.16f, 0.10f, 30f)))
         stars(c, blueBr, listOf(Triple(0.32f, 0.20f, 0.09f), Triple(0.70f, 0.12f, 0.06f)), w, h, r)
     }
@@ -979,11 +1029,9 @@ class DoodleSceneView @JvmOverloads constructor(
         val sp = Path()
         Doodle.signpost(sp, w * 0.86f, base, h * 0.50f, r)
         Doodle.ink(c, sp, stroke(amberBr, 2f), 0.8f * d)
-        val trees = Path()
-        Doodle.fir(trees, w * 0.10f, base, h * 0.48f, r)
-        Doodle.fir(trees, w * 0.20f, base, h * 0.36f, r)
-        Doodle.fir(trees, w * 0.72f, base, h * 0.40f, r)
-        Doodle.ink(c, trees, stroke(teal, 2f), 0.8f * d)
+        firRich(c, w * 0.10f, base, h * 0.48f, r)
+        firRich(c, w * 0.20f, base, h * 0.36f, r)
+        firRich(c, w * 0.72f, base, h * 0.40f, r)
         stars(c, amberBr, listOf(Triple(0.44f, 0.14f, 0.07f)), w, h, r)
     }
 
