@@ -753,6 +753,7 @@ class DoodleSceneView @JvmOverloads constructor(
         style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND
         strokeWidth = 2.4f * resources.displayMetrics.density
     }
+    private val footPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val onTick: () -> Unit = { invalidate() }
 
     override fun onAttachedToWindow() {
@@ -960,6 +961,52 @@ class DoodleSceneView @JvmOverloads constructor(
         skyOutline.color = dark; Doodle.ink(c, puff, skyOutline, 0.6f * d)
         skyFill.alpha = 255
     }
+
+    /**
+     * Следы к горе: путь = земля слева -> подножие -> склон к вершине.
+     * Голова цикла бежит по следам, за ней затухающий хвост; в конце
+     * периода всё гаснет и путь повторяется. Свечение - янтарное.
+     */
+    private fun footprints(c: Canvas, w: Float, h: Float) {
+        val base = h * 0.95f
+        val ax = w * 0.03f; val ay = base
+        val bx = w * 0.32f; val by = base
+        val cx = w * 0.508f; val cy = base - h * 0.62f
+        val n = 16
+        val period = 7f
+        val head = ((BoilClock.phase / period) % 1f) * (n + 5)
+        for (i in 0 until n) {
+            val rel = head - i
+            if (rel < 0f) continue
+            val a = 1f - rel / 6f
+            if (a <= 0f) continue
+            val t = i.toFloat() / (n - 1)
+            val px: Float; val py: Float; val dx: Float; val dy: Float
+            if (t <= 0.55f) {
+                val tt = t / 0.55f
+                px = ax + (bx - ax) * tt; py = ay + (by - ay) * tt
+                dx = bx - ax; dy = by - ay
+            } else {
+                val tt = (t - 0.55f) / 0.45f
+                px = bx + (cx - bx) * tt; py = by + (cy - by) * tt
+                dx = cx - bx; dy = cy - by
+            }
+            val len = Math.hypot(dx.toDouble(), dy.toDouble()).toFloat().coerceAtLeast(0.001f)
+            val ux = dx / len; val uy = dy / len
+            val side = if (i % 2 == 0) 1f else -1f
+            val off = w * 0.012f
+            val fx = px + (-uy) * side * off
+            val fy = py + ux * side * off
+            val ang = Math.toDegrees(Math.atan2(uy.toDouble(), ux.toDouble())).toFloat()
+            footPaint.color = 0xFFFFD98A.toInt()
+            footPaint.alpha = (210f * a).toInt().coerceIn(0, 255)
+            val fl = w * 0.016f; val fw = w * 0.008f
+            c.save(); c.translate(fx, fy); c.rotate(ang)
+            c.drawOval(-fl, -fw, fl, fw, footPaint)
+            c.restore()
+        }
+        footPaint.alpha = 255
+    }
     private fun fill(c: Int, a: Int = DECOR_ALPHA) = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL; color = c; alpha = a
     }
@@ -1032,6 +1079,7 @@ class DoodleSceneView @JvmOverloads constructor(
             Triple(0.22f, 0.13f, 26f), Triple(0.14f, 0.09f, 34f)))
         moonRich(c, w * 0.92f, h * 0.26f, h * 0.16f, r, amberBr)
         stars(c, blueBr, listOf(Triple(0.44f, 0.18f, 0.08f), Triple(0.86f, 0.70f, 0.06f)), w, h, r)
+        footprints(c, w, h)
     }
 
     private fun drawNight(c: Canvas, w: Float, h: Float, r: Wobble) {
