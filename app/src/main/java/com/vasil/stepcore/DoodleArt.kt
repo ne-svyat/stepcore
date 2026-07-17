@@ -48,7 +48,7 @@ import kotlin.math.sin
 internal object BoilClock {
     const val FRAMES = 3
     private const val TICK_MS = 50L        // 20 кадров/с - плавное движение
-    private const val BOIL_EVERY = 3       // кипение линии медленнее: ~7 к/с
+    private const val BOIL_EVERY = 14      // спокойное «дыхание» линии: ~1.4 к/с
 
     @Volatile var frame = 0
         private set
@@ -143,12 +143,24 @@ internal object Doodle {
     /** Прямая -> ломаная с шумом. */
     fun line(p: Path, x0: Float, y0: Float, x1: Float, y1: Float,
              jit: Float, seg: Int, w: Wobble) {
+        // Уверенная линия: один плавный прогиб перпендикулярно ходу пера
+        // (перо ведёт лёгкой дугой) + едва заметная текстура. Это заменяет
+        // высокочастотную случайную дрожь, из-за которой линия выглядела
+        // трясущейся, «детской».
+        val dx = x1 - x0; val dy = y1 - y0
+        val len = Math.hypot(dx.toDouble(), dy.toDouble()).toFloat()
+        val px: Float; val py: Float
+        if (len > 0.001f) { px = -dy / len; py = dx / len } else { px = 0f; py = 0f }
+        val bow = w.j(jit) * 0.9f
         p.moveTo(x0, y0)
         for (i in 1..seg) {
             val t = i.toFloat() / seg
-            var x = x0 + (x1 - x0) * t
-            var y = y0 + (y1 - y0) * t
-            if (i < seg) { x += w.j(jit); y += w.j(jit) }
+            var x = x0 + dx * t
+            var y = y0 + dy * t
+            if (i < seg) {
+                val d = bow * sin((Math.PI * t).toFloat()) + w.j(jit * 0.16f)
+                x += px * d; y += py * d
+            }
             p.lineTo(x, y)
         }
     }
