@@ -518,6 +518,24 @@ class DoodleBorderDrawable(
         style = Paint.Style.FILL
         color = fillColor
     }
+    // UI-2: резной бевел. Светлый кант ловит свет сверху-слева, тёмная
+    // грань уводит вглубь снизу-справа - плита читается как вырезанная.
+    private val hiPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 1.3f * density
+        strokeJoin = Paint.Join.ROUND
+        strokeCap = Paint.Cap.ROUND
+        color = lighten(strokeColor, 0.55f)
+        alpha = 150
+    }
+    private val shPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 1.6f * density
+        strokeJoin = Paint.Join.ROUND
+        strokeCap = Paint.Cap.ROUND
+        color = Color.BLACK
+        alpha = 170
+    }
     private val d = density
     /** Готовые варианты контура - по одному на кадр "кипения". */
     private val frames = Array(BoilClock.FRAMES) { Path() }
@@ -558,8 +576,20 @@ class DoodleBorderDrawable(
 
     override fun draw(canvas: Canvas) {
         val p = frames[BoilClock.frame]
+        val off = 1.4f * d
+        // тёмная грань снизу-справа (глубина), затем светлый кант сверху-слева
+        canvas.save(); canvas.translate(off, off); canvas.drawPath(p, shPaint); canvas.restore()
+        canvas.save(); canvas.translate(-off, -off); canvas.drawPath(p, hiPaint); canvas.restore()
         if (fillColor != Color.TRANSPARENT) canvas.drawPath(p, fillPaint)
         canvas.drawPath(p, strokePaint)
+    }
+
+    /** Осветление цвета к белому на долю t - для светлого канта резьбы. */
+    private fun lighten(c: Int, t: Float): Int {
+        val r = (Color.red(c) + (255 - Color.red(c)) * t).toInt()
+        val g = (Color.green(c) + (255 - Color.green(c)) * t).toInt()
+        val b = (Color.blue(c) + (255 - Color.blue(c)) * t).toInt()
+        return Color.argb(255, r, g, b)
     }
 
     override fun setAlpha(alpha: Int) { strokePaint.alpha = alpha }
