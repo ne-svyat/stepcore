@@ -736,6 +736,14 @@ class DoodleSceneView @JvmOverloads constructor(
         style = Paint.Style.STROKE; strokeJoin = Paint.Join.ROUND; strokeCap = Paint.Cap.ROUND
         strokeWidth = 2f * resources.displayMetrics.density; color = 0xFF0D1F18.toInt()
     }
+    private val mtFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val mtEdge = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeWidth = 1.4f * resources.displayMetrics.density; alpha = 110
+    }
+    private val mtOutline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeJoin = Paint.Join.ROUND; strokeCap = Paint.Cap.ROUND
+        strokeWidth = 2f * resources.displayMetrics.density; alpha = 175
+    }
     private val onTick: () -> Unit = { invalidate() }
 
     override fun onAttachedToWindow() {
@@ -822,6 +830,66 @@ class DoodleSceneView @JvmOverloads constructor(
         }
         firFill.alpha = 255
     }
+
+    private fun lightenC(col: Int, t: Float): Int {
+        val r = (Color.red(col) + (255 - Color.red(col)) * t).toInt()
+        val g = (Color.green(col) + (255 - Color.green(col)) * t).toInt()
+        val b = (Color.blue(col) + (255 - Color.blue(col)) * t).toInt()
+        return Color.argb(255, r, g, b)
+    }
+
+    private fun darkenC(col: Int, t: Float): Int {
+        return Color.argb(255, (Color.red(col) * (1 - t)).toInt(),
+            (Color.green(col) * (1 - t)).toInt(), (Color.blue(col) * (1 - t)).toInt())
+    }
+
+    /**
+     * Объёмный горный хребет: из оттенка сцены выводятся свет/тень (цел-
+     * шейдинг), снежные шапки мерцают бегущей по вершинам волной блика,
+     * рёбра от вершин + жирный контур. Декор полупрозрачен.
+     */
+    private fun mountainsRich(c: Canvas, x0: Float, baseY: Float, ww: Float, h: Float,
+                              w: Wobble, tint: Int) {
+        val lit = lightenC(tint, 0.12f)
+        val shadow = darkenC(tint, 0.45f)
+        val px = floatArrayOf(x0 + ww * 0.22f, x0 + ww * 0.52f, x0 + ww * 0.80f)
+        val py = floatArrayOf(baseY - h * 0.72f, baseY - h, baseY - h * 0.60f)
+        val sil = Path()
+        sil.moveTo(x0, baseY)
+        sil.lineTo(px[0], py[0]); sil.lineTo(px[0] + ww * 0.10f, baseY - h * 0.24f)
+        sil.lineTo(px[1], py[1]); sil.lineTo(px[1] + ww * 0.10f, baseY - h * 0.22f)
+        sil.lineTo(px[2], py[2]); sil.lineTo(x0 + ww, baseY)
+        sil.close()
+
+        c.save(); c.clipPath(sil)
+        mtFill.color = lit; mtFill.alpha = 165; c.drawPath(sil, mtFill)
+        mtFill.color = shadow; mtFill.alpha = 120
+        c.drawRect(x0 + ww * 0.55f, baseY - h * 1.15f, x0 + ww + 6f, baseY + 6f, mtFill)
+        c.restore()
+
+        mtEdge.color = shadow
+        for (i in 0 until 3) {
+            val e = Path(); e.moveTo(px[i], py[i]); e.lineTo(px[i], baseY); c.drawPath(e, mtEdge)
+        }
+
+        mtOutline.color = darkenC(tint, 0.55f)
+        Doodle.ink(c, sil, mtOutline, 0.7f * d)
+
+        for (i in 0 until 3) {
+            val cap = Path()
+            cap.moveTo(px[i], py[i])
+            cap.lineTo(px[i] - h * 0.09f, py[i] + h * 0.13f)
+            cap.lineTo(px[i] + h * 0.02f, py[i] + h * 0.09f)
+            cap.lineTo(px[i] + h * 0.09f, py[i] + h * 0.13f)
+            cap.close()
+            val t = BoilClock.phase * 0.7f - i * 0.8f
+            val gl = 0.55f + 0.45f * kotlin.math.sin(t.toDouble()).toFloat()
+            mtFill.color = 0xFFFFFFFF.toInt()
+            mtFill.alpha = (150f + 90f * gl).toInt().coerceIn(0, 255)
+            c.drawPath(cap, mtFill)
+        }
+        mtFill.alpha = 255
+    }
     private fun fill(c: Int, a: Int = DECOR_ALPHA) = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL; color = c; alpha = a
     }
@@ -887,9 +955,7 @@ class DoodleSceneView @JvmOverloads constructor(
 
     private fun drawHeader(c: Canvas, w: Float, h: Float, r: Wobble) {
         val base = h * 0.95f
-        val mt = Path(); val snow = Path()
-        Doodle.mountains(mt, snow, w * 0.30f, base, w * 0.40f, h * 0.62f, r)
-        Doodle.ink(c, mt, stroke(violet, 2f), 0.8f * d); Doodle.ink(c, snow, stroke(violetBr, 1f), 0.8f * d)
+        mountainsRich(c, w * 0.30f, base, w * 0.40f, h * 0.62f, r, violet)
         firRich(c, w * 0.06f, base, h * 0.52f, r)
         firRich(c, w * 0.14f, base, h * 0.40f, r)
         firRich(c, w * 0.72f, base, h * 0.45f, r)
@@ -949,9 +1015,7 @@ class DoodleSceneView @JvmOverloads constructor(
         dotPaint.alpha = DECOR_ALPHA
         firRich(c, w * 0.55f, base, h * 0.30f, r)
         firRich(c, w * 0.97f, base, h * 0.28f, r)
-        val mt = Path(); val snow = Path()
-        Doodle.mountains(mt, snow, w * 0.78f, base, w * 0.18f, h * 0.36f, r)
-        Doodle.ink(c, mt, stroke(tint, 2f), 0.8f * d); Doodle.ink(c, snow, stroke(tintBr, 1f), 0.8f * d)
+        mountainsRich(c, w * 0.78f, base, w * 0.18f, h * 0.36f, r, tint)
         val trail = Path()
         Doodle.line(trail, w * 0.66f, base + 3f * d, w * 0.74f, base - 2f * d, 1.2f, 6, r)
         Doodle.line(trail, w * 0.74f, base - 2f * d, w * 0.80f, base + 2f * d, 1.2f, 6, r)
@@ -1005,9 +1069,7 @@ class DoodleSceneView @JvmOverloads constructor(
     /** Статистика: острые пики и река - синий оттенок. */
     private fun drawStats(c: Canvas, w: Float, h: Float, r: Wobble) {
         val base = h * 0.92f
-        val mt = Path(); val snow = Path()
-        Doodle.mountains(mt, snow, w * 0.46f, base, w * 0.46f, h * 0.72f, r)
-        Doodle.ink(c, mt, stroke(blue, 2f), 0.8f * d); Doodle.ink(c, snow, stroke(blueBr, 1f), 0.8f * d)
+        mountainsRich(c, w * 0.46f, base, w * 0.46f, h * 0.72f, r, blue)
         val rv = Path()
         Doodle.river(rv, w * 0.05f, h * 0.72f, w * 0.60f, base, r)
         Doodle.ink(c, rv, stroke(blueBr, 2f), 0.8f * d)
