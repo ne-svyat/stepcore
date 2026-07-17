@@ -116,6 +116,10 @@ class StepService : Service(), SensorEventListener {
     private var walkSteps = 0
     private var runSteps = 0
     private var stepsSinceDbWrite = 0
+    private var samplesSinceStep = 0
+    private var sampleCountSession = 0
+    // Прореживание корпуса уклона: 1 образец на N подтверждённых шагов.
+    private val terrainSampleEvery = 20
     // почасовой аккумулятор (батчится в БД вместе с persistDb)
     private var pendKey = ""
     private var pendW = 0
@@ -283,9 +287,9 @@ class StepService : Service(), SensorEventListener {
             while (true) {
                 delay(1000)
                 StepsState.diag.value =
-                    "чистота %.0f%% | грязь %d | каденс %d | гиро %.2f"
+                    "чистота %.0f%% | грязь %d | каденс %d | гиро %.2f | обр %d"
                         .format(detector.cleanliness * 100, detector.rejectedNoisy,
-                            detector.cadenceLockedSteps, detector.gyroRms)
+                            detector.cadenceLockedSteps, detector.gyroRms, sampleCountSession)
             }
         }
 
@@ -715,6 +719,26 @@ class StepService : Service(), SensorEventListener {
                 }
                 if (added > 0) {
                     trackDivergence(added)
+                    // Сегмент 3: прореженный сбор помеченного корпуса уклона.
+                    samplesSinceStep += added
+                    if (samplesSinceStep >= terrainSampleEvery) {
+                        samplesSinceStep = 0
+                        val sm = detector.mode
+                        if (sm == StepDetector.Mode.WALK || sm == StepDetector.Mode.RUN) {
+                            val sample = TerrainSample(
+                                timeMs = System.currentTimeMillis(),
+                                label = TerrainState.incline.value.name,
+                                mode = sm.name,
+                                amp = detector.smoothedAmp,
+                                intervalMs = detector.lastIntervalMs,
+                                gyro = detector.gyroRms,
+                            )
+                            sampleCountSession++
+                            scope.launch {
+                                AppDb.get(this@StepService).dao().insertSample(sample)
+                            }
+                        }
+                    }
                     // V11.8: калибровка темпа ВОЗВРАЩЕНА на детектор-акселерометр.
                     // STEP_DETECTOR на этом устройстве непригоден (см. ветку выше).
                     // В руке акселерометр честен: разброс 3-7% по замерам V11.6.

@@ -53,6 +53,22 @@ data class HourRecord(
 )
 
 /**
+ * Сегмент 3: помеченный образец походки для будущего обучения уклону.
+ * Признаки сглажены детектором; label - метка уклона, действовавшая в
+ * момент шага. Прореженная выборка (см. StepService.terrainSampleEvery).
+ */
+@Entity(tableName = "terrain_samples")
+data class TerrainSample(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val timeMs: Long,
+    val label: String,      // "UP" / "FLAT" / "DOWN"
+    val mode: String,       // "WALK" / "RUN"
+    val amp: Float,         // сглаженная вертикальная амплитуда
+    val intervalMs: Float,  // сглаженный интервал шага, мс
+    val gyro: Float,        // RMS гироскопа
+)
+
+/**
  * Точка истории профиля (V11): какие параметры действовали НАЧИНАЯ с
  * timestampMs. Пишется при сохранении Профиля и при каждой калибровке.
  */
@@ -183,6 +199,13 @@ interface StepDao {
      */
     @Query("SELECT * FROM profile_history ORDER BY timestampMs ASC LIMIT 1")
     suspend fun earliestProfile(): ProfileSnapshotRecord?
+
+    // --- корпус уклона (Сегмент 3) ---
+    @Insert
+    suspend fun insertSample(s: TerrainSample)
+
+    @Query("SELECT COUNT(*) FROM terrain_samples")
+    suspend fun countSamples(): Int
 }
 
 val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -241,8 +264,23 @@ val MIGRATION_5_6 = object : Migration(5, 6) {
     }
 }
 
-@Database(entities = [DayRecord::class, EventRecord::class, HourRecord::class, ProfileSnapshotRecord::class],
-    version = 6, exportSchema = false)
+val MIGRATION_6_7 = object : Migration(6, 7) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS terrain_samples (" +
+                "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                "timeMs INTEGER NOT NULL, " +
+                "label TEXT NOT NULL, " +
+                "mode TEXT NOT NULL, " +
+                "amp REAL NOT NULL, " +
+                "intervalMs REAL NOT NULL, " +
+                "gyro REAL NOT NULL)"
+        )
+    }
+}
+
+@Database(entities = [DayRecord::class, EventRecord::class, HourRecord::class, ProfileSnapshotRecord::class, TerrainSample::class],
+    version = 7, exportSchema = false)
 abstract class AppDb : RoomDatabase() {
     abstract fun dao(): StepDao
 
@@ -252,7 +290,7 @@ abstract class AppDb : RoomDatabase() {
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
                     context.applicationContext, AppDb::class.java, "stepcore.db"
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6).build().also { instance = it }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7).build().also { instance = it }
             }
     }
 }

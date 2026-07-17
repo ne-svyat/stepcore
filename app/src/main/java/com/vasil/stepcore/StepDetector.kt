@@ -49,6 +49,8 @@ class StepDetector {
     var dropCount = 0
         private set
     val lastIntervalMs: Float get() = emaIntervalMs
+    /** Сглаженная вертикальная амплитуда (Сегмент 3, для корпуса уклона). */
+    val smoothedAmp: Float get() = emaAmp
 
     // диагностика отбраковок (пока без UI; выводить при разборе провалов)
     // Анти-импульс: фон |верт| за последние 0.5 с. У походки между
