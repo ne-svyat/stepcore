@@ -204,9 +204,9 @@ class MainActivity : AppCompatActivity() {
         }
 
         // Метки местности (Сегмент 1): ручной уклон -> журнал + TerrainState.
-        val inclineUpBtn = findViewById<Button>(R.id.inclineUpButton)
-        val inclineFlatBtn = findViewById<Button>(R.id.inclineFlatButton)
-        val inclineDownBtn = findViewById<Button>(R.id.inclineDownButton)
+        val inclineUpBtn = findViewById<TextView>(R.id.inclineUpButton)
+        val inclineFlatBtn = findViewById<TextView>(R.id.inclineFlatButton)
+        val inclineDownBtn = findViewById<TextView>(R.id.inclineDownButton)
         val inclineLabel = findViewById<TextView>(R.id.inclineLabel)
         inclineUpBtn.setOnClickListener { setIncline(TerrainState.Incline.UP) }
         inclineFlatBtn.setOnClickListener { setIncline(TerrainState.Incline.FLAT) }
@@ -526,6 +526,10 @@ class MainActivity : AppCompatActivity() {
         frame(findViewById(R.id.activeTimeChip), R.color.accent_teal, R.color.surface, 102L)
         frame(findViewById(R.id.activeKcalChip), R.color.accent_amber, R.color.surface, 103L)
         frame(findViewById(R.id.totalKcalChip), R.color.accent_violet, R.color.surface, 104L)
+        // Грани уклона: цвет по смыслу - тёплый вверх, нейтраль, холодный вниз.
+        frame(findViewById(R.id.inclineUpButton), R.color.accent_amber, R.color.surface_amber, 201L)
+        frame(findViewById(R.id.inclineFlatButton), R.color.axis_dim, R.color.surface, 202L)
+        frame(findViewById(R.id.inclineDownButton), R.color.accent_teal, R.color.surface_teal, 203L)
 
         findViewById<DoodleSceneView>(R.id.headerScene).setScene(DoodleSceneView.HEADER)
         findViewById<DoodleSceneView>(R.id.nightScene).setScene(DoodleSceneView.NIGHT)

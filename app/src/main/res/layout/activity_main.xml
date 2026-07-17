@@ -8,7 +8,7 @@
         android:layout_height="wrap_content"
         android:orientation="vertical"
         android:gravity="center_horizontal"
-        android:padding="24dp">
+        android:padding="18dp">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -148,6 +148,82 @@
                     android:textColor="@color/text_dim"
                     android:textSize="18sp" />
             </LinearLayout>
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/statusText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:text="СЧЁТ НЕ ИДЁТ"
+            android:textColor="@color/accent_red_bright"
+            android:textSize="16sp"
+            android:layout_marginTop="10dp" />
+
+        <Button
+            android:id="@+id/toggleButton"
+            android:layout_width="match_parent"
+            android:layout_height="72dp"
+            android:text="Старт"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:layout_marginTop="8dp" />
+
+        <TextView
+            android:id="@+id/inclineLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:text="Уклон: ровно"
+            android:textColor="@color/text_dim"
+            android:textSize="14sp"
+            android:layout_marginTop="12dp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="6dp">
+
+            <TextView
+                android:id="@+id/inclineUpButton"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:text="↗ В гору"
+                android:textColor="@color/accent_amber_bright"
+                android:textSize="14sp"
+                android:paddingTop="13dp"
+                android:paddingBottom="13dp"
+                android:layout_marginEnd="4dp" />
+
+            <TextView
+                android:id="@+id/inclineFlatButton"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:text="Ровно"
+                android:textColor="@color/text_main"
+                android:textSize="14sp"
+                android:paddingTop="13dp"
+                android:paddingBottom="13dp"
+                android:layout_marginStart="3dp"
+                android:layout_marginEnd="3dp" />
+
+            <TextView
+                android:id="@+id/inclineDownButton"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:text="↘ С горы"
+                android:textColor="@color/accent_teal_bright"
+                android:textSize="14sp"
+                android:paddingTop="13dp"
+                android:paddingBottom="13dp"
+                android:layout_marginStart="4dp" />
         </LinearLayout>
 
         <GridLayout
@@ -345,68 +421,7 @@
             </FrameLayout>
         </LinearLayout>
 
-        <TextView
-            android:id="@+id/statusText"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Остановлено"
-            android:textColor="@color/text_dim"
-            android:textSize="17sp"
-            android:layout_marginTop="12dp" />
 
-        <Button
-            android:id="@+id/toggleButton"
-            android:layout_width="match_parent"
-            android:layout_height="74dp"
-            android:text="Старт"
-            android:textSize="22sp"
-            android:textStyle="bold"
-            android:layout_marginTop="12dp" />
-
-        <TextView
-            android:id="@+id/inclineLabel"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center_horizontal"
-            android:text="Уклон: ровно"
-            android:textColor="@color/text_dim"
-            android:textSize="15sp"
-            android:layout_marginTop="14dp" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:layout_marginTop="6dp">
-
-            <Button
-                android:id="@+id/inclineUpButton"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_height="wrap_content"
-                android:text="↗ В гору"
-                android:textSize="14sp"
-                android:layout_marginEnd="4dp" />
-
-            <Button
-                android:id="@+id/inclineFlatButton"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_height="wrap_content"
-                android:text="Ровно"
-                android:textSize="14sp"
-                android:layout_marginStart="2dp"
-                android:layout_marginEnd="2dp" />
-
-            <Button
-                android:id="@+id/inclineDownButton"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_height="wrap_content"
-                android:text="↘ С горы"
-                android:textSize="14sp"
-                android:layout_marginStart="4dp" />
-        </LinearLayout>
 
         <FrameLayout
             android:layout_width="match_parent"
