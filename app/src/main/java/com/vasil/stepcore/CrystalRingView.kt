@@ -93,6 +93,19 @@ class CrystalRingView @JvmOverloads constructor(
     private val lightPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
     }
+    private val gemBody = ArrayList<Path>()
+    private val gemDark = ArrayList<Path>()
+    private val gemGlint = ArrayList<Path>()
+    private val sparkX = FloatArray(3)
+    private val sparkY = FloatArray(3)
+    private val moonPath = Path()
+    private val gemLightPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = 0xFF9FC0FF.toInt() }
+    private val gemDarkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = 0xFF3D7EFF.toInt() }
+    private val gemGlintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = 0xFFFFFFFF.toInt() }
+    private val gemEdgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 1.2f * d; color = 0xFF0B1730.toInt() }
+    private val moonFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = 0xFFFFF1CF.toInt() }
+    private val moonStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 1.6f * d; color = 0xFFD9B45F.toInt() }
+    private val sparkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = 0xFFFFFFFF.toInt() }
 
     fun setData(walk: Int, run: Int, goal: Int, yesterdayTotal: Int) {
         storedTotal = walk + run
@@ -123,6 +136,28 @@ class CrystalRingView @JvmOverloads constructor(
         if (Math.abs(by - ay) < 0.001f) return ax
         val t = ((y - ay) / (by - ay)).coerceIn(0f, 1f)
         return ax + (bx - ax) * t
+    }
+
+    private fun addGem(cx: Float, cy: Float, sz: Float, idx: Int) {
+        val top = floatArrayOf(cx, cy - sz)
+        val right = floatArrayOf(cx + sz * 0.72f, cy - sz * 0.12f)
+        val bot = floatArrayOf(cx, cy + sz)
+        val left = floatArrayOf(cx - sz * 0.72f, cy - sz * 0.12f)
+        gemBody.add(facet(top, right, bot, left))
+        gemDark.add(facet(top, right, bot))
+        gemGlint.add(facet(top, left, floatArrayOf(cx - sz * 0.15f, cy - sz * 0.25f)))
+        sparkX[idx] = cx + sz * 1.05f
+        sparkY[idx] = cy - sz * 1.05f
+    }
+
+    private fun sparkle(canvas: Canvas, x: Float, y: Float, s: Float) {
+        val p = Path()
+        p.moveTo(x, y - s)
+        p.lineTo(x + s * 0.28f, y - s * 0.28f); p.lineTo(x + s, y)
+        p.lineTo(x + s * 0.28f, y + s * 0.28f); p.lineTo(x, y + s)
+        p.lineTo(x - s * 0.28f, y + s * 0.28f); p.lineTo(x - s, y)
+        p.lineTo(x - s * 0.28f, y - s * 0.28f); p.close()
+        canvas.drawPath(p, sparkPaint)
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
@@ -219,12 +254,30 @@ class CrystalRingView @JvmOverloads constructor(
             branchPath.lineTo(bx + dir * bl * 0.6f, by - bl * 0.25f)
             branchPath.lineTo(bx + dir * bl, by - bl * 0.55f)
         }
+
+        // Луна-полумесяц в небе над вершиной (символ «шёл весь день»).
+        val mcx = ww * 0.84f; val mcy = pad + inner * 0.10f; val mr = ww * 0.095f
+        moonPath.reset()
+        moonPath.moveTo(mcx, mcy - mr)
+        moonPath.quadTo(mcx - mr * 1.35f, mcy, mcx, mcy + mr)
+        moonPath.quadTo(mcx + mr * 0.35f, mcy, mcx, mcy - mr)
+        moonPath.close()
+
+        // Алмазы, вплавленные в склоны.
+        gemBody.clear(); gemDark.clear(); gemGlint.clear()
+        addGem(ww * 0.34f, pad + inner * 0.60f, ww * 0.055f, 0)
+        addGem(ww * 0.66f, pad + inner * 0.50f, ww * 0.050f, 1)
+        addGem(ww * 0.50f, pad + inner * 0.80f, ww * 0.060f, 2)
     }
 
     override fun onDraw(canvas: Canvas) {
         if (width == 0 || height == 0) return
         val bodyH = bodyBottom - bodyTop
         val tierH = bodyH / 5f
+
+        // Луна за горой (небо).
+        canvas.drawPath(moonPath, moonFillPaint)
+        canvas.drawPath(moonPath, moonStrokePaint)
 
         canvas.save()
         canvas.clipPath(mountainPath)
@@ -289,6 +342,13 @@ class CrystalRingView @JvmOverloads constructor(
                 canvas.restore()
             }
         }
+        // Алмазы на склонах (грани + блик).
+        for (i in gemBody.indices) {
+            canvas.drawPath(gemBody[i], gemLightPaint)
+            canvas.drawPath(gemDark[i], gemDarkPaint)
+            canvas.drawPath(gemGlint[i], gemGlintPaint)
+            canvas.drawPath(gemBody[i], gemEdgePaint)
+        }
         // Снежная шапка.
         fillPaint.color = snowColor; canvas.drawPath(snowPath, fillPaint)
 
@@ -304,6 +364,15 @@ class CrystalRingView @JvmOverloads constructor(
         // Жирный двойной контур: тёмная основа + яркий кант.
         canvas.drawPath(mountainPath, contourPaint)
         canvas.drawPath(mountainPath, kantPaint)
+
+        // Искры у алмазов (мерцают при заряде; иначе статичны).
+        val st = System.currentTimeMillis()
+        for (i in sparkX.indices) {
+            var tw = Math.sin(st * 0.004 + i * 2.1).toFloat(); tw = (tw + 1f) * 0.5f
+            sparkPaint.alpha = (70f + 160f * tw).toInt().coerceIn(0, 255)
+            sparkle(canvas, sparkX[i], sparkY[i], (2.5f + 1.5f * tw) * d)
+        }
+        sparkPaint.alpha = 255
 
         // Живая молния: перерисовка ~14 к/с, только пока есть заряд (батарея).
         if (storedTotal > 0) postInvalidateDelayed(70)
