@@ -75,6 +75,18 @@ class CrystalRingView @JvmOverloads constructor(
     private val facets = ArrayList<Pair<Path, Int>>()
     private var bodyTop = 0f
     private var bodyBottom = 0f
+    private val stairDim = 0xFF454F66.toInt()
+    private val stairLit = 0xFFB9C6DC.toInt()
+    private val stairPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
+    }
+    private val tickPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeWidth = 2f * d; strokeCap = Paint.Cap.ROUND
+    }
+    private val trailPath = Path()
+    private val tickPath = Path()
+    private var yTrailTop = 0f
+    private var yTrailBottom = 0f
 
     fun setData(walk: Int, run: Int, goal: Int, yesterdayTotal: Int) {
         storedTotal = walk + run
@@ -98,6 +110,13 @@ class CrystalRingView @JvmOverloads constructor(
         for (i in 1 until pts.size) p.lineTo(pts[i][0], pts[i][1])
         p.close()
         return p
+    }
+
+    /** X-координата ребра горы на высоте y (интерполяция по отрезку). */
+    private fun lerpX(y: Float, ax: Float, ay: Float, bx: Float, by: Float): Float {
+        if (Math.abs(by - ay) < 0.001f) return ax
+        val t = ((y - ay) / (by - ay)).coerceIn(0f, 1f)
+        return ax + (bx - ax) * t
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
@@ -146,6 +165,42 @@ class CrystalRingView @JvmOverloads constructor(
         edges.reset()
         edges.moveTo(peak[0], peak[1]); edges.lineTo(sa[0], sa[1]); edges.lineTo(mb[0], mb[1])
         edges.moveTo(ls[0], ls[1]); edges.lineTo(sa[0], sa[1]); edges.lineTo(rs[0], rs[1])
+
+        // Зигзаг-тропа: 5 пролётов (×5), сужается к вершине; со ступенями.
+        val inset = ww * 0.14f
+        yTrailBottom = bodyBottom - inner * 0.04f
+        yTrailTop = pad + inner * 0.30f
+        trailPath.reset(); tickPath.reset()
+        var prevX = 0f; var prevY = 0f
+        val flights = 5
+        for (k in 0..flights) {
+            val ty = yTrailBottom - (yTrailBottom - yTrailTop) * (k.toFloat() / flights)
+            val lx = if (ty < ls[1]) lerpX(ty, peak[0], peak[1], ls[0], ls[1])
+                     else lerpX(ty, ls[0], ls[1], lb[0], lb[1])
+            val rx = if (ty < rs[1]) lerpX(ty, peak[0], peak[1], rs[0], rs[1])
+                     else lerpX(ty, rs[0], rs[1], rb[0], rb[1])
+            var leftB = lx + inset; var rightB = rx - inset
+            if (rightB < leftB) { val m = (lx + rx) / 2f; leftB = m; rightB = m }
+            val tx = if (k % 2 == 0) leftB else rightB
+            if (k == 0) {
+                trailPath.moveTo(tx, ty)
+            } else {
+                trailPath.lineTo(tx, ty)
+                val dx = tx - prevX; val dy = ty - prevY
+                val len = Math.hypot(dx.toDouble(), dy.toDouble()).toFloat()
+                if (len > 0.001f) {
+                    val nx = -dy / len; val ny = dx / len
+                    val tick = 4f * d
+                    for (st in 1..3) {
+                        val f = st / 4f
+                        val mx = prevX + dx * f; val my = prevY + dy * f
+                        tickPath.moveTo(mx - nx * tick, my - ny * tick)
+                        tickPath.lineTo(mx + nx * tick, my + ny * tick)
+                    }
+                }
+            }
+            prevX = tx; prevY = ty
+        }
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -181,6 +236,25 @@ class CrystalRingView @JvmOverloads constructor(
 
         // Рёбра граней поверх заливки (объём читается).
         canvas.drawPath(edges, edgePaint)
+
+        // Зигзаг-лестницы ×5: тусклые по всей горе, горящие снизу до прогресса.
+        run {
+            val p01 = ((storedLap + storedFrac) / 5f).coerceIn(0f, 1f)
+            val litY = yTrailBottom - (yTrailBottom - yTrailTop) * p01
+            stairPaint.color = stairDim; stairPaint.strokeWidth = 3.5f * d
+            canvas.drawPath(trailPath, stairPaint)
+            tickPaint.color = stairDim
+            canvas.drawPath(tickPath, tickPaint)
+            if (p01 > 0f) {
+                canvas.save()
+                canvas.clipRect(0f, litY, width.toFloat(), bodyBottom + 2f * d)
+                stairPaint.color = stairLit
+                canvas.drawPath(trailPath, stairPaint)
+                tickPaint.color = stairLit
+                canvas.drawPath(tickPath, tickPaint)
+                canvas.restore()
+            }
+        }
         // Снежная шапка.
         fillPaint.color = snowColor; canvas.drawPath(snowPath, fillPaint)
 
