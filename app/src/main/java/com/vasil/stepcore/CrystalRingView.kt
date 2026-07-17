@@ -2,69 +2,77 @@ package com.vasil.stepcore
 
 import android.content.Context
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.Path
-import android.graphics.RectF
 import android.util.AttributeSet
 import android.view.View
 import androidx.core.content.ContextCompat
 
 /**
- * Кристалл прогресса (V13.0) — замена ProgressRingView на главном экране.
+ * Кристалл-гора прогресса (Этап 3a).
  *
- * Круг в квадратной области теряет ~21% площади по углам; вытянутый
- * гранёный кристалл встаёт в ту же область плотнее и освобождает место
- * сбоку под текстовый блок (было: цифры теснились ВНУТРИ круга и
- * переполняли его при росте чисел).
+ * Гранёная гора с цел-шейдингом: грани разной яркости (свет сверху-слева)
+ * дают объём вместо плоской заливки; снежная шапка на вершине; жирный
+ * двойной контур (тёмная основа + яркий кант) в анимешном ключе.
  *
- * Данные и их смысл НЕ меняются относительно ProgressRingView: ходьба
- * (синяя часть) + бег (красная часть) делят текущую сумму по доле,
- * прогресс считается относительно дневной цели, до 5 витков цели
- * учитывается. Меняется только ПРЕДСТАВЛЕНИЕ: прежде витки читались по
- * насыщенности цвета и ряду точек под центром - сравнивать оттенки на
- * глаз не всегда очевидно. Здесь виток = горизонтальный ярус, который
- * заливается снизу вверх - заполненный уровень читается однозначно,
- * без сравнения цветов.
+ * Данные и смысл НЕ меняются: ходьба (синяя энергия) + бег (красная)
+ * заряжают гору снизу вверх; прогресс учитывается до 5 целей (×5) как
+ * пять ярусов высоты. Меняется только представление.
  *
- * Дополнение: пунктирная линия внутри кристалла - вчерашний итог на
- * той же вертикальной шкале (0 .. 5 целей). Заливка выше линии -
- * сегодня уже обогнали вчера на эту же минуту.
+ * Зигзаг-лестницы (3b), молния по ним (3c) и алмазы с бликами + луна (3d)
+ * добавляются следующими под-этапами поверх этой формы.
  */
 class CrystalRingView @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null, defStyle: Int = 0
 ) : View(context, attrs, defStyle) {
 
-    // Посчитано один раз в setData(), onDraw() только читает - единый
-    // источник истины для отрисовки И для currentLap() снаружи.
-    private var storedLap = 0        // 0..4: сколько ярусов залито ПОЛНОСТЬЮ
-    private var storedFrac = 0f      // 0..1: заливка текущего яруса
-    private var storedWShare = 0f    // 0..1: доля ходьбы в сегодняшней сумме
+    private var storedLap = 0
+    private var storedFrac = 0f
+    private var storedWShare = 0f
     private var storedTotal = 0
     private var storedGoal = 10000
     private var storedYesterday = 0
-    private var badgeLap = 0         // целых целей пройдено сегодня (для бейджа "×N")
+    private var badgeLap = 0
 
     private val d = resources.displayMetrics.density
-    private val outlineW = 2f * d
 
-    private val baseBlue = ContextCompat.getColor(context, R.color.accent_blue)
-    private val baseRed = ContextCompat.getColor(context, R.color.accent_red)
+    // Палитра камня (цел-шейдинг, свет сверху-слева -> лево светлее).
+    private val stoneLit = 0xFF6D7F98.toInt()
+    private val stoneMid = 0xFF58697F.toInt()
+    private val stoneShadow = 0xFF33415A.toInt()
+    private val stoneDark = 0xFF28344A.toInt()
+    private val snowColor = 0xFFE6EEFA.toInt()
+    private val edgeColor = 0xFF111C30.toInt()
+    private val contourDark = 0xFF080A14.toInt()
+    private val kantColor = ContextCompat.getColor(context, R.color.accent_violet_bright)
+    private val energyBlue = ContextCompat.getColor(context, R.color.accent_blue)
+    private val energyRed = ContextCompat.getColor(context, R.color.accent_red)
 
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
-    private val outlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE; strokeWidth = outlineW
-        color = ContextCompat.getColor(context, R.color.surface2)
+    private val edgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeWidth = 1.4f * d; color = edgeColor
+        strokeJoin = Paint.Join.ROUND
+    }
+    private val contourPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeWidth = 5.5f * d
+        strokeJoin = Paint.Join.ROUND; color = contourDark
+    }
+    private val kantPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeWidth = 2.4f * d
+        strokeJoin = Paint.Join.ROUND; color = kantColor
     }
     private val ghostPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeWidth = 1.2f * d
-        color = ContextCompat.getColor(context, R.color.text_main)
-        alpha = 140
+        color = ContextCompat.getColor(context, R.color.text_main); alpha = 130
         pathEffect = DashPathEffect(floatArrayOf(6f * d, 5f * d), 0f)
     }
 
-    private val gemPath = Path()
-    private val tierRect = RectF()
+    private val mountainPath = Path()
+    private val snowPath = Path()
+    private val edges = Path()
+    private val facets = ArrayList<Pair<Path, Int>>()
     private var bodyTop = 0f
     private var bodyBottom = 0f
 
@@ -81,28 +89,63 @@ class CrystalRingView @JvmOverloads constructor(
         invalidate()
     }
 
-    /** Сколько целей ПОЛНОСТЬЮ пройдено сегодня. 0 = цель ещё не закрыта ни разу. */
+    /** Сколько целей ПОЛНОСТЬЮ пройдено сегодня (для бейджа ×N). */
     fun currentLap(): Int = badgeLap
+
+    private fun facet(vararg pts: FloatArray): Path {
+        val p = Path()
+        p.moveTo(pts[0][0], pts[0][1])
+        for (i in 1 until pts.size) p.lineTo(pts[i][0], pts[i][1])
+        p.close()
+        return p
+    }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         if (w <= 0 || h <= 0) return
-        val pad = outlineW + 2f * d
-        val w2 = w / 2f
+        val pad = contourPaint.strokeWidth * 0.5f + 1f * d
         bodyTop = pad
         bodyBottom = h - pad
-        // Пропорции грани подобраны визуально под вытянутый кристалл -
-        // это форма, не измеренный порог; в отличие от порогов детектора
-        // здесь нет "правильного" числа, есть только силуэт.
-        val upperY = pad + (h - 2 * pad) * 0.24f
-        val lowerY = pad + (h - 2 * pad) * 0.86f
-        val halfW = w2 - pad
-        val gx = floatArrayOf(w2, w2 + halfW, w2 + halfW * 0.86f, w2, w2 - halfW * 0.86f, w2 - halfW)
-        val gy = floatArrayOf(bodyTop, upperY, lowerY, bodyBottom, lowerY, upperY)
-        gemPath.reset()
-        gemPath.moveTo(gx[0], gy[0])
-        for (i in 1 until 6) gemPath.lineTo(gx[i], gy[i])
-        gemPath.close()
+        val ww = w.toFloat(); val hh = h.toFloat()
+        val inner = hh - 2 * pad
+        val peakX = ww * 0.52f
+
+        // Ключевые точки силуэта. Это ФОРМА (силуэт), а не измеренный порог:
+        // «правильного» числа нет, есть только читаемая гора.
+        val peak = floatArrayOf(peakX, pad)
+        val ls = floatArrayOf(ww * 0.28f, pad + inner * 0.42f)
+        val rs = floatArrayOf(ww * 0.74f, pad + inner * 0.34f)
+        val sa = floatArrayOf(peakX, pad + inner * 0.56f)
+        val lb = floatArrayOf(pad, bodyBottom)
+        val rb = floatArrayOf(ww - pad, bodyBottom)
+        val mb = floatArrayOf(peakX, bodyBottom)
+
+        mountainPath.reset()
+        mountainPath.moveTo(peak[0], peak[1])
+        mountainPath.lineTo(rs[0], rs[1])
+        mountainPath.lineTo(rb[0], rb[1])
+        mountainPath.lineTo(lb[0], lb[1])
+        mountainPath.lineTo(ls[0], ls[1])
+        mountainPath.close()
+
+        facets.clear()
+        facets.add(facet(peak, ls, sa) to stoneLit)
+        facets.add(facet(peak, sa, rs) to stoneShadow)
+        facets.add(facet(ls, lb, mb, sa) to stoneMid)
+        facets.add(facet(sa, mb, rb, rs) to stoneDark)
+
+        val capL = floatArrayOf(peakX - ww * 0.10f, pad + inner * 0.13f)
+        val capR = floatArrayOf(peakX + ww * 0.10f, pad + inner * 0.12f)
+        snowPath.reset()
+        snowPath.moveTo(peak[0], peak[1])
+        snowPath.lineTo(capR[0], capR[1])
+        snowPath.lineTo(peakX, pad + inner * 0.18f)
+        snowPath.lineTo(capL[0], capL[1])
+        snowPath.close()
+
+        edges.reset()
+        edges.moveTo(peak[0], peak[1]); edges.lineTo(sa[0], sa[1]); edges.lineTo(mb[0], mb[1])
+        edges.moveTo(ls[0], ls[1]); edges.lineTo(sa[0], sa[1]); edges.lineTo(rs[0], rs[1])
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -111,32 +154,47 @@ class CrystalRingView @JvmOverloads constructor(
         val tierH = bodyH / 5f
 
         canvas.save()
-        canvas.clipPath(gemPath)
+        canvas.clipPath(mountainPath)
 
+        // Камень (цел-шейдинг граней).
+        for ((path, col) in facets) {
+            fillPaint.color = col; fillPaint.alpha = 255
+            canvas.drawPath(path, fillPaint)
+        }
+
+        // Энергия прогресса: полупрозрачная заливка снизу вверх, ходьба
+        // (синяя) слева, бег (красный) справа по доле. Камень видно сквозь.
         if (storedTotal > 0) {
+            val splitX = width * storedWShare
             for (i in 0..storedLap) {
                 val fillFrac = if (i < storedLap) 1f else storedFrac
                 if (fillFrac <= 0f) continue
-                val tierBottom = bodyBottom - i * tierH
-                val tierTop = tierBottom - tierH * fillFrac
-                val splitX = width * storedWShare
-                tierRect.set(0f, tierTop, splitX, tierBottom)
-                fillPaint.color = baseBlue
-                canvas.drawRect(tierRect, fillPaint)
-                tierRect.set(splitX, tierTop, width.toFloat(), tierBottom)
-                fillPaint.color = baseRed
-                canvas.drawRect(tierRect, fillPaint)
+                val tb = bodyBottom - i * tierH
+                val tt = tb - tierH * fillFrac
+                fillPaint.color = energyBlue; fillPaint.alpha = 115
+                canvas.drawRect(0f, tt, splitX, tb, fillPaint)
+                fillPaint.color = energyRed; fillPaint.alpha = 115
+                canvas.drawRect(splitX, tt, width.toFloat(), tb, fillPaint)
             }
+            fillPaint.alpha = 255
         }
 
+        // Рёбра граней поверх заливки (объём читается).
+        canvas.drawPath(edges, edgePaint)
+        // Снежная шапка.
+        fillPaint.color = snowColor; canvas.drawPath(snowPath, fillPaint)
+
+        // Вчерашний уровень на той же шкале (0..5 целей).
         if (storedYesterday > 0) {
-            val totalGoal5 = storedGoal * 5
-            val yFrac = (storedYesterday.toFloat() / totalGoal5).coerceIn(0f, 1f)
+            val yFrac = (storedYesterday.toFloat() / (storedGoal * 5)).coerceIn(0f, 1f)
             val yY = bodyBottom - bodyH * yFrac
             canvas.drawLine(0f, yY, width.toFloat(), yY, ghostPaint)
         }
 
         canvas.restore()
-        canvas.drawPath(gemPath, outlinePaint)
+
+        // Жирный двойной контур: тёмная основа + яркий кант.
+        canvas.drawPath(mountainPath, contourPaint)
+        canvas.drawPath(mountainPath, kantPaint)
     }
 }
