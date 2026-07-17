@@ -87,6 +87,12 @@ class CrystalRingView @JvmOverloads constructor(
     private val tickPath = Path()
     private var yTrailTop = 0f
     private var yTrailBottom = 0f
+    private val trailX = FloatArray(6)
+    private val trailY = FloatArray(6)
+    private val branchPath = Path()
+    private val lightPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
+    }
 
     fun setData(walk: Int, run: Int, goal: Int, yesterdayTotal: Int) {
         storedTotal = walk + run
@@ -199,7 +205,19 @@ class CrystalRingView @JvmOverloads constructor(
                     }
                 }
             }
+            trailX[k] = tx; trailY[k] = ty
             prevX = tx; prevY = ty
+        }
+
+        // Короткие ветви-искры в поворотах тропы (мерцают в onDraw).
+        branchPath.reset()
+        for (k in 1 until flights) {
+            val bx = trailX[k]; val by = trailY[k]
+            val dir = if (bx < peakX) -1f else 1f
+            val bl = ww * 0.10f
+            branchPath.moveTo(bx, by)
+            branchPath.lineTo(bx + dir * bl * 0.6f, by - bl * 0.25f)
+            branchPath.lineTo(bx + dir * bl, by - bl * 0.55f)
         }
     }
 
@@ -252,6 +270,22 @@ class CrystalRingView @JvmOverloads constructor(
                 canvas.drawPath(trailPath, stairPaint)
                 tickPaint.color = stairLit
                 canvas.drawPath(tickPath, tickPaint)
+
+                // Молния «светит путь»: слоистое свечение + белое ядро (пульс).
+                val tms = System.currentTimeMillis()
+                val pulse = 0.55f + 0.45f * Math.sin(tms * 0.006).toFloat()
+                lightPaint.color = 0xFFFFC94D.toInt()
+                lightPaint.strokeWidth = 7f * d; lightPaint.alpha = (55f * pulse).toInt().coerceIn(0, 255)
+                canvas.drawPath(trailPath, lightPaint)
+                lightPaint.strokeWidth = 4f * d; lightPaint.alpha = (100f * pulse).toInt().coerceIn(0, 255)
+                canvas.drawPath(trailPath, lightPaint)
+                lightPaint.color = 0xFFFFFFFF.toInt(); lightPaint.strokeWidth = 1.8f * d
+                lightPaint.alpha = (150f + 90f * (pulse - 0.55f)).toInt().coerceIn(0, 255)
+                canvas.drawPath(trailPath, lightPaint)
+                var flick = Math.sin(tms * 0.02).toFloat(); if (flick < 0f) flick = 0f
+                lightPaint.color = 0xFFFFD98A.toInt(); lightPaint.strokeWidth = 1.6f * d
+                lightPaint.alpha = (50f + 130f * flick).toInt().coerceIn(0, 255)
+                canvas.drawPath(branchPath, lightPaint)
                 canvas.restore()
             }
         }
@@ -270,5 +304,8 @@ class CrystalRingView @JvmOverloads constructor(
         // Жирный двойной контур: тёмная основа + яркий кант.
         canvas.drawPath(mountainPath, contourPaint)
         canvas.drawPath(mountainPath, kantPaint)
+
+        // Живая молния: перерисовка ~14 к/с, только пока есть заряд (батарея).
+        if (storedTotal > 0) postInvalidateDelayed(70)
     }
 }
