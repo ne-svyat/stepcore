@@ -744,6 +744,15 @@ class DoodleSceneView @JvmOverloads constructor(
         style = Paint.Style.STROKE; strokeJoin = Paint.Join.ROUND; strokeCap = Paint.Cap.ROUND
         strokeWidth = 2f * resources.displayMetrics.density; alpha = 175
     }
+    private val skyFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val skyOutline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeJoin = Paint.Join.ROUND; strokeCap = Paint.Cap.ROUND
+        strokeWidth = 2f * resources.displayMetrics.density; alpha = 170
+    }
+    private val rayPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND
+        strokeWidth = 2.4f * resources.displayMetrics.density
+    }
     private val onTick: () -> Unit = { invalidate() }
 
     override fun onAttachedToWindow() {
@@ -890,6 +899,67 @@ class DoodleSceneView @JvmOverloads constructor(
         }
         mtFill.alpha = 255
     }
+
+    private fun moonRich(c: Canvas, cx: Float, cy: Float, r: Float, w: Wobble, tint: Int) {
+        val lit = lightenC(tint, 0.55f)
+        val dark = darkenC(tint, 0.35f)
+        val gl = 0.6f + 0.4f * kotlin.math.sin((BoilClock.phase * 0.8f).toDouble()).toFloat()
+        skyFill.color = tint
+        skyFill.alpha = (26f * gl).toInt().coerceIn(0, 255); c.drawCircle(cx, cy, r * 1.9f, skyFill)
+        skyFill.alpha = (44f * gl).toInt().coerceIn(0, 255); c.drawCircle(cx, cy, r * 1.35f, skyFill)
+        val cres = Path()
+        cres.moveTo(cx, cy - r)
+        cres.quadTo(cx - r * 1.3f, cy, cx, cy + r)
+        cres.quadTo(cx + r * 0.4f, cy, cx, cy - r)
+        cres.close()
+        skyFill.color = lit; skyFill.alpha = 235; c.drawPath(cres, skyFill)
+        skyFill.color = darkenC(lit, 0.14f); skyFill.alpha = 150
+        c.drawCircle(cx - r * 0.5f, cy - r * 0.15f, r * 0.15f, skyFill)
+        c.drawCircle(cx - r * 0.32f, cy + r * 0.32f, r * 0.10f, skyFill)
+        skyOutline.color = dark; Doodle.ink(c, cres, skyOutline, 0.6f * d)
+        skyFill.alpha = 255
+    }
+
+    private fun sunRich(c: Canvas, cx: Float, cy: Float, r: Float, w: Wobble, tint: Int) {
+        val lit = lightenC(tint, 0.30f)
+        val core = lightenC(tint, 0.65f)
+        val dark = darkenC(tint, 0.30f)
+        val rot = BoilClock.phase * 0.18f
+        rayPaint.color = lit; rayPaint.alpha = 150
+        for (k in 0 until 10) {
+            val a = rot + k * (Math.PI.toFloat() * 2f / 10f)
+            val len = 1.7f + 0.25f * kotlin.math.sin((BoilClock.phase * 1.4f + k).toDouble()).toFloat()
+            c.drawLine(
+                cx + r * 1.25f * kotlin.math.cos(a.toDouble()).toFloat(),
+                cy + r * 1.25f * kotlin.math.sin(a.toDouble()).toFloat(),
+                cx + r * len * kotlin.math.cos(a.toDouble()).toFloat(),
+                cy + r * len * kotlin.math.sin(a.toDouble()).toFloat(), rayPaint)
+        }
+        skyFill.color = lit; skyFill.alpha = 225; c.drawCircle(cx, cy, r, skyFill)
+        skyFill.color = core; skyFill.alpha = 200; c.drawCircle(cx - r * 0.25f, cy - r * 0.25f, r * 0.5f, skyFill)
+        val disc = Path(); disc.addCircle(cx, cy, r, Path.Direction.CW)
+        skyOutline.color = dark; Doodle.ink(c, disc, skyOutline, 0.6f * d)
+        skyFill.alpha = 255
+    }
+
+    private fun cloudRich(c: Canvas, cx: Float, cy: Float, s: Float, w: Wobble, tint: Int) {
+        val lit = lightenC(tint, 0.30f)
+        val dark = darkenC(tint, 0.28f)
+        val puff = Path()
+        puff.moveTo(cx - s * 1.4f, cy)
+        puff.quadTo(cx - s * 1.4f, cy - s * 0.7f, cx - s * 0.7f, cy - s * 0.75f)
+        puff.quadTo(cx - s * 0.5f, cy - s * 1.15f, cx, cy - s * 1.0f)
+        puff.quadTo(cx + s * 0.5f, cy - s * 1.2f, cx + s * 0.8f, cy - s * 0.72f)
+        puff.quadTo(cx + s * 1.4f, cy - s * 0.7f, cx + s * 1.4f, cy)
+        puff.close()
+        c.save(); c.clipPath(puff)
+        skyFill.color = lit; skyFill.alpha = 150; c.drawPath(puff, skyFill)
+        skyFill.color = dark; skyFill.alpha = 85
+        c.drawRect(cx - s * 1.6f, cy - s * 0.32f, cx + s * 1.6f, cy + s * 0.2f, skyFill)
+        c.restore()
+        skyOutline.color = dark; Doodle.ink(c, puff, skyOutline, 0.6f * d)
+        skyFill.alpha = 255
+    }
     private fun fill(c: Int, a: Int = DECOR_ALPHA) = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL; color = c; alpha = a
     }
@@ -933,13 +1003,11 @@ class DoodleSceneView @JvmOverloads constructor(
     /** Облака, плывущие по петле: ушло за правый край - вошло слева. */
     private fun drifting(c: Canvas, w: Float, h: Float, r: Wobble, color: Int,
                          specs: List<Triple<Float, Float, Float>>) {
-        val sky = Path()
         for ((yFrac, sizeFrac, period) in specs) {
             val margin = w * 0.25f
             val x = -margin + (w + 2 * margin) * loop(period, yFrac)
-            Doodle.cloud(sky, x, h * yFrac, h * sizeFrac, r)
+            cloudRich(c, x, h * yFrac, h * sizeFrac, r, color)
         }
-        Doodle.ink(c, sky, stroke(color, 2f), 0.8f * d)
     }
 
     private fun stars(c: Canvas, color: Int, pts: List<Triple<Float, Float, Float>>,
@@ -962,16 +1030,12 @@ class DoodleSceneView @JvmOverloads constructor(
         firRich(c, w * 0.78f, base, h * 0.34f, r)
         drifting(c, w, h, r, violet, listOf(
             Triple(0.22f, 0.13f, 26f), Triple(0.14f, 0.09f, 34f)))
-        val mn = Path()
-        Doodle.moon(mn, w * 0.92f, h * 0.26f, h * 0.16f, r)
-        Doodle.ink(c, mn, stroke(amberBr, 2f), 0.8f * d)
+        moonRich(c, w * 0.92f, h * 0.26f, h * 0.16f, r, amberBr)
         stars(c, blueBr, listOf(Triple(0.44f, 0.18f, 0.08f), Triple(0.86f, 0.70f, 0.06f)), w, h, r)
     }
 
     private fun drawNight(c: Canvas, w: Float, h: Float, r: Wobble) {
-        val mn = Path()
-        Doodle.moon(mn, w * 0.80f, h * 0.16f, h * 0.11f, r)
-        Doodle.ink(c, mn, stroke(violetBr, 2f), 0.8f * d)
+        moonRich(c, w * 0.80f, h * 0.16f, h * 0.11f, r, violetBr)
         stars(c, blueBr, listOf(Triple(0.68f, 0.09f, 0.045f), Triple(0.92f, 0.36f, 0.04f)), w, h, r)
         dotPaint.color = violetBr
         c.drawCircle(w * 0.70f, h * 0.30f, 1.8f * d, dotPaint)
@@ -980,9 +1044,7 @@ class DoodleSceneView @JvmOverloads constructor(
     /** Солнце СИЯЕТ: лучи мерно удлиняются и укорачиваются. */
     private fun drawDay(c: Canvas, w: Float, h: Float, r: Wobble) {
         val k = 0.9f + 0.18f * sin((BoilClock.phase * 1.3f).toDouble()).toFloat()
-        val sn = Path()
-        Doodle.sun(sn, w * 0.82f, h * 0.15f, h * 0.06f * k, r)
-        Doodle.ink(c, sn, stroke(amber, 2f, (DECOR_ALPHA * (0.8f + 0.2f * k)).toInt()), 0.8f * d)
+        sunRich(c, w * 0.82f, h * 0.15f, h * 0.06f * k, r, amber)
         firRich(c, w * 0.93f, h * 0.98f, h * 0.20f, r)
         dotPaint.color = amberBr
         c.drawCircle(w * 0.62f, h * 0.10f, 1.8f * d, dotPaint)
@@ -1083,9 +1145,7 @@ class DoodleSceneView @JvmOverloads constructor(
     private fun drawTimeline(c: Canvas, w: Float, h: Float, r: Wobble) {
         val base = h * 0.92f
         val k = 0.9f + 0.2f * sin((BoilClock.phase * 1.1f).toDouble()).toFloat()
-        val sn = Path()
-        Doodle.sun(sn, w * 0.60f, h * 0.26f, h * 0.13f * k, r)
-        Doodle.ink(c, sn, stroke(amber, 2f, (DECOR_ALPHA * (0.8f + 0.2f * k)).toInt()), 0.8f * d)
+        sunRich(c, w * 0.60f, h * 0.26f, h * 0.13f * k, r, amber)
         drifting(c, w, h, r, violet, listOf(
             Triple(0.20f, 0.12f, 22f), Triple(0.34f, 0.09f, 31f)))
         val sp = Path()
