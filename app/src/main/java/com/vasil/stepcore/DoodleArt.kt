@@ -201,6 +201,16 @@ internal object Doodle {
     }
 
     /** Четырёхлучевая искра - фирменный элемент стиля. */
+    /**
+     * Каллиграфический нажим (Этап 2). Копия штриха со сдвигом по оси пера:
+     * линии поперёк оси выходят толще, вдоль - тоньше. Эффект широкого пера,
+     * живая переменная толщина вместо ровной нитки.
+     */
+    fun ink(c: Canvas, path: Path, paint: Paint, nib: Float) {
+        c.save(); c.translate(nib, nib); c.drawPath(path, paint); c.restore()
+        c.drawPath(path, paint)
+    }
+
     fun star(p: Path, cx: Float, cy: Float, r: Float, w: Wobble) {
         val k = r * 0.32f
         poly(p, floatArrayOf(
@@ -593,7 +603,7 @@ class DoodleBorderDrawable(
         canvas.save(); canvas.translate(off, off); canvas.drawPath(p, shPaint); canvas.restore()
         canvas.save(); canvas.translate(-off, -off); canvas.drawPath(p, hiPaint); canvas.restore()
         if (fillColor != Color.TRANSPARENT) canvas.drawPath(p, fillPaint)
-        canvas.drawPath(p, strokePaint)
+        Doodle.ink(canvas, p, strokePaint, 0.8f * d)
     }
 
     /** Осветление цвета к белому на долю t - для светлого канта резьбы. */
@@ -803,7 +813,7 @@ class DoodleSceneView @JvmOverloads constructor(
             val x = -margin + (w + 2 * margin) * loop(period, yFrac)
             Doodle.cloud(sky, x, h * yFrac, h * sizeFrac, r)
         }
-        c.drawPath(sky, stroke(color, 2f))
+        Doodle.ink(c, sky, stroke(color, 2f), 0.8f * d)
     }
 
     private fun stars(c: Canvas, color: Int, pts: List<Triple<Float, Float, Float>>,
@@ -813,7 +823,7 @@ class DoodleSceneView @JvmOverloads constructor(
             val k = twinkle(i * 1.9f)
             val path = Path()
             Doodle.star(path, w * xf, h * yf, h * rf * k, r)
-            c.drawPath(path, stroke(color, 2f, (DECOR_ALPHA * k).toInt()))
+            Doodle.ink(c, path, stroke(color, 2f, (DECOR_ALPHA * k).toInt()), 0.8f * d)
         }
     }
 
@@ -821,25 +831,25 @@ class DoodleSceneView @JvmOverloads constructor(
         val base = h * 0.95f
         val mt = Path(); val snow = Path()
         Doodle.mountains(mt, snow, w * 0.30f, base, w * 0.40f, h * 0.62f, r)
-        c.drawPath(mt, stroke(violet, 2f)); c.drawPath(snow, stroke(violetBr, 1f))
+        Doodle.ink(c, mt, stroke(violet, 2f), 0.8f * d); Doodle.ink(c, snow, stroke(violetBr, 1f), 0.8f * d)
         val trees = Path()
         Doodle.fir(trees, w * 0.06f, base, h * 0.52f, r)
         Doodle.fir(trees, w * 0.14f, base, h * 0.40f, r)
         Doodle.fir(trees, w * 0.72f, base, h * 0.45f, r)
         Doodle.fir(trees, w * 0.78f, base, h * 0.34f, r)
-        c.drawPath(trees, stroke(teal, 2f))
+        Doodle.ink(c, trees, stroke(teal, 2f), 0.8f * d)
         drifting(c, w, h, r, violet, listOf(
             Triple(0.22f, 0.13f, 26f), Triple(0.14f, 0.09f, 34f)))
         val mn = Path()
         Doodle.moon(mn, w * 0.92f, h * 0.26f, h * 0.16f, r)
-        c.drawPath(mn, stroke(amberBr, 2f))
+        Doodle.ink(c, mn, stroke(amberBr, 2f), 0.8f * d)
         stars(c, blueBr, listOf(Triple(0.44f, 0.18f, 0.08f), Triple(0.86f, 0.70f, 0.06f)), w, h, r)
     }
 
     private fun drawNight(c: Canvas, w: Float, h: Float, r: Wobble) {
         val mn = Path()
         Doodle.moon(mn, w * 0.80f, h * 0.16f, h * 0.11f, r)
-        c.drawPath(mn, stroke(violetBr, 2f))
+        Doodle.ink(c, mn, stroke(violetBr, 2f), 0.8f * d)
         stars(c, blueBr, listOf(Triple(0.68f, 0.09f, 0.045f), Triple(0.92f, 0.36f, 0.04f)), w, h, r)
         dotPaint.color = violetBr
         c.drawCircle(w * 0.70f, h * 0.30f, 1.8f * d, dotPaint)
@@ -850,10 +860,10 @@ class DoodleSceneView @JvmOverloads constructor(
         val k = 0.9f + 0.18f * sin((BoilClock.phase * 1.3f).toDouble()).toFloat()
         val sn = Path()
         Doodle.sun(sn, w * 0.82f, h * 0.15f, h * 0.06f * k, r)
-        c.drawPath(sn, stroke(amber, 2f, (DECOR_ALPHA * (0.8f + 0.2f * k)).toInt()))
+        Doodle.ink(c, sn, stroke(amber, 2f, (DECOR_ALPHA * (0.8f + 0.2f * k)).toInt()), 0.8f * d)
         val trees = Path()
         Doodle.fir(trees, w * 0.93f, h * 0.98f, h * 0.20f, r)
-        c.drawPath(trees, stroke(tealBr, 2f))
+        Doodle.ink(c, trees, stroke(tealBr, 2f), 0.8f * d)
         dotPaint.color = amberBr
         c.drawCircle(w * 0.62f, h * 0.10f, 1.8f * d, dotPaint)
     }
@@ -863,7 +873,7 @@ class DoodleSceneView @JvmOverloads constructor(
         val base = h * 0.90f
         val tn = Path()
         Doodle.tent(tn, w * 0.62f, base, w * 0.13f, h * 0.42f, r)
-        c.drawPath(tn, stroke(violetBr, 2f))
+        Doodle.ink(c, tn, stroke(violetBr, 2f), 0.8f * d)
         // Пламя живёт: высота гуляет двумя несинхронными волнами, поэтому
         // не выглядит механическим маятником.
         val ph = BoilClock.phase
@@ -871,8 +881,8 @@ class DoodleSceneView @JvmOverloads constructor(
                     0.16f * sin((ph * 8.7f + 1.3f).toDouble()).toFloat()
         val logs = Path(); val flame = Path()
         Doodle.fire(logs, flame, w * 0.72f, base, h * 0.09f * flick, r)
-        c.drawPath(logs, stroke(ember, 2f))
-        c.drawPath(flame, stroke(amber, 2f, (DECOR_ALPHA * (0.75f + 0.25f * flick)).toInt()))
+        Doodle.ink(c, logs, stroke(ember, 2f), 0.8f * d)
+        Doodle.ink(c, flame, stroke(amber, 2f, (DECOR_ALPHA * (0.75f + 0.25f * flick)).toInt()), 0.8f * d)
         // искры над костром
         for (i in 0 until 3) {
             val t = loop(2.2f, i * 0.33f)
@@ -886,14 +896,14 @@ class DoodleSceneView @JvmOverloads constructor(
         val trees = Path()
         Doodle.fir(trees, w * 0.55f, base, h * 0.30f, r)
         Doodle.fir(trees, w * 0.97f, base, h * 0.28f, r)
-        c.drawPath(trees, stroke(teal, 2f))
+        Doodle.ink(c, trees, stroke(teal, 2f), 0.8f * d)
         val mt = Path(); val snow = Path()
         Doodle.mountains(mt, snow, w * 0.78f, base, w * 0.18f, h * 0.36f, r)
-        c.drawPath(mt, stroke(tint, 2f)); c.drawPath(snow, stroke(tintBr, 1f))
+        Doodle.ink(c, mt, stroke(tint, 2f), 0.8f * d); Doodle.ink(c, snow, stroke(tintBr, 1f), 0.8f * d)
         val trail = Path()
         Doodle.line(trail, w * 0.66f, base + 3f * d, w * 0.74f, base - 2f * d, 1.2f, 6, r)
         Doodle.line(trail, w * 0.74f, base - 2f * d, w * 0.80f, base + 2f * d, 1.2f, 6, r)
-        c.drawPath(trail, stroke(tint, 1f))
+        Doodle.ink(c, trail, stroke(tint, 1f), 0.8f * d)
         stars(c, tintBr, listOf(Triple(0.88f, 0.16f, 0.10f)), w, h, r)
     }
 
@@ -911,13 +921,13 @@ class DoodleSceneView @JvmOverloads constructor(
 
         val doc = Path(); val photo = Path(); val bars = Path()
         Doodle.passport(doc, photo, bars, cx, cy, dw, dh, r)
-        c.drawPath(doc, stroke(violet, 2f))
-        c.drawPath(photo, stroke(violetBr, 1.4f))
+        Doodle.ink(c, doc, stroke(violet, 2f), 0.8f * d)
+        Doodle.ink(c, photo, stroke(violetBr, 1.4f), 0.8f * d)
         c.drawPath(bars, fill(violetBr, 150))
 
         val corners = Path()
         Doodle.scanCorners(corners, cx, cy, dw, dh, 10f * d)
-        c.drawPath(corners, stroke(red, 2f, 190))
+        Doodle.ink(c, corners, stroke(red, 2f, 190), 0.8f * d)
 
         // Луч сканера: идёт сверху вниз за 3 с, следом гаснущий шлейф.
         val t = loop(3f, 0f)
@@ -945,14 +955,14 @@ class DoodleSceneView @JvmOverloads constructor(
         val base = h * 0.92f
         val mt = Path(); val snow = Path()
         Doodle.mountains(mt, snow, w * 0.46f, base, w * 0.46f, h * 0.72f, r)
-        c.drawPath(mt, stroke(blue, 2f)); c.drawPath(snow, stroke(blueBr, 1f))
+        Doodle.ink(c, mt, stroke(blue, 2f), 0.8f * d); Doodle.ink(c, snow, stroke(blueBr, 1f), 0.8f * d)
         val rv = Path()
         Doodle.river(rv, w * 0.05f, h * 0.72f, w * 0.60f, base, r)
-        c.drawPath(rv, stroke(blueBr, 2f))
+        Doodle.ink(c, rv, stroke(blueBr, 2f), 0.8f * d)
         val trees = Path()
         Doodle.fir(trees, w * 0.14f, base, h * 0.36f, r)
         Doodle.fir(trees, w * 0.90f, base, h * 0.42f, r)
-        c.drawPath(trees, stroke(teal, 2f))
+        Doodle.ink(c, trees, stroke(teal, 2f), 0.8f * d)
         drifting(c, w, h, r, violet, listOf(Triple(0.16f, 0.10f, 30f)))
         stars(c, blueBr, listOf(Triple(0.32f, 0.20f, 0.09f), Triple(0.70f, 0.12f, 0.06f)), w, h, r)
     }
@@ -963,17 +973,17 @@ class DoodleSceneView @JvmOverloads constructor(
         val k = 0.9f + 0.2f * sin((BoilClock.phase * 1.1f).toDouble()).toFloat()
         val sn = Path()
         Doodle.sun(sn, w * 0.60f, h * 0.26f, h * 0.13f * k, r)
-        c.drawPath(sn, stroke(amber, 2f, (DECOR_ALPHA * (0.8f + 0.2f * k)).toInt()))
+        Doodle.ink(c, sn, stroke(amber, 2f, (DECOR_ALPHA * (0.8f + 0.2f * k)).toInt()), 0.8f * d)
         drifting(c, w, h, r, violet, listOf(
             Triple(0.20f, 0.12f, 22f), Triple(0.34f, 0.09f, 31f)))
         val sp = Path()
         Doodle.signpost(sp, w * 0.86f, base, h * 0.50f, r)
-        c.drawPath(sp, stroke(amberBr, 2f))
+        Doodle.ink(c, sp, stroke(amberBr, 2f), 0.8f * d)
         val trees = Path()
         Doodle.fir(trees, w * 0.10f, base, h * 0.48f, r)
         Doodle.fir(trees, w * 0.20f, base, h * 0.36f, r)
         Doodle.fir(trees, w * 0.72f, base, h * 0.40f, r)
-        c.drawPath(trees, stroke(teal, 2f))
+        Doodle.ink(c, trees, stroke(teal, 2f), 0.8f * d)
         stars(c, amberBr, listOf(Triple(0.44f, 0.14f, 0.07f)), w, h, r)
     }
 
@@ -982,18 +992,18 @@ class DoodleSceneView @JvmOverloads constructor(
         val ph = BoilClock.phase
         val g1 = Path()
         Doodle.gear(g1, w * 0.16f, h * 0.46f, h * 0.30f, 8, ph * 22f, r)
-        c.drawPath(g1, stroke(violet, 2f))
+        Doodle.ink(c, g1, stroke(violet, 2f), 0.8f * d)
         // Вторая шестерня крутится В ОБРАТНУЮ сторону и быстрее - так и
         // работает зубчатая передача: меньше колесо - выше обороты.
         val g2 = Path()
         Doodle.gear(g2, w * 0.34f, h * 0.72f, h * 0.19f, 6, -ph * 33f, r)
-        c.drawPath(g2, stroke(violetBr, 2f))
+        Doodle.ink(c, g2, stroke(violetBr, 2f), 0.8f * d)
         // Песок пересыпается за 8 с и переворачивается заново.
         val sandFill = 1f - loop(8f, 0f)
         val frame = Path(); val sand = Path()
         Doodle.hourglass(frame, sand, w * 0.62f, h * 0.50f, h * 0.34f, h * 0.62f, sandFill, r)
         c.drawPath(sand, fill(amber, 90))
-        c.drawPath(frame, stroke(amberBr, 2f))
+        Doodle.ink(c, frame, stroke(amberBr, 2f), 0.8f * d)
         stars(c, blueBr, listOf(Triple(0.86f, 0.24f, 0.11f), Triple(0.94f, 0.66f, 0.07f)), w, h, r)
         dotPaint.color = violetBr
         c.drawCircle(w * 0.48f, h * 0.20f, 1.8f * d, dotPaint)
@@ -1004,7 +1014,7 @@ class DoodleSceneView @JvmOverloads constructor(
         val nb = Path()
         Doodle.notebook(nb, w * 0.18f, h * 0.52f, w * 0.16f, h * 0.60f, r)
         Doodle.notebook(nb, w * 0.40f, h * 0.56f, w * 0.14f, h * 0.50f, r)
-        c.drawPath(nb, stroke(gray, 2f))
+        Doodle.ink(c, nb, stroke(gray, 2f), 0.8f * d)
         stars(c, gray, listOf(Triple(0.70f, 0.30f, 0.10f), Triple(0.88f, 0.62f, 0.07f)), w, h, r)
         drifting(c, w, h, r, gray, listOf(Triple(0.20f, 0.10f, 38f)))
     }
