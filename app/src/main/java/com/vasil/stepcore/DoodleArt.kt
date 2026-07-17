@@ -1058,27 +1058,104 @@ class DoodleSceneView @JvmOverloads constructor(
     }
 
     private fun stars(c: Canvas, color: Int, pts: List<Triple<Float, Float, Float>>,
-                      w: Float, h: Float, r: Wobble) {
+                      w: Float, h: Float, r: Wobble, scale: Float = 1f) {
         for ((i, p) in pts.withIndex()) {
             val (xf, yf, rf) = p
             val k = twinkle(i * 1.9f)
             val path = Path()
             Doodle.star(path, w * xf, h * yf, h * rf * k, r)
-            Doodle.ink(c, path, stroke(color, 2f, (DECOR_ALPHA * k).toInt()), 0.8f * d)
+            Doodle.ink(c, path, stroke(color, 2f, (DECOR_ALPHA * k * scale).toInt()), 0.8f * d)
         }
+    }
+
+    private enum class DayPhase { NIGHT, DAWN, DAY, DUSK }
+
+    private val skyPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private var skyShader: android.graphics.LinearGradient? = null
+    private var skyKey = ""
+
+    /** Фаза дня по ЛОКАЛЬНОМУ времени телефона (учитывает часовой пояс). */
+    private fun currentPhase(): DayPhase = when (java.time.LocalTime.now().hour) {
+        in 5..7 -> DayPhase.DAWN
+        in 8..16 -> DayPhase.DAY
+        in 17..21 -> DayPhase.DUSK
+        else -> DayPhase.NIGHT
+    }
+
+    /** Небо-градиент фазы; низ тает в фон экрана (#0A0A0A) - плиты читаемы. */
+    private fun drawSky(c: Canvas, w: Float, h: Float, phase: DayPhase) {
+        val key = "$phase-${w.toInt()}-${h.toInt()}"
+        if (key != skyKey || skyShader == null) {
+            val cols: IntArray; val pos: FloatArray
+            when (phase) {
+                DayPhase.NIGHT -> {
+                    cols = intArrayOf(0xFF161A40.toInt(), 0xFF0A0A0A.toInt()); pos = floatArrayOf(0f, 1f)
+                }
+                DayPhase.DAWN -> {
+                    cols = intArrayOf(0xFF2E2748.toInt(), 0xFFA05A3E.toInt(), 0xFF0A0A0A.toInt())
+                    pos = floatArrayOf(0f, 0.62f, 1f)
+                }
+                DayPhase.DAY -> {
+                    cols = intArrayOf(0xFF3A6FC0.toInt(), 0xFF12203A.toInt(), 0xFF0A0A0A.toInt())
+                    pos = floatArrayOf(0f, 0.70f, 1f)
+                }
+                DayPhase.DUSK -> {
+                    cols = intArrayOf(0xFF2A2048.toInt(), 0xFFC05A34.toInt(), 0xFF0A0A0A.toInt())
+                    pos = floatArrayOf(0f, 0.58f, 1f)
+                }
+            }
+            skyShader = android.graphics.LinearGradient(0f, 0f, 0f, h, cols, pos,
+                android.graphics.Shader.TileMode.CLAMP)
+            skyKey = key
+        }
+        skyPaint.shader = skyShader
+        c.drawRect(0f, 0f, w, h, skyPaint)
     }
 
     private fun drawHeader(c: Canvas, w: Float, h: Float, r: Wobble) {
         val base = h * 0.95f
-        mountainsRich(c, w * 0.30f, base, w * 0.40f, h * 0.62f, r, violet)
+        val phase = currentPhase()
+        drawSky(c, w, h, phase)
+
+        val mtTint = when (phase) {
+            DayPhase.DAWN -> amber
+            DayPhase.DAY -> blue
+            DayPhase.DUSK -> red
+            DayPhase.NIGHT -> violet
+        }
+        mountainsRich(c, w * 0.30f, base, w * 0.40f, h * 0.62f, r, mtTint)
         firRich(c, w * 0.06f, base, h * 0.52f, r)
         firRich(c, w * 0.14f, base, h * 0.40f, r)
         firRich(c, w * 0.72f, base, h * 0.45f, r)
         firRich(c, w * 0.78f, base, h * 0.34f, r)
-        drifting(c, w, h, r, violet, listOf(
+
+        val cloudTint = when (phase) {
+            DayPhase.DAY -> blue
+            DayPhase.NIGHT -> violet
+            else -> amber
+        }
+        drifting(c, w, h, r, cloudTint, listOf(
             Triple(0.22f, 0.13f, 26f), Triple(0.14f, 0.09f, 34f)))
-        moonRich(c, w * 0.92f, h * 0.26f, h * 0.16f, r, amberBr)
-        stars(c, blueBr, listOf(Triple(0.44f, 0.18f, 0.08f), Triple(0.86f, 0.70f, 0.06f)), w, h, r)
+
+        // Небесное тело: солнце встаёт/высоко/садится, ночью луна.
+        val sunK = 0.9f + 0.18f * sin((BoilClock.phase * 1.3f).toDouble()).toFloat()
+        when (phase) {
+            DayPhase.DAWN -> sunRich(c, w * 0.20f, h * 0.34f, h * 0.09f * sunK, r, amber)
+            DayPhase.DAY -> sunRich(c, w * 0.50f, h * 0.16f, h * 0.11f * sunK, r, amber)
+            DayPhase.DUSK -> sunRich(c, w * 0.84f, h * 0.34f, h * 0.09f * sunK, r, red)
+            DayPhase.NIGHT -> moonRich(c, w * 0.92f, h * 0.26f, h * 0.16f, r, amberBr)
+        }
+
+        // Звёзды: ночью ярко, в сумерки/рассвет слабо, днём нет.
+        val starA = when (phase) {
+            DayPhase.NIGHT -> 1f
+            DayPhase.DUSK -> 0.45f
+            DayPhase.DAWN -> 0.45f
+            DayPhase.DAY -> 0f
+        }
+        if (starA > 0f) stars(c, blueBr, listOf(
+            Triple(0.44f, 0.18f, 0.08f), Triple(0.86f, 0.70f, 0.06f)), w, h, r, starA)
+
         footprints(c, w, h)
     }
 
