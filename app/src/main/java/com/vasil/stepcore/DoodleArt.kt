@@ -616,6 +616,7 @@ class DoodleBorderDrawable(
     private var dustH = 0f
     // Разлом: трещина в камне, светится цветом смысла этой плиты.
     private val riftPath = Path()
+    private var riftSkip = false
     private val riftPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
     }
@@ -687,12 +688,16 @@ class DoodleBorderDrawable(
         val rw = Wobble(seed * 131L + 7L)
         val hgt = bounds.height().toFloat(); val wid = bounds.width().toFloat()
         val startX = wid * (0.55f + 0.30f * ((rw.j(1f) + 1f) * 0.5f))
+        // На высоких панелях (списки, Timeline) трещина растягивалась на
+        // полэкрана - там её не рисуем; иначе ограничиваем длину.
+        riftSkip = hgt > 230f * d
+        val riftLen = Math.min(hgt * 0.62f, 74f * d)
         riftPath.reset()
         riftPath.moveTo(startX, hgt - inset)
         var rx = startX; var ry = hgt - inset
         val steps = 4
         for (k in 1..steps) {
-            val ty = (hgt - inset) - (hgt * 0.62f) * (k.toFloat() / steps)
+            val ty = (hgt - inset) - riftLen * (k.toFloat() / steps)
             val tx = rx + wid * 0.05f * rw.j(1.6f)
             riftPath.lineTo(tx, ty)
             rx = tx; ry = ty
@@ -740,7 +745,9 @@ class DoodleBorderDrawable(
     }
 
     override fun draw(canvas: Canvas) {
-        val p = frames[BoilClock.frame]
+        // Контур СТАТИЧЕН: смена вариантов кадра давала рывки, которые на
+        // фоне плавных сцен читались как фриз. Живут только свет и частицы.
+        val p = frames[0]
         val off = 1.7f * d
         // тёмная грань снизу-справа (глубина), затем светлый кант сверху-слева
         canvas.save(); canvas.translate(off, off); canvas.drawPath(p, shPaint); canvas.restore()
@@ -767,17 +774,22 @@ class DoodleBorderDrawable(
             canvas.drawPath(leafPath, leafEdge)
             canvas.restore()
 
-            // Разлом: слои свечения + яркое ядро, медленное дыхание.
+            // Разлом: слои свечения + ядро; свет дышит, а оттенок циклично
+            // переливается (тон плиты <-> его высветленный вариант).
             val rp = BoilClock.phase
             val breath = 0.6f + 0.4f * kotlin.math.sin((rp * 0.9f).toDouble()).toFloat()
-            riftPaint.color = strokeColor
+            val hue = 0.5f + 0.5f * kotlin.math.sin((rp * 0.35f).toDouble()).toFloat()
+            val riftTone = lighten(strokeColor, 0.10f + 0.35f * hue)
+            if (!riftSkip) {
+            riftPaint.color = riftTone
             riftPaint.strokeWidth = 5.5f * d; riftPaint.alpha = (70f * breath).toInt().coerceIn(0, 255)
             canvas.drawPath(riftPath, riftPaint)
             riftPaint.strokeWidth = 2.8f * d; riftPaint.alpha = (130f * breath).toInt().coerceIn(0, 255)
             canvas.drawPath(riftPath, riftPaint)
-            riftPaint.color = lighten(strokeColor, 0.70f)
+            riftPaint.color = lighten(riftTone, 0.60f)
             riftPaint.strokeWidth = 1.2f * d; riftPaint.alpha = (170f + 60f * breath).toInt().coerceIn(0, 255)
             canvas.drawPath(riftPath, riftPaint)
+            }
 
             // Пыль: медленно всплывает и по кругу возвращается вниз.
             val ph = BoilClock.phase
@@ -1103,16 +1115,20 @@ class DoodleSceneView @JvmOverloads constructor(
         skyFill.color = tint
         skyFill.alpha = (26f * gl).toInt().coerceIn(0, 255); c.drawCircle(cx, cy, r * 1.9f, skyFill)
         skyFill.alpha = (44f * gl).toInt().coerceIn(0, 255); c.drawCircle(cx, cy, r * 1.35f, skyFill)
-        val cres = Path()
-        cres.moveTo(cx, cy - r)
-        cres.quadTo(cx - r * 1.3f, cy, cx, cy + r)
-        cres.quadTo(cx + r * 0.4f, cy, cx, cy - r)
-        cres.close()
-        skyFill.color = lit; skyFill.alpha = 235; c.drawPath(cres, skyFill)
-        skyFill.color = darkenC(lit, 0.14f); skyFill.alpha = 150
-        c.drawCircle(cx - r * 0.5f, cy - r * 0.15f, r * 0.15f, skyFill)
-        c.drawCircle(cx - r * 0.32f, cy + r * 0.32f, r * 0.10f, skyFill)
-        skyOutline.color = dark; Doodle.ink(c, cres, skyOutline, 0.6f * d)
+        // Полный диск: узкий серп читался как «огрызок». Объём даёт
+        // затенённый край, узнаваемость - кратеры.
+        val disc = Path(); disc.addCircle(cx, cy, r, Path.Direction.CW)
+        skyFill.color = lit; skyFill.alpha = 240; c.drawPath(disc, skyFill)
+        c.save(); c.clipPath(disc)
+        skyFill.color = darkenC(lit, 0.22f); skyFill.alpha = 130
+        c.drawCircle(cx + r * 0.55f, cy + r * 0.25f, r * 0.95f, skyFill)
+        skyFill.color = darkenC(lit, 0.30f); skyFill.alpha = 165
+        c.drawCircle(cx - r * 0.34f, cy - r * 0.28f, r * 0.22f, skyFill)
+        c.drawCircle(cx + r * 0.10f, cy + r * 0.34f, r * 0.16f, skyFill)
+        c.drawCircle(cx - r * 0.06f, cy - r * 0.52f, r * 0.11f, skyFill)
+        c.drawCircle(cx - r * 0.52f, cy + r * 0.30f, r * 0.09f, skyFill)
+        c.restore()
+        skyOutline.color = dark; Doodle.ink(c, disc, skyOutline, 0.6f * d)
         skyFill.alpha = 255
     }
 

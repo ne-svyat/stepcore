@@ -99,6 +99,10 @@ class CrystalRingView @JvmOverloads constructor(
     private val sparkX = FloatArray(3)
     private val sparkY = FloatArray(3)
     private val moonPath = Path()
+    private val moonCraters = Path()
+    private val moonCraterPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL; color = 0xFFD8C08A.toInt(); alpha = 170
+    }
     private val gemLightPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = 0xFF9FC0FF.toInt() }
     private val gemDarkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = 0xFF3D7EFF.toInt() }
     private val gemGlintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = 0xFFFFFFFF.toInt() }
@@ -258,10 +262,11 @@ class CrystalRingView @JvmOverloads constructor(
         // Луна-полумесяц в небе над вершиной (символ «шёл весь день»).
         val mcx = ww * 0.84f; val mcy = pad + inner * 0.10f; val mr = ww * 0.095f
         moonPath.reset()
-        moonPath.moveTo(mcx, mcy - mr)
-        moonPath.quadTo(mcx - mr * 1.35f, mcy, mcx, mcy + mr)
-        moonPath.quadTo(mcx + mr * 0.35f, mcy, mcx, mcy - mr)
-        moonPath.close()
+        moonPath.addCircle(mcx, mcy, mr, Path.Direction.CW)
+        moonCraters.reset()
+        moonCraters.addCircle(mcx - mr * 0.34f, mcy - mr * 0.26f, mr * 0.22f, Path.Direction.CW)
+        moonCraters.addCircle(mcx + mr * 0.12f, mcy + mr * 0.32f, mr * 0.16f, Path.Direction.CW)
+        moonCraters.addCircle(mcx - mr * 0.04f, mcy - mr * 0.54f, mr * 0.11f, Path.Direction.CW)
 
         // Алмазы, вплавленные в склоны.
         gemBody.clear(); gemDark.clear(); gemGlint.clear()
@@ -277,6 +282,7 @@ class CrystalRingView @JvmOverloads constructor(
 
         // Луна за горой (небо).
         canvas.drawPath(moonPath, moonFillPaint)
+        canvas.drawPath(moonCraters, moonCraterPaint)
         canvas.drawPath(moonPath, moonStrokePaint)
 
         canvas.save()
