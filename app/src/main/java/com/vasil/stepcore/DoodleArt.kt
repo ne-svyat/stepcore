@@ -564,6 +564,14 @@ class DoodleBorderDrawable(
     private val rivHi = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = 0xFFAEB8C8.toInt(); alpha = 200 }
     private val rivets = FloatArray(8)
     private var bigEnough = false
+    // Пыль: у каждой плиты свой узор (сид), стабильный между кадрами.
+    private val dustPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val DUST_N = 7
+    private val dustX = FloatArray(DUST_N)
+    private val dustPhase = FloatArray(DUST_N)
+    private val dustSpeed = FloatArray(DUST_N)
+    private val dustSize = FloatArray(DUST_N)
+    private var dustH = 0f
     /** Готовые варианты контура - по одному на кадр "кипения". */
     private val frames = Array(BoilClock.FRAMES) { Path() }
     private var builtFor = Rect()
@@ -599,6 +607,15 @@ class DoodleBorderDrawable(
         rivets[2] = bounds.width() - inset - ri; rivets[3] = inset + ri
         rivets[4] = inset + ri; rivets[5] = bounds.height() - inset - ri
         rivets[6] = bounds.width() - inset - ri; rivets[7] = bounds.height() - inset - ri
+
+        dustH = bounds.height().toFloat()
+        val dw = Wobble(seed * 77L + 13L)
+        for (i in 0 until DUST_N) {
+            dustX[i] = inset + (bounds.width() - 2 * inset) * (0.06f + 0.88f * ((dw.j(1f) + 1f) * 0.5f))
+            dustPhase[i] = ((dw.j(1f) + 1f) * 0.5f)
+            dustSpeed[i] = 0.020f + 0.030f * ((dw.j(1f) + 1f) * 0.5f)
+            dustSize[i] = (0.7f + 0.8f * ((dw.j(1f) + 1f) * 0.5f)) * d
+        }
     }
 
     /**
@@ -632,6 +649,19 @@ class DoodleBorderDrawable(
                 canvas.drawCircle(cx, cy, rr, rivRing)
                 canvas.drawCircle(cx, cy, rr * 0.82f, rivFill)
                 canvas.drawCircle(cx - rr * 0.3f, cy - rr * 0.3f, rr * 0.3f, rivHi)
+            }
+            // Пыль: медленно всплывает и по кругу возвращается вниз.
+            val ph = BoilClock.phase
+            for (i in 0 until DUST_N) {
+                var t = dustPhase[i] + ph * dustSpeed[i]
+                t -= Math.floor(t.toDouble()).toFloat()
+                val y = dustH * (1f - t)
+                val fade = if (t < 0.15f) t / 0.15f else if (t > 0.8f) (1f - t) / 0.2f else 1f
+                val tw = 0.55f + 0.45f * kotlin.math.sin((ph * 1.7f + i * 2.3f).toDouble()).toFloat()
+                dustPaint.color = lighten(strokeColor, 0.65f)
+                dustPaint.alpha = (110f * fade * tw).toInt().coerceIn(0, 255)
+                val sway = 2.5f * d * kotlin.math.sin((ph * 0.9f + i).toDouble()).toFloat()
+                canvas.drawCircle(dustX[i] + sway, y, dustSize[i], dustPaint)
             }
         }
     }
