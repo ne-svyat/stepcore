@@ -188,7 +188,7 @@
         <com.vasil.stepcore.MotiveScrollView
             android:id="@+id/motiveScroll"
             android:layout_width="match_parent"
-            android:layout_height="72dp"
+            android:layout_height="104dp"
             android:layout_marginTop="4dp" />
 
         <TextView
