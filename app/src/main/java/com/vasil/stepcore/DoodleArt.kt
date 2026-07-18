@@ -189,6 +189,45 @@ internal object Doodle {
         arc(p, x + r, y + hh - r, r, 90f, 180f, jit, w)
     }
 
+    /**
+     * Вытесанная плита: у каждого угла свой радиус и свой тип обработки
+     * (0 - скруглённый, 1 - срез фаской, 2 - зарубка). Порядок углов:
+     * левый-верх, правый-верх, правый-низ, левый-низ. Даёт плитам разную
+     * геометрию силуэта при общем стиле линии.
+     */
+    fun carved(p: Path, x: Float, y: Float, ww: Float, hh: Float,
+               rs: FloatArray, st: IntArray, jit: Float, w: Wobble) {
+        val r0 = rs[0]; val r1 = rs[1]; val r2 = rs[2]; val r3 = rs[3]
+        line(p, x + r0, y, x + ww - r1, y, jit, 16, w)
+        line(p, x + ww, y + r1, x + ww, y + hh - r2, jit, 16, w)
+        line(p, x + ww - r2, y + hh, x + r3, y + hh, jit, 16, w)
+        line(p, x, y + hh - r3, x, y + r0, jit, 16, w)
+        corner(p, st[0], x, y + r0, x + r0, y, x, y, r0, 180f, 270f, jit, w)
+        corner(p, st[1], x + ww - r1, y, x + ww, y + r1, x + ww, y, r1, 270f, 360f, jit, w)
+        corner(p, st[2], x + ww, y + hh - r2, x + ww - r2, y + hh, x + ww, y + hh, r2, 0f, 90f, jit, w)
+        corner(p, st[3], x + r3, y + hh, x, y + hh - r3, x, y + hh, r3, 90f, 180f, jit, w)
+    }
+
+    private fun corner(p: Path, style: Int, sx: Float, sy: Float, ex: Float, ey: Float,
+                       cx: Float, cy: Float, r: Float, a0: Float, a1: Float,
+                       jit: Float, w: Wobble) {
+        when (style) {
+            1 -> line(p, sx, sy, ex, ey, jit, 6, w)
+            2 -> {
+                val m1x = sx + (cx - sx) * 0.55f; val m1y = sy + (cy - sy) * 0.55f
+                val m2x = ex + (cx - ex) * 0.55f; val m2y = ey + (cy - ey) * 0.55f
+                line(p, sx, sy, m1x, m1y, jit, 4, w)
+                line(p, m1x, m1y, m2x, m2y, jit, 4, w)
+                line(p, m2x, m2y, ex, ey, jit, 4, w)
+            }
+            else -> {
+                val ax = if (a0 == 180f || a0 == 90f) cx + r else cx - r
+                val ay = if (a0 == 180f || a0 == 270f) cy + r else cy - r
+                arc(p, ax, ay, r, a0, a1, jit, w)
+            }
+        }
+    }
+
     fun arc(p: Path, cx: Float, cy: Float, r: Float, a0: Float, a1: Float,
             jit: Float, w: Wobble) {
         for (k in 0..8) {
@@ -564,6 +603,9 @@ class DoodleBorderDrawable(
     private val rivHi = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = 0xFFAEB8C8.toInt(); alpha = 200 }
     private val rivets = FloatArray(8)
     private var bigEnough = false
+    // Геометрия силуэта: свои радиусы и типы углов у каждой плиты (от сида).
+    private val cornerR = FloatArray(4)
+    private val cornerStyle = IntArray(4)
     // Пыль: у каждой плиты свой узор (сид), стабильный между кадрами.
     private val dustPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val DUST_N = 10
@@ -603,12 +645,18 @@ class DoodleBorderDrawable(
         val inset = 2f * d
         // Каждый кадр - СВОЙ сид: контур тот же, дрожь другая. Вся
         // математика делается здесь, один раз, а не на каждом кадре.
+        val gw = Wobble(seed * 911L + 5L)
+        for (k in 0 until 4) {
+            cornerR[k] = (9f + 9f * ((gw.j(1f) + 1f) * 0.5f)) * d
+            val u = (gw.j(1f) + 1f) * 0.5f
+            cornerStyle[k] = if (u < 0.45f) 0 else if (u < 0.78f) 1 else 2
+        }
         for (i in frames.indices) {
             val w = Wobble(seed * 31L + i)
             frames[i].reset()
-            Doodle.roundRect(frames[i], inset, inset,
+            Doodle.carved(frames[i], inset, inset,
                 bounds.width() - 2 * inset, bounds.height() - 2 * inset,
-                14f * d, 1.5f * d, w)
+                cornerR, cornerStyle, 1.5f * d, w)
         }
 
         // Объём плиты: диагональная растушёвка СВОЕГО тона (свет сверху-слева).
