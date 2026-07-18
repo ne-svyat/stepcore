@@ -582,6 +582,10 @@ class DoodleBorderDrawable(
     private val texLine = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
     }
+    // Замкнутое тело плиты: контур рисуется кусками (стороны/углы отдельно)
+    // и как область обрезки почти ничего не оставляет. Тело нужно, чтобы
+    // заливка и фактура ложились на всю площадь.
+    private val bodyPath = Path()
     private var pw = 0f
     private var phh = 0f
     private val matPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -700,6 +704,12 @@ class DoodleBorderDrawable(
         rivets[6] = bounds.width() - inset - ri; rivets[7] = bounds.height() - inset - ri
 
         pw = bounds.width().toFloat(); phh = bounds.height().toFloat()
+        bodyPath.reset()
+        bodyPath.addRoundRect(
+            android.graphics.RectF(inset, inset, pw - inset, phh - inset),
+            floatArrayOf(cornerR[0], cornerR[0], cornerR[1], cornerR[1],
+                cornerR[2], cornerR[2], cornerR[3], cornerR[3]),
+            Path.Direction.CW)
         dustH = bounds.height().toFloat()
         val dw = Wobble(seed * 77L + 13L)
         for (i in 0 until DUST_N) {
@@ -777,9 +787,9 @@ class DoodleBorderDrawable(
         // тёмная грань снизу-справа (глубина), затем светлый кант сверху-слева
         canvas.save(); canvas.translate(off, off); canvas.drawPath(p, shPaint); canvas.restore()
         canvas.save(); canvas.translate(-off, -off); canvas.drawPath(p, hiPaint); canvas.restore()
-        if (fillColor != Color.TRANSPARENT) canvas.drawPath(p, fillPaint)
+        if (fillColor != Color.TRANSPARENT) canvas.drawPath(bodyPath, fillPaint)
         if (bigEnough) {
-            canvas.save(); canvas.clipPath(p)
+            canvas.save(); canvas.clipPath(bodyPath)
             drawTexture(canvas)
             canvas.restore()
         }
@@ -870,33 +880,33 @@ class DoodleBorderDrawable(
                     canvas.save()
                     canvas.translate(pt[0], pt[1]); canvas.rotate(pt[2])
                     texFill.color = darken(strokeColor, 0.30f); texFill.alpha = 235
-                    canvas.drawOval(-5f * d * br, -3.4f * d * br, 5f * d * br, 3.4f * d * br, texFill)
+                    canvas.drawOval(-7f * d * br, -4.8f * d * br, 7f * d * br, 4.8f * d * br, texFill)
                     texLine.color = lighten(strokeColor, 0.35f); texLine.alpha = 220
-                    texLine.strokeWidth = 1.3f * d
-                    canvas.drawLine(-2.2f * d, -3.4f * d * br, -2.2f * d, 3.4f * d * br, texLine)
-                    canvas.drawLine(1.6f * d, -3.4f * d * br, 1.6f * d, 3.4f * d * br, texLine)
+                    texLine.strokeWidth = 1.8f * d
+                    canvas.drawLine(-3f * d, -4.8f * d * br, -3f * d, 4.8f * d * br, texLine)
+                    canvas.drawLine(2.2f * d, -4.8f * d * br, 2.2f * d, 4.8f * d * br, texLine)
                     canvas.restore()
                 }
             }
             MAT_FIRE -> {
                 // Огонёк у нижней кромки и поднимающийся дымок.
-                val fx = pw * 0.14f; val fy = phh - 7f * d
+                val fx = pw * 0.13f; val fy = phh - 8f * d
                 val fl = 0.6f + 0.4f * kotlin.math.sin((ph * 6.5f).toDouble()).toFloat()
                 val flame = Path()
-                flame.moveTo(fx - 3.2f * d, fy)
-                flame.quadTo(fx - 3.6f * d, fy - 5f * d * fl, fx, fy - 9.5f * d * fl)
-                flame.quadTo(fx + 3.6f * d, fy - 5f * d * fl, fx + 3.2f * d, fy)
+                flame.moveTo(fx - 4.6f * d, fy)
+                flame.quadTo(fx - 5.2f * d, fy - 7f * d * fl, fx, fy - 14f * d * fl)
+                flame.quadTo(fx + 5.2f * d, fy - 7f * d * fl, fx + 4.6f * d, fy)
                 flame.close()
-                texFill.color = strokeColor; texFill.alpha = 190; canvas.drawPath(flame, texFill)
+                texFill.color = strokeColor; texFill.alpha = 235; canvas.drawPath(flame, texFill)
                 texFill.color = lighten(strokeColor, 0.55f); texFill.alpha = 210
-                canvas.drawCircle(fx, fy - 2.6f * d, 1.7f * d * fl, texFill)
+                canvas.drawCircle(fx, fy - 3.4f * d, 2.6f * d * fl, texFill)
                 for (k in 0 until 4) {
                     var g = (ph * 0.42f + k * 0.25f) % 1f
                     if (g < 0f) g += 1f
                     val sy = fy - 10f * d - g * (phh * 0.42f)
                     val sx = fx + 6f * d * kotlin.math.sin((g * 3.4f + k).toDouble()).toFloat()
                     texFill.color = lighten(strokeColor, 0.20f)
-                    texFill.alpha = (70f * (1f - g)).toInt().coerceIn(0, 255)
+                    texFill.alpha = (110f * (1f - g)).toInt().coerceIn(0, 255)
                     canvas.drawCircle(sx, sy, (1.4f + 2.2f * g) * d, texFill)
                 }
             }
@@ -906,12 +916,12 @@ class DoodleBorderDrawable(
                 for ((i, cc) in cs.withIndex()) {
                     val tw = 0.55f + 0.45f * kotlin.math.sin((ph * 0.9f + i * 2.0f).toDouble()).toFloat()
                     texLine.color = lighten(strokeColor, 0.55f)
-                    texLine.alpha = (90f + 90f * tw).toInt().coerceIn(0, 255)
-                    texLine.strokeWidth = 1.2f * d
+                    texLine.alpha = (130f + 105f * tw).toInt().coerceIn(0, 255)
+                    texLine.strokeWidth = 1.7f * d
                     for (k in 0 until 6) {
                         val a2 = Math.toRadians((k * 60f + i * 20f).toDouble())
-                        val ex = cc[0] + 7.5f * d * kotlin.math.cos(a2).toFloat()
-                        val ey = cc[1] + 7.5f * d * kotlin.math.sin(a2).toFloat()
+                        val ex = cc[0] + 11f * d * kotlin.math.cos(a2).toFloat()
+                        val ey = cc[1] + 11f * d * kotlin.math.sin(a2).toFloat()
                         canvas.drawLine(cc[0], cc[1], ex, ey, texLine)
                         canvas.drawLine(ex, ey, ex - 2.4f * d * kotlin.math.cos(a2 + 0.7).toFloat(),
                             ey - 2.4f * d * kotlin.math.sin(a2 + 0.7).toFloat(), texLine)
@@ -922,8 +932,8 @@ class DoodleBorderDrawable(
                 // Жилы: тонкие разряды идут из угла внутрь, пульсируют.
                 val fl = 0.5f + 0.5f * kotlin.math.sin((ph * 4.2f).toDouble()).toFloat()
                 texLine.color = lighten(strokeColor, 0.45f)
-                texLine.alpha = (60f + 90f * fl).toInt().coerceIn(0, 255)
-                texLine.strokeWidth = 1.3f * d
+                texLine.alpha = (110f + 120f * fl).toInt().coerceIn(0, 255)
+                texLine.strokeWidth = 1.9f * d
                 for (i in 0 until 2) {
                     val vp = Path()
                     val sx = if (i == 0) 9f * d else pw - 9f * d
@@ -941,14 +951,14 @@ class DoodleBorderDrawable(
                 for (tv in ts) {
                     perim(tv, pt)
                     texFill.color = darken(strokeColor, 0.35f); texFill.alpha = 230
-                    canvas.drawCircle(pt[0], pt[1], 2.6f * d, texFill)
+                    canvas.drawCircle(pt[0], pt[1], 3.6f * d, texFill)
                     texLine.color = lighten(strokeColor, 0.30f); texLine.alpha = 230
-                    texLine.strokeWidth = 1f * d
-                    canvas.drawLine(pt[0] - 1.7f * d, pt[1], pt[0] + 1.7f * d, pt[1], texLine)
+                    texLine.strokeWidth = 1.5f * d
+                    canvas.drawLine(pt[0] - 2.4f * d, pt[1], pt[0] + 2.4f * d, pt[1], texLine)
                 }
-                val gx = pw - 14f * d; val gy = phh - 13f * d; val gr = 6.5f * d
-                texLine.color = lighten(strokeColor, 0.20f); texLine.alpha = 150
-                texLine.strokeWidth = 1.6f * d
+                val gx = pw - 16f * d; val gy = phh - 15f * d; val gr = 9.5f * d
+                texLine.color = lighten(strokeColor, 0.30f); texLine.alpha = 210
+                texLine.strokeWidth = 2f * d
                 canvas.drawCircle(gx, gy, gr * 0.55f, texLine)
                 for (k in 0 until 8) {
                     val a2 = Math.toRadians((k * 45f + ph * 26f).toDouble())
@@ -961,13 +971,13 @@ class DoodleBorderDrawable(
             else -> {
                 // Камень: редкие выбоины и волосяные трещины у нижней кромки.
                 val sw = Wobble(seed * 313L + 11L)
-                texFill.color = darken(strokeColor, 0.55f); texFill.alpha = 90
+                texFill.color = lighten(strokeColor, 0.10f); texFill.alpha = 120
                 for (k in 0 until 5) {
                     val x = pw * (0.10f + 0.80f * ((sw.j(1f) + 1f) * 0.5f))
                     val y = phh * (0.18f + 0.70f * ((sw.j(1f) + 1f) * 0.5f))
                     canvas.drawCircle(x, y, (0.9f + 1.1f * ((sw.j(1f) + 1f) * 0.5f)) * d, texFill)
                 }
-                texLine.color = darken(strokeColor, 0.50f); texLine.alpha = 85
+                texLine.color = lighten(strokeColor, 0.10f); texLine.alpha = 120
                 texLine.strokeWidth = 1f * d
                 for (k in 0 until 2) {
                     val x = pw * (0.20f + 0.55f * k) + sw.j(6f) * d
