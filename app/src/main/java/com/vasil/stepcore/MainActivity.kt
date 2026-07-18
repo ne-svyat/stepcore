@@ -35,6 +35,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var activeTimeText: TextView
     private lateinit var accuracyBadge: TextView
     private lateinit var cargoChip: TextView
+    private lateinit var backpackView: BackpackView
     private lateinit var lapBadgeText: TextView
     private lateinit var walkShareText: TextView
     private lateinit var runShareText: TextView
@@ -87,6 +88,11 @@ class MainActivity : AppCompatActivity() {
         activeTimeText = findViewById(R.id.activeTimeText)
         accuracyBadge = findViewById(R.id.accuracyBadge)
         cargoChip = findViewById(R.id.cargoChip)
+        backpackView = findViewById(R.id.backpackView)
+        // Груз меняют чаще, чем остальной профиль (взял рюкзак - снял), и
+        // ради этого не должно требоваться заходить в Профиль.
+        cargoChip.setOnClickListener { showCargoDialog() }
+        backpackView.setOnClickListener { showCargoDialog() }
         lapBadgeText = findViewById(R.id.lapBadgeText)
         walkShareText = findViewById(R.id.walkShareText)
         runShareText = findViewById(R.id.runShareText)
@@ -354,13 +360,59 @@ class MainActivity : AppCompatActivity() {
     /** Груз-чип (V13.0): всегда на виду, чтобы не забыть включённым/выключенным. */
     private fun refreshCargoChip() {
         val load = getSharedPreferences(StepService.PREFS, MODE_PRIVATE).getFloat("p_load", 0f)
+        if (::backpackView.isInitialized) backpackView.setLoad(load)
         if (load > 0f) {
             cargoChip.text = "Груз %.1f кг".format(load)
-            cargoChip.setTextColor(ContextCompat.getColor(this, R.color.accent_red))
+            // Цвет подписи повторяет цвет рюкзака - одна шкала, два места.
+            val tone = when {
+                load <= 5f -> R.color.accent_green
+                load <= 10f -> R.color.accent_amber
+                else -> R.color.accent_red
+            }
+            cargoChip.setTextColor(ContextCompat.getColor(this, tone))
         } else {
             cargoChip.text = "Груз выкл"
             cargoChip.setTextColor(ContextCompat.getColor(this, R.color.text_dim))
         }
+    }
+
+    /** Ввод груза прямо с главной: то же значение, что в Профиле. */
+    private fun showCargoDialog() {
+        val prefs = getSharedPreferences(StepService.PREFS, MODE_PRIVATE)
+        val cur = prefs.getFloat("p_load", 0f)
+        val dp = resources.displayMetrics.density
+        val input = android.widget.EditText(this).apply {
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER or
+                    android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+            hint = "кг, например 6.5"
+            if (cur > 0f) setText("%.1f".format(cur))
+            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_main))
+            setPadding((20 * dp).toInt(), (12 * dp).toInt(), (20 * dp).toInt(), (12 * dp).toInt())
+        }
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Груз в рюкзаке")
+            .setMessage("Влияет на расход калорий. Прошлые дни не пересчитываются.")
+            .setView(input)
+            .setPositiveButton("Сохранить") { _, _ ->
+                val v = input.text.toString().replace(',', '.').toFloatOrNull()
+                if (v == null || v < 0f || v > 60f) {
+                    android.widget.Toast.makeText(
+                        this, "Проверь груз: 0-60 кг", android.widget.Toast.LENGTH_SHORT).show()
+                } else saveCargo(v)
+            }
+            .setNeutralButton("Выключить") { _, _ -> saveCargo(0f) }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    private fun saveCargo(kg: Float) {
+        getSharedPreferences(StepService.PREFS, MODE_PRIVATE).edit()
+            .putFloat("p_load", kg).apply()
+        // Точка истории профиля - как при сохранении в Профиле. Без неё
+        // сегментированный расчёт не узнает, с какого момента сменился груз.
+        lifecycleScope.launch { ProfileHistory.record(this@MainActivity) }
+        refreshCargoChip()
+        updateStats()
     }
 
     /**

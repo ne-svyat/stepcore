@@ -33,6 +33,12 @@
             <View android:layout_width="0dp" android:layout_height="1dp"
                 android:layout_weight="1" />
 
+            <com.vasil.stepcore.BackpackView
+                android:id="@+id/backpackView"
+                android:layout_width="34dp"
+                android:layout_height="34dp"
+                android:layout_gravity="center_vertical" />
+
             <TextView
                 android:id="@+id/cargoChip"
                 android:layout_width="wrap_content"
