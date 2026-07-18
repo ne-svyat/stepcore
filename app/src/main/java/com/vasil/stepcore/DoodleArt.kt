@@ -1874,6 +1874,20 @@ class DoodleSceneView @JvmOverloads constructor(
                     c.drawCircle(w * 1.02f - w * 1.2f * g, dy, 1.6f * d,
                         fill(gray, (190f * wind * (1f - g)).toInt().coerceIn(0, 255)))
                 }
+                // Клубы пыли у земли: катятся по ветру и разрастаются.
+                for (k in 0 until 4) {
+                    var g = (ph3 * 0.55f + k * 0.25f) % 1f
+                    if (g < 0f) g += 1f
+                    val px2 = w * 1.10f - w * 1.30f * g
+                    val py2 = base - h * 0.02f - h * 0.05f * g
+                    val rr2 = h * (0.05f + 0.16f * g)
+                    val a3 = (95f * wind * (1f - g)).toInt().coerceIn(0, 255)
+                    c.drawCircle(px2, py2, rr2, fill(gray, a3))
+                    c.drawCircle(px2 + rr2 * 0.55f, py2 - rr2 * 0.35f, rr2 * 0.66f,
+                        fill(gray, (a3 * 0.75f).toInt()))
+                    c.drawCircle(px2 - rr2 * 0.60f, py2 - rr2 * 0.20f, rr2 * 0.55f,
+                        fill(gray, (a3 * 0.6f).toInt()))
+                }
             }
 
             var fx: Float; var fy = base; var rot = 0f; var pose = 0
@@ -1900,14 +1914,18 @@ class DoodleSceneView @JvmOverloads constructor(
             // Кубик: в руках -> падает на стопку -> сорван ветром -> летит в
             // затылок -> улетает вместе с носильщиком.
             if (t < 0.38f) {
-                // Кубик один и тот же на всём пути: тот же цвет и размер,
-                // что у кубиков стопки - иначе он читается как чужой предмет.
-                val bob = 1.4f * d * sin((ph3 * 6f).toDouble()).toFloat()
-                cubeIso(c, fx + sz * 0.10f, base - sz * 1.72f + bob, sz, blue)
+                // Кубик один и тот же на всём пути и держится НА УРОВНЕ
+                // КОРПУСА, чуть впереди по ходу: поднятый выше головы, он
+                // не касался фигуры и читался как летящий сам по себе.
+                val bob = 1.2f * d * sin((ph3 * 6f).toDouble()).toFloat()
+                cubeIso(c, fx - sz * 0.45f, base - sz * 0.85f + bob, sz, blue)
             } else if (t < 0.46f) {
+                // Установка: короткий подъём с рук на верх стопки.
                 val fall = (t - 0.38f) / 0.08f
-                val fromY = base - sz * 1.72f
-                cubeIso(c, dropX, fromY + (stackTopY - fromY) * (fall * fall), sz, blue)
+                val fromY = base - sz * 0.85f
+                val fromX = dropX - sz * 0.45f
+                cubeIso(c, fromX + (dropX - fromX) * fall,
+                    fromY + (stackTopY - fromY) * fall, sz, blue)
             } else if (t < 0.72f && t >= 0.62f) {
                 // сорвало и понесло: догоняет носильщика, ускоряясь
                 val fr = (t - 0.62f) / 0.10f
@@ -1949,9 +1967,9 @@ class DoodleSceneView @JvmOverloads constructor(
                         fig.moveTo(0f, -sz * 0.72f); fig.lineTo(-2.8f * d - 2f * d * stepPh, 0f)
                         fig.moveTo(0f, -sz * 0.72f); fig.lineTo(2.8f * d + 2f * d * stepPh, 0f)
                         if (carry) {
-                            // руки подняты к кубику - видно, что он его несёт
-                            fig.moveTo(0f, -sz * 1.40f); fig.lineTo(sz * 0.10f, -sz * 1.66f)
-                            fig.moveTo(0f, -sz * 1.30f); fig.lineTo(-sz * 0.22f, -sz * 1.60f)
+                            // руки обхватывают кубик спереди - хват виден
+                            fig.moveTo(0f, -sz * 1.30f); fig.lineTo(-sz * 0.50f, -sz * 1.05f)
+                            fig.moveTo(0f, -sz * 1.15f); fig.lineTo(-sz * 0.52f, -sz * 0.55f)
                         } else { fig.moveTo(0f, -sz * 1.35f); fig.lineTo(-4.4f * d, -sz * 1.05f) }
                     }
                 }
