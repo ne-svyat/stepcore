@@ -12,8 +12,8 @@ android {
         applicationId "com.vasil.stepcore"
         minSdk 30
         targetSdk 34
-        versionCode 137
-        versionName "0.54.0"
+        versionCode 138
+        versionName "0.55.0"
     }
 
     signingConfigs {

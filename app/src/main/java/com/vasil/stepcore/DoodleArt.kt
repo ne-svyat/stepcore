@@ -566,12 +566,17 @@ class DoodleBorderDrawable(
     private var bigEnough = false
     // Пыль: у каждой плиты свой узор (сид), стабильный между кадрами.
     private val dustPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
-    private val DUST_N = 7
+    private val DUST_N = 10
     private val dustX = FloatArray(DUST_N)
     private val dustPhase = FloatArray(DUST_N)
     private val dustSpeed = FloatArray(DUST_N)
     private val dustSize = FloatArray(DUST_N)
     private var dustH = 0f
+    // Разлом: трещина в камне, светится цветом смысла этой плиты.
+    private val riftPath = Path()
+    private val riftPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
+    }
     /** Готовые варианты контура - по одному на кадр "кипения". */
     private val frames = Array(BoilClock.FRAMES) { Path() }
     private var builtFor = Rect()
@@ -614,7 +619,22 @@ class DoodleBorderDrawable(
             dustX[i] = inset + (bounds.width() - 2 * inset) * (0.06f + 0.88f * ((dw.j(1f) + 1f) * 0.5f))
             dustPhase[i] = ((dw.j(1f) + 1f) * 0.5f)
             dustSpeed[i] = 0.020f + 0.030f * ((dw.j(1f) + 1f) * 0.5f)
-            dustSize[i] = (0.7f + 0.8f * ((dw.j(1f) + 1f) * 0.5f)) * d
+            dustSize[i] = (1.3f + 1.2f * ((dw.j(1f) + 1f) * 0.5f)) * d
+        }
+
+        // Трещина: от нижнего края вверх ломаной, узор свой у каждой плиты.
+        val rw = Wobble(seed * 131L + 7L)
+        val hgt = bounds.height().toFloat(); val wid = bounds.width().toFloat()
+        val startX = wid * (0.55f + 0.30f * ((rw.j(1f) + 1f) * 0.5f))
+        riftPath.reset()
+        riftPath.moveTo(startX, hgt - inset)
+        var rx = startX; var ry = hgt - inset
+        val steps = 4
+        for (k in 1..steps) {
+            val ty = (hgt - inset) - (hgt * 0.62f) * (k.toFloat() / steps)
+            val tx = rx + wid * 0.05f * rw.j(1.6f)
+            riftPath.lineTo(tx, ty)
+            rx = tx; ry = ty
         }
     }
 
@@ -650,6 +670,18 @@ class DoodleBorderDrawable(
                 canvas.drawCircle(cx, cy, rr * 0.82f, rivFill)
                 canvas.drawCircle(cx - rr * 0.3f, cy - rr * 0.3f, rr * 0.3f, rivHi)
             }
+            // Разлом: слои свечения + яркое ядро, медленное дыхание.
+            val rp = BoilClock.phase
+            val breath = 0.6f + 0.4f * kotlin.math.sin((rp * 0.9f).toDouble()).toFloat()
+            riftPaint.color = strokeColor
+            riftPaint.strokeWidth = 5.5f * d; riftPaint.alpha = (70f * breath).toInt().coerceIn(0, 255)
+            canvas.drawPath(riftPath, riftPaint)
+            riftPaint.strokeWidth = 2.8f * d; riftPaint.alpha = (130f * breath).toInt().coerceIn(0, 255)
+            canvas.drawPath(riftPath, riftPaint)
+            riftPaint.color = lighten(strokeColor, 0.70f)
+            riftPaint.strokeWidth = 1.2f * d; riftPaint.alpha = (170f + 60f * breath).toInt().coerceIn(0, 255)
+            canvas.drawPath(riftPath, riftPaint)
+
             // Пыль: медленно всплывает и по кругу возвращается вниз.
             val ph = BoilClock.phase
             for (i in 0 until DUST_N) {
@@ -659,7 +691,7 @@ class DoodleBorderDrawable(
                 val fade = if (t < 0.15f) t / 0.15f else if (t > 0.8f) (1f - t) / 0.2f else 1f
                 val tw = 0.55f + 0.45f * kotlin.math.sin((ph * 1.7f + i * 2.3f).toDouble()).toFloat()
                 dustPaint.color = lighten(strokeColor, 0.65f)
-                dustPaint.alpha = (110f * fade * tw).toInt().coerceIn(0, 255)
+                dustPaint.alpha = (215f * fade * tw).toInt().coerceIn(0, 255)
                 val sway = 2.5f * d * kotlin.math.sin((ph * 0.9f + i).toDouble()).toFloat()
                 canvas.drawCircle(dustX[i] + sway, y, dustSize[i], dustPaint)
             }
