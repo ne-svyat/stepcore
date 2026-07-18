@@ -1870,9 +1870,10 @@ class DoodleSceneView @JvmOverloads constructor(
         firRich(c, w * 0.10f, base, h * 0.48f, r)
         firRich(c, w * 0.20f, base, h * 0.36f, r)
 
-        // Столбы-стихии: ходьба - вода (волна на срезе, пузырьки), бег -
-        // огонь. В конце огненный столб подбрасывает бегуна за кадр, и он
-        // возвращается слева. Цикл 11 с.
+        // Сёрф по волнам: разбег -> подъём прыжками по водяным колоннам с
+        // доской и брызгами -> срыв и падение с ускорением -> подхват
+        // огненным столбом (краснеет ровно в момент касания) -> доску
+        // уносит, его выбрасывает вверх. Цикл 7.5 с.
         run {
             val ph2 = BoilClock.phase
             val n = 5
@@ -1882,26 +1883,23 @@ class DoodleSceneView @JvmOverloads constructor(
                 val bh = h * (0.13f + 0.095f * i)
                 val x0 = bx0 + i * (bw + gap)
                 tops[i] = base - bh; cxs[i] = x0 + bw / 2f
-                // Тело воды.
                 c.drawRect(x0, tops[i], x0 + bw, base, fill(blue, 105))
                 c.save()
                 c.clipRect(x0, tops[i] - 3f * d, x0 + bw, base)
-                // Волна на срезе.
                 val wave = Path()
                 val amp = 1.8f * d
                 wave.moveTo(x0, tops[i] + amp)
                 var xx = x0
                 while (xx <= x0 + bw) {
                     val k2 = (xx - x0) / bw
-                    wave.lineTo(xx, tops[i] + amp * sin((ph2 * 2.1f + k2 * 6.2f + i).toDouble()).toFloat())
+                    wave.lineTo(xx, tops[i] + amp * sin((ph2 * 2.6f + k2 * 6.2f + i).toDouble()).toFloat())
                     xx += 2f * d
                 }
                 wave.lineTo(x0 + bw, tops[i] + 6f * d); wave.lineTo(x0, tops[i] + 6f * d)
                 wave.close()
-                c.drawPath(wave, fill(blueBr, 150))
-                // Пузырьки поднимаются внутри колонны.
+                c.drawPath(wave, fill(blueBr, 155))
                 for (k in 0 until 3) {
-                    var g = (ph2 * 0.32f + k * 0.33f + i * 0.17f) % 1f
+                    var g = (ph2 * 0.38f + k * 0.33f + i * 0.17f) % 1f
                     if (g < 0f) g += 1f
                     val by2 = base - (base - tops[i]) * g
                     val bxp = x0 + bw * (0.28f + 0.44f * ((k + i) % 3) / 2f)
@@ -1914,78 +1912,137 @@ class DoodleSceneView @JvmOverloads constructor(
                 Doodle.ink(c, bp, stroke(blueBr, 1.6f, 175), 0.7f * d)
             }
 
-            val t = loop(11f, 0f)
+            val t = loop(7.5f, 0f)
             val fireX = bx0 + n * (bw + gap) + bw / 2f
-            val fireTop = base - h * 0.62f
+            val contactY = base - 5f * d
 
-            // Огненный столб: растёт под подброс и опадает после.
+            // Огненный столб успевает вырасти ровно к падению.
             val grow = when {
-                t < 0.58f -> 0f
-                t < 0.68f -> (t - 0.58f) / 0.10f
-                t < 0.84f -> 1f
-                t < 0.94f -> 1f - (t - 0.84f) / 0.10f
+                t < 0.60f -> 0f
+                t < 0.70f -> (t - 0.60f) / 0.10f
+                t < 0.88f -> 1f
+                t < 0.96f -> 1f - (t - 0.88f) / 0.08f
                 else -> 0f
             }
             if (grow > 0.02f) {
-                val fh = (base - fireTop) * grow
+                val fh = (base - (base - h * 0.42f)) * grow
                 val fx0 = fireX - bw / 2f
-                c.drawRect(fx0, base - fh, fx0 + bw, base, fill(red, 120))
+                c.drawRect(fx0, base - fh, fx0 + bw, base, fill(red, 125))
+                val fl = 0.7f + 0.3f * sin((ph2 * 8f).toDouble()).toFloat()
                 val tongue = Path()
-                val fl = 0.7f + 0.3f * sin((ph2 * 7f).toDouble()).toFloat()
                 tongue.moveTo(fx0, base - fh)
-                tongue.quadTo(fx0 + bw * 0.25f, base - fh - 9f * d * fl,
+                tongue.quadTo(fx0 + bw * 0.25f, base - fh - 10f * d * fl,
                     fx0 + bw * 0.5f, base - fh - 3f * d)
-                tongue.quadTo(fx0 + bw * 0.75f, base - fh - 12f * d * fl,
+                tongue.quadTo(fx0 + bw * 0.75f, base - fh - 13f * d * fl,
                     fx0 + bw, base - fh)
                 tongue.close()
-                c.drawPath(tongue, fill(amberBr, 210))
+                c.drawPath(tongue, fill(amberBr, 215))
                 val fp = Path()
                 Doodle.roundRect(fp, fx0, base - fh, bw, fh, 2f * d, 1f * d, r)
-                Doodle.ink(c, fp, stroke(red, 1.8f, 195), 0.7f * d)
-                // Искры над столбом.
-                for (k in 0 until 4) {
-                    var g = (ph2 * 0.9f + k * 0.25f) % 1f
+                Doodle.ink(c, fp, stroke(red, 1.8f, 200), 0.7f * d)
+                for (k in 0 until 5) {
+                    var g = (ph2 * 1.1f + k * 0.2f) % 1f
                     if (g < 0f) g += 1f
-                    c.drawCircle(fireX + 5f * d * sin((g * 6f + k).toDouble()).toFloat(),
-                        base - fh - 6f * d - g * h * 0.30f, 1.4f * d,
-                        fill(amberBr, (200f * (1f - g) * grow).toInt().coerceIn(0, 255)))
+                    c.drawCircle(fireX + 6f * d * sin((g * 6f + k).toDouble()).toFloat(),
+                        base - fh - 5f * d - g * h * 0.34f, 1.5f * d,
+                        fill(amberBr, (215f * (1f - g) * grow).toInt().coerceIn(0, 255)))
                 }
             }
 
-            // Бегун: прыжки по воде -> подброс огнём -> возврат слева.
-            var fx: Float; var fy: Float; var visible = true
-            if (t < 0.58f) {
-                val tt = (t / 0.58f) * n
-                val i0 = tt.toInt().coerceIn(0, n - 1)
-                val fr = tt - i0
-                val i1 = (i0 + 1).coerceAtMost(n - 1)
-                fx = cxs[i0] + (cxs[i1] - cxs[i0]) * fr
-                val hop = 7f * d * sin((Math.PI * fr).toDouble()).toFloat()
-                fy = tops[i0] + (tops[i1] - tops[i0]) * fr - hop
-            } else if (t < 0.68f) {
-                val fr = (t - 0.58f) / 0.10f
-                fx = cxs[n - 1] + (fireX - cxs[n - 1]) * fr
-                val hop = 10f * d * sin((Math.PI * fr).toDouble()).toFloat()
-                fy = tops[n - 1] + (fireTop - tops[n - 1]) * fr - hop
-            } else if (t < 0.86f) {
-                val fr = (t - 0.68f) / 0.18f
-                fx = fireX + w * 0.05f * fr
-                fy = fireTop - (h * 1.8f) * (fr * fr)
-                visible = fy > -h * 0.6f
-            } else {
-                val fr = (t - 0.86f) / 0.14f
-                fx = -w * 0.08f + (bx0 + bw / 2f + w * 0.08f) * fr
+            // Траектория героя по фазам.
+            var fx: Float; var fy: Float
+            var onBoard = false; var lean = 0f; var visible = true
+            var splash = 0f
+            if (t < 0.10f) {                       // разбег из-за кадра
+                val fr = t / 0.10f
+                fx = -w * 0.10f + (cxs[0] + w * 0.10f) * fr
                 fy = base
+            } else if (t < 0.16f) {                // прыжок на первую волну
+                val fr = (t - 0.10f) / 0.06f
+                fx = cxs[0]
+                fy = base + (tops[0] - base) * fr - 12f * d * sin((Math.PI * fr).toDouble()).toFloat()
+                onBoard = fr > 0.35f
+            } else if (t < 0.54f) {                // сёрф вверх по волнам
+                val u = (t - 0.16f) / 0.38f * (n - 1)
+                val i0 = u.toInt().coerceIn(0, n - 2)
+                val fr = u - i0
+                fx = cxs[i0] + (cxs[i0 + 1] - cxs[i0]) * fr
+                val arc = 13f * d * sin((Math.PI * fr).toDouble()).toFloat()
+                fy = tops[i0] + (tops[i0 + 1] - tops[i0]) * fr - arc
+                onBoard = true
+                lean = -16f * sin((Math.PI * fr).toDouble()).toFloat()
+                if (fr < 0.16f) splash = 1f - fr / 0.16f
+            } else if (t < 0.70f) {                // срыв и падение с ускорением
+                val fr = (t - 0.54f) / 0.16f
+                fx = cxs[n - 1] + (fireX - cxs[n - 1]) * fr
+                fy = tops[n - 1] + (contactY - tops[n - 1]) * (fr * fr)
+                onBoard = true
+                lean = 22f * fr
+            } else {                               // подхват огнём и выброс
+                val fr = (t - 0.70f) / 0.26f
+                fx = fireX + w * 0.04f * fr
+                fy = contactY - (h * 2.1f) * (fr * fr)
+                lean = -30f * fr
+                visible = fy > -h * 0.7f
             }
+
+            // Доска: под ногами, а после подхвата улетает вправо с вращением.
+            if (onBoard || t >= 0.70f) {
+                c.save()
+                if (t < 0.70f) {
+                    c.translate(fx, fy + 1.5f * d); c.rotate(lean * 0.5f)
+                    c.drawRoundRect(-8.5f * d, -1.6f * d, 8.5f * d, 1.6f * d,
+                        1.6f * d, 1.6f * d, fill(amber, 240))
+                    c.drawLine(-8.5f * d, 0f, 8.5f * d, 0f, stroke(amberBr, 1.2f, 200))
+                } else {
+                    val fr = ((t - 0.70f) / 0.30f).coerceAtMost(1f)
+                    val bxx = fireX + w * 0.55f * fr
+                    val byy = contactY - h * 0.55f * fr + h * 0.9f * fr * fr
+                    c.translate(bxx, byy); c.rotate(760f * fr)
+                    val al = (255f * (1f - fr)).toInt().coerceIn(0, 255)
+                    c.drawRoundRect(-8.5f * d, -1.6f * d, 8.5f * d, 1.6f * d,
+                        1.6f * d, 1.6f * d, fill(amber, al))
+                }
+                c.restore()
+            }
+
+            // Брызги в момент касания гребня.
+            if (splash > 0f) {
+                for (k in 0 until 5) {
+                    val a2 = Math.PI * (0.15 + 0.7 * k / 4.0)
+                    val rr2 = (5f + 9f * (1f - splash)) * d
+                    c.drawCircle(fx - rr2 * kotlin.math.cos(a2).toFloat(),
+                        fy + 2f * d - rr2 * kotlin.math.sin(a2).toFloat() * 0.8f,
+                        1.5f * d, fill(blueBr, (200f * splash).toInt().coerceIn(0, 255)))
+                }
+            }
+
             if (visible) {
-                val stride = 2.6f * d * sin((ph2 * 7f).toDouble()).toFloat()
+                // Краснеет РОВНО с касанием огня, не раньше.
+                val tint = if (t >= 0.70f) red else amberBr
+                c.save()
+                c.translate(fx, fy); c.rotate(lean * 0.35f)
+                val stride = 3f * d * sin((ph2 * 9f).toDouble()).toFloat()
                 val fig = Path()
-                fig.moveTo(fx, fy - 5.5f * d); fig.lineTo(fx, fy - 1.5f * d)
-                fig.moveTo(fx, fy - 1.5f * d); fig.lineTo(fx - 2.6f * d - stride, fy)
-                fig.moveTo(fx, fy - 1.5f * d); fig.lineTo(fx + 2.6f * d + stride, fy)
-                val tint = if (t in 0.58f..0.86f) red else amberBr
-                c.drawCircle(fx, fy - 8f * d, 2.6f * d, fill(tint, 240))
-                Doodle.ink(c, fig, stroke(tint, 2f, 240), 0.6f * d)
+                fig.moveTo(0f, -5.5f * d); fig.lineTo(0f, -1.5f * d)
+                if (t >= 0.70f) {                  // выброс: ноги поджаты, руки вверх
+                    fig.moveTo(0f, -1.5f * d); fig.lineTo(-3.4f * d, 1.4f * d)
+                    fig.moveTo(0f, -1.5f * d); fig.lineTo(3.4f * d, 1.4f * d)
+                    fig.moveTo(0f, -4.6f * d); fig.lineTo(-4.2f * d, -8.6f * d)
+                    fig.moveTo(0f, -4.6f * d); fig.lineTo(4.2f * d, -8.6f * d)
+                } else if (onBoard) {              // стойка сёрфера
+                    fig.moveTo(0f, -1.5f * d); fig.lineTo(-4.2f * d, 1.2f * d)
+                    fig.moveTo(0f, -1.5f * d); fig.lineTo(3.6f * d, 1.2f * d)
+                    fig.moveTo(0f, -4.4f * d); fig.lineTo(-5.4f * d, -6.6f * d)
+                    fig.moveTo(0f, -4.4f * d); fig.lineTo(5.4f * d, -5.4f * d)
+                } else {                           // бег
+                    fig.moveTo(0f, -1.5f * d); fig.lineTo(-2.6f * d - stride, 0f)
+                    fig.moveTo(0f, -1.5f * d); fig.lineTo(2.6f * d + stride, 0f)
+                    fig.moveTo(0f, -4.4f * d); fig.lineTo(4.4f * d, -6.2f * d)
+                }
+                c.drawCircle(0f, -8f * d, 2.6f * d, fill(tint, 245))
+                Doodle.ink(c, fig, stroke(tint, 2f, 245), 0.6f * d)
+                c.restore()
             }
         }
 
