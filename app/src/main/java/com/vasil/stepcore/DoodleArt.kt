@@ -548,7 +548,7 @@ class DoodleBorderDrawable(
         strokeJoin = Paint.Join.ROUND
         strokeCap = Paint.Cap.ROUND
         color = lighten(strokeColor, 0.55f)
-        alpha = 150
+        alpha = 175
     }
     private val shPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -556,9 +556,14 @@ class DoodleBorderDrawable(
         strokeJoin = Paint.Join.ROUND
         strokeCap = Paint.Cap.ROUND
         color = Color.BLACK
-        alpha = 170
+        alpha = 195
     }
     private val d = density
+    private val rivFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = 0xFF6B7488.toInt() }
+    private val rivRing = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = 0xFF07090D.toInt() }
+    private val rivHi = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = 0xFFAEB8C8.toInt(); alpha = 200 }
+    private val rivets = FloatArray(8)
+    private var bigEnough = false
     /** Готовые варианты контура - по одному на кадр "кипения". */
     private val frames = Array(BoilClock.FRAMES) { Path() }
     private var builtFor = Rect()
@@ -579,6 +584,21 @@ class DoodleBorderDrawable(
                 bounds.width() - 2 * inset, bounds.height() - 2 * inset,
                 14f * d, 1.5f * d, w)
         }
+
+        // Объём плиты: диагональная растушёвка СВОЕГО тона (свет сверху-слева).
+        if (fillColor != Color.TRANSPARENT) {
+            fillPaint.shader = android.graphics.LinearGradient(
+                0f, 0f, bounds.width().toFloat(), bounds.height().toFloat(),
+                intArrayOf(lighten(fillColor, 0.18f), fillColor, darken(fillColor, 0.30f)),
+                floatArrayOf(0f, 0.5f, 1f), android.graphics.Shader.TileMode.CLAMP)
+        }
+        // Гвозди по углам - только на крупных плитах (чипы остаются чистыми).
+        bigEnough = bounds.width() > 130 * d && bounds.height() > 46 * d
+        val ri = 12f * d
+        rivets[0] = inset + ri; rivets[1] = inset + ri
+        rivets[2] = bounds.width() - inset - ri; rivets[3] = inset + ri
+        rivets[4] = inset + ri; rivets[5] = bounds.height() - inset - ri
+        rivets[6] = bounds.width() - inset - ri; rivets[7] = bounds.height() - inset - ri
     }
 
     /**
@@ -598,12 +618,22 @@ class DoodleBorderDrawable(
 
     override fun draw(canvas: Canvas) {
         val p = frames[BoilClock.frame]
-        val off = 1.4f * d
+        val off = 1.7f * d
         // тёмная грань снизу-справа (глубина), затем светлый кант сверху-слева
         canvas.save(); canvas.translate(off, off); canvas.drawPath(p, shPaint); canvas.restore()
         canvas.save(); canvas.translate(-off, -off); canvas.drawPath(p, hiPaint); canvas.restore()
         if (fillColor != Color.TRANSPARENT) canvas.drawPath(p, fillPaint)
         Doodle.ink(canvas, p, strokePaint, 0.8f * d)
+        // Кованые гвозди по углам (только крупные плиты).
+        if (bigEnough) {
+            val rr = 3.6f * d
+            for (k in 0 until 4) {
+                val cx = rivets[k * 2]; val cy = rivets[k * 2 + 1]
+                canvas.drawCircle(cx, cy, rr, rivRing)
+                canvas.drawCircle(cx, cy, rr * 0.82f, rivFill)
+                canvas.drawCircle(cx - rr * 0.3f, cy - rr * 0.3f, rr * 0.3f, rivHi)
+            }
+        }
     }
 
     /** Осветление цвета к белому на долю t - для светлого канта резьбы. */
@@ -612,6 +642,12 @@ class DoodleBorderDrawable(
         val g = (Color.green(c) + (255 - Color.green(c)) * t).toInt()
         val b = (Color.blue(c) + (255 - Color.blue(c)) * t).toInt()
         return Color.argb(255, r, g, b)
+    }
+
+    /** Затемнение цвета на долю t - для тёмного края объёма/тона камня. */
+    private fun darken(c: Int, t: Float): Int {
+        return Color.argb(255, (Color.red(c) * (1 - t)).toInt(),
+            (Color.green(c) * (1 - t)).toInt(), (Color.blue(c) * (1 - t)).toInt())
     }
 
     override fun setAlpha(alpha: Int) { strokePaint.alpha = alpha }
