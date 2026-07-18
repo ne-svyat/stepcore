@@ -1763,18 +1763,94 @@ class DoodleSceneView @JvmOverloads constructor(
         skyFill.alpha = 255
     }
 
+    /**
+     * Песочные часы: конус песка сверху, растущая горка снизу и отдельные
+     * падающие песчинки (линия-«струйка» читалась как палка). Когда песок
+     * пересыпался - часы плавно переворачиваются, и цикл идёт заново.
+     */
+    private fun hourglassRich(c: Canvas, cx: Float, cy: Float, ww: Float, hh: Float, tint: Int) {
+        val period = 10f
+        val t = loop(period, 0f) * period
+        val pour = 8.5f
+        val fr = if (t > pour) (t - pour) / (period - pour) else 0f
+        val flip = fr * fr * (3f - 2f * fr)   // плавный старт и остановка
+        val fillTop = if (t <= pour) 1f - t / pour else 0f
+        val botFrac = 1f - fillTop
+
+        c.save()
+        c.rotate(180f * flip, cx, cy)
+
+        val top = cy - hh / 2f; val bot = cy + hh / 2f
+        val hw = ww / 2f; val neck = ww * 0.07f; val half = hh / 2f
+
+        val glass = Path()
+        glass.moveTo(cx - hw, top); glass.lineTo(cx + hw, top)
+        glass.lineTo(cx + neck, cy); glass.lineTo(cx + hw, bot)
+        glass.lineTo(cx - hw, bot); glass.lineTo(cx - neck, cy)
+        glass.close()
+        skyFill.color = lightenC(tint, 0.60f); skyFill.alpha = 26
+        c.drawPath(glass, skyFill)
+
+        c.save(); c.clipPath(glass)
+        if (fillTop > 0.02f) {
+            val fh = half * fillTop
+            val yTop = cy - fh
+            val wTop = neck + (hw - neck) * fillTop
+            val sp = Path()
+            sp.moveTo(cx - wTop, yTop); sp.lineTo(cx + wTop, yTop)
+            sp.lineTo(cx + neck, cy); sp.lineTo(cx - neck, cy); sp.close()
+            skyFill.color = tint; skyFill.alpha = 215; c.drawPath(sp, skyFill)
+            skyFill.color = lightenC(tint, 0.45f); skyFill.alpha = 120
+            c.drawRect(cx - wTop, yTop, cx + wTop, yTop + 1.6f * d, skyFill)
+        }
+        val moundH = half * 0.80f * botFrac
+        if (botFrac > 0.02f) {
+            val mw = hw * (0.45f + 0.55f * botFrac)
+            val mp = Path()
+            mp.moveTo(cx - mw, bot); mp.lineTo(cx + mw, bot)
+            mp.lineTo(cx + mw * 0.34f, bot - moundH)
+            mp.lineTo(cx, bot - moundH * 1.18f)
+            mp.lineTo(cx - mw * 0.34f, bot - moundH)
+            mp.close()
+            skyFill.color = tint; skyFill.alpha = 225; c.drawPath(mp, skyFill)
+        }
+        // Песчинки: падают от горла до вершины горки, вразнобой.
+        if (fillTop > 0.02f && flip <= 0f) {
+            val ph = BoilClock.phase
+            val landY = bot - moundH * 1.18f
+            for (k in 0 until 9) {
+                var g = (ph * 1.7f + k * 0.1111f) % 1f
+                if (g < 0f) g += 1f
+                val gy = cy + (landY - cy) * g
+                val gx = cx + 1.3f * d * kotlin.math.sin((ph * 8f + k * 1.7f).toDouble()).toFloat()
+                val a2 = if (g > 0.88f) (1f - g) / 0.12f else 1f
+                skyFill.color = lightenC(tint, 0.35f)
+                skyFill.alpha = (230f * a2).toInt().coerceIn(0, 255)
+                c.drawCircle(gx, gy, (0.9f + 0.5f * ((k % 3) / 2f)) * d, skyFill)
+            }
+        }
+        c.restore()
+
+        skyOutline.color = lightenC(tint, 0.35f)
+        Doodle.ink(c, glass, skyOutline, 0.6f * d)
+        // Блик стекла и деревянные оправы.
+        rayPaint.color = 0xFFFFFFFF.toInt(); rayPaint.alpha = 95; rayPaint.strokeWidth = 1.8f * d
+        c.drawLine(cx - hw * 0.62f, top + hh * 0.10f, cx - neck * 1.6f, cy - hh * 0.06f, rayPaint)
+        skyFill.color = darkenC(tint, 0.55f); skyFill.alpha = 245
+        c.drawRect(cx - hw * 1.10f, top - 3f * d, cx + hw * 1.10f, top + 1.5f * d, skyFill)
+        c.drawRect(cx - hw * 1.10f, bot - 1.5f * d, cx + hw * 1.10f, bot + 3f * d, skyFill)
+        skyFill.alpha = 255
+        c.restore()
+    }
+
     private fun drawCalibration(c: Canvas, w: Float, h: Float, r: Wobble) {
         val ph = BoilClock.phase
         gearRich(c, w * 0.16f, h * 0.46f, h * 0.30f, 8, ph * 22f, r, violet)
         // Вторая шестерня крутится В ОБРАТНУЮ сторону и быстрее - так и
         // работает зубчатая передача: меньше колесо - выше обороты.
         gearRich(c, w * 0.34f, h * 0.72f, h * 0.19f, 6, -ph * 33f, r, violetBr)
-        // Песок пересыпается за 8 с и переворачивается заново.
-        val sandFill = 1f - loop(8f, 0f)
-        val frame = Path(); val sand = Path()
-        Doodle.hourglass(frame, sand, w * 0.62f, h * 0.50f, h * 0.34f, h * 0.62f, sandFill, r)
-        c.drawPath(sand, fill(amber, 120))
-        Doodle.ink(c, frame, stroke(amberBr, 2f), 0.8f * d)
+        // Песок пересыпается, затем часы переворачиваются (см. hourglassRich).
+        hourglassRich(c, w * 0.62f, h * 0.50f, h * 0.34f, h * 0.62f, amber)
         // Компас: прибор поверки направления рядом с механизмом.
         compassRich(c, w * 0.87f, h * 0.46f, h * 0.30f, blueBr)
         stars(c, blueBr, listOf(Triple(0.72f, 0.86f, 0.06f)), w, h, r)
