@@ -103,17 +103,67 @@ class MotiveScrollView @JvmOverloads constructor(
         }
 
         if (current.isEmpty()) return
-        // Кегль подбирается так, чтобы длинная реплика влезла целиком.
-        val maxW = w - rollW * 2.6f
-        var size = h * 0.40f
-        text.textSize = size
-        while (text.measureText(current) > maxW && size > 7f * d) {
-            size -= 0.5f * d
+
+        // Кегль подбирается под ДЛИНУ реплики: короткая идёт крупно, длинная
+        // мельче, но целиком. Переносим по словам, максимум три строки.
+        val maxW = w - rollW * 2.4f
+        val maxH = (bottom - top) - 4f * d
+        var size = h * 0.42f
+        var lines: List<String> = emptyList()
+        while (size > 6.5f * d) {
             text.textSize = size
+            lines = wrapLines(current, maxW, MAX_LINES)
+            val fm = text.fontMetrics
+            val lineH = (fm.descent - fm.ascent) * 0.96f
+            val fits = lines.size <= MAX_LINES &&
+                lines.all { text.measureText(it) <= maxW } &&
+                lines.size * lineH <= maxH
+            if (fits) break
+            size -= 0.5f * d
         }
-        text.alpha = (235f * alpha).toInt().coerceIn(0, 255)
+        text.textSize = size
+
+        // Чернила тихо переливаются между двумя читаемыми оттенками.
+        val k = 0.5f + 0.5f * kotlin.math.sin(
+            (System.currentTimeMillis() % 6000L) / 6000.0 * 2.0 * Math.PI).toFloat()
+        val cr = (0x4A + (0x6B - 0x4A) * k).toInt()
+        val cg = (0x3B + (0x50 - 0x3B) * k).toInt()
+        val cb = (0x22 + (0x2E - 0x22) * k).toInt()
+        text.color = android.graphics.Color.rgb(cr, cg, cb)
+        text.alpha = (238f * alpha).toInt().coerceIn(0, 255)
+
         val fm = text.fontMetrics
-        val baseline = (top + bottom) / 2f - (fm.ascent + fm.descent) / 2f
-        canvas.drawText(current, w / 2f, baseline, text)
+        val lineH = (fm.descent - fm.ascent) * 0.96f
+        val block = lines.size * lineH
+        var y2 = (top + bottom) / 2f - block / 2f - fm.ascent * 0.96f
+        for (ln in lines) {
+            canvas.drawText(ln, w / 2f, y2, text)
+            y2 += lineH
+        }
+        // Перелив медленный: обновляем не чаще пяти раз в секунду.
+        postInvalidateDelayed(200)
+    }
+
+    /** Перенос по словам: длинное слово не рвётся, лишнее уходит в остаток. */
+    private fun wrapLines(src: String, maxW: Float, limit: Int): List<String> {
+        val words = src.split(' ')
+        val out = ArrayList<String>()
+        var line = StringBuilder()
+        for (word in words) {
+            val probe = if (line.isEmpty()) word else line.toString() + " " + word
+            if (text.measureText(probe) <= maxW || line.isEmpty()) {
+                line = StringBuilder(probe)
+            } else {
+                out.add(line.toString())
+                line = StringBuilder(word)
+                if (out.size == limit) break
+            }
+        }
+        if (out.size < limit && line.isNotEmpty()) out.add(line.toString())
+        return out
+    }
+
+    private companion object {
+        const val MAX_LINES = 3
     }
 }

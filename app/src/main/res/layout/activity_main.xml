@@ -69,14 +69,16 @@
                     android:id="@+id/goalText"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
+                    android:layout_gravity="end"
                     android:text="0% · цель 10 000"
                     android:textColor="@color/text_dim"
                     android:textSize="15sp"
-                    android:layout_marginBottom="8dp" />
+                    android:layout_marginBottom="5dp" />
 
                 <LinearLayout
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
+                    android:layout_gravity="end"
                     android:orientation="horizontal"
                     android:gravity="center_vertical">
                     <View android:layout_width="8dp" android:layout_height="8dp"
@@ -94,6 +96,7 @@
                 <LinearLayout
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
+                    android:layout_gravity="end"
                     android:orientation="horizontal"
                     android:gravity="center_vertical"
                     android:layout_marginTop="2dp"
@@ -129,7 +132,7 @@
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
                     android:gravity="center_vertical"
-                    android:layout_marginTop="6dp">
+                    android:layout_marginTop="4dp">
 
                     <TextView
                         android:id="@+id/modeText"
@@ -174,7 +177,7 @@
                     android:text="СЧЁТ НЕ ИДЁТ"
                     android:textColor="@color/accent_red_bright"
                     android:textSize="14sp"
-                    android:layout_marginTop="6dp" />
+                    android:layout_marginTop="3dp" />
 
                 <Button
                     android:id="@+id/toggleButton"
@@ -183,15 +186,15 @@
                     android:text="Старт"
                     android:textSize="20sp"
                     android:textStyle="bold"
-                    android:layout_marginTop="4dp" />
+                    android:layout_marginTop="3dp" />
             </LinearLayout>
         </LinearLayout>
 
         <com.vasil.stepcore.MotiveScrollView
             android:id="@+id/motiveScroll"
             android:layout_width="match_parent"
-            android:layout_height="40dp"
-            android:layout_marginTop="6dp" />
+            android:layout_height="66dp"
+            android:layout_marginTop="4dp" />
 
         <TextView
             android:id="@+id/inclineLabel"
