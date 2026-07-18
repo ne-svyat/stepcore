@@ -6,6 +6,7 @@ import android.content.Context
 import android.os.Bundle
 import android.view.View
 import android.widget.Button
+import androidx.core.content.ContextCompat
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -231,6 +232,7 @@ class HistoryActivity : AppCompatActivity() {
         // V14.4: своя сцена — архивные тетради, нейтральный серый.
         findViewById<DoodleSceneView>(R.id.doodleHeader).setScene(DoodleSceneView.HISTORY)
 
+        styleHistoryButtons()
         findViewById<Button>(R.id.filter7).setOnClickListener { setFilter(7) }
         findViewById<Button>(R.id.filter30).setOnClickListener { setFilter(30) }
         findViewById<Button>(R.id.filter365).setOnClickListener { setFilter(365) }
@@ -275,7 +277,48 @@ class HistoryActivity : AppCompatActivity() {
 
     private fun setFilter(days: Int) {
         currentFilterDays = days
+        styleHistoryButtons()
         reload()
+    }
+
+    /**
+     * Кнопки экрана в каменном языке приложения с явной иерархией:
+     * активный фильтр периода светится, экспорт/импорт - спокойный камень,
+     * удаление - единственная красная кнопка на экране.
+     */
+    private fun styleHistoryButtons() {
+        val d = resources.displayMetrics.density
+        fun plate(v: Button?, accent: Int, mat: Int, seed: Long, bright: Boolean) {
+            if (v == null) return
+            v.stateListAnimator = null
+            v.elevation = 0f
+            v.background = DoodleBorderDrawable(
+                ContextCompat.getColor(this, accent),
+                ContextCompat.getColor(this, R.color.surface),
+                seed, d, mat)
+            v.setTextColor(ContextCompat.getColor(this,
+                if (bright) accent else R.color.text_dim))
+            v.setPadding((14 * d).toInt(), (9 * d).toInt(), (14 * d).toInt(), (9 * d).toInt())
+        }
+        val filters = listOf(
+            Triple(R.id.filter7, 7, 311L),
+            Triple(R.id.filter30, 30, 312L),
+            Triple(R.id.filter365, 365, 313L),
+            Triple(R.id.filterAll, Int.MAX_VALUE, 314L),
+        )
+        for ((id, days, seed) in filters) {
+            val active = currentFilterDays == days
+            plate(findViewById(id), if (active) R.color.accent_blue else R.color.axis_dim,
+                if (active) DoodleBorderDrawable.MAT_LIGHTNING else DoodleBorderDrawable.MAT_ROCK,
+                seed, active)
+        }
+        plate(findViewById(R.id.copyButton), R.color.axis_dim, DoodleBorderDrawable.MAT_ROCK, 321L, false)
+        plate(findViewById(R.id.exportCsvButton), R.color.accent_green, DoodleBorderDrawable.MAT_ROCK, 322L, true)
+        plate(findViewById(R.id.exportJsonButton), R.color.accent_green, DoodleBorderDrawable.MAT_ROCK, 323L, true)
+        plate(findViewById(R.id.importJsonButton), R.color.accent_amber, DoodleBorderDrawable.MAT_ROPE, 324L, true)
+        plate(findViewById(R.id.copySelectedButton), R.color.accent_blue, DoodleBorderDrawable.MAT_ROCK, 325L, true)
+        // Удаление необратимо - единственная красная плита, с огнём.
+        plate(findViewById(R.id.deleteButton), R.color.accent_red, DoodleBorderDrawable.MAT_FIRE, 326L, true)
     }
 
     private fun reload() {

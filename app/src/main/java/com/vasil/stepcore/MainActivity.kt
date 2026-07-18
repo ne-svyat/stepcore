@@ -299,9 +299,12 @@ class MainActivity : AppCompatActivity() {
                             TerrainState.Incline.DOWN -> "Уклон: с горы"
                             else -> "Уклон: ровно"
                         }
-                        inclineUpBtn.alpha = if (v == TerrainState.Incline.UP) 1f else 0.45f
-                        inclineFlatBtn.alpha = if (v == TerrainState.Incline.FLAT) 1f else 0.45f
-                        inclineDownBtn.alpha = if (v == TerrainState.Incline.DOWN) 1f else 0.45f
+                        styleIncline(inclineUpBtn, v == TerrainState.Incline.UP,
+                            R.color.accent_amber, 201L)
+                        styleIncline(inclineFlatBtn, v == TerrainState.Incline.FLAT,
+                            R.color.accent_green, 202L)
+                        styleIncline(inclineDownBtn, v == TerrainState.Incline.DOWN,
+                            R.color.accent_blue, 203L)
                     }
                 }
                 // Дорого (почасовой расчёт, БД) - по таймеру, не на каждый шаг.
@@ -559,6 +562,29 @@ class MainActivity : AppCompatActivity() {
      * что мгновенно выдаёт машину. Разные сиды = как нарисовано от руки
      * несколько раз.
      */
+    /**
+     * Чип уклона. Выбор показывается ЦВЕТОМ и кантом, а не прозрачностью:
+     * притушенный до 45% текст было тяжело читать, а именно он и говорит,
+     * какой режим сейчас активен.
+     */
+    private fun styleIncline(v: TextView, selected: Boolean, accent: Int, seed: Long) {
+        v.alpha = 1f
+        val d = resources.displayMetrics.density
+        if (selected) {
+            v.background = DoodleBorderDrawable(
+                ContextCompat.getColor(this, accent),
+                ContextCompat.getColor(this, R.color.surface),
+                seed, d, DoodleBorderDrawable.MAT_LIGHTNING)
+            v.setTextColor(ContextCompat.getColor(this, accent))
+        } else {
+            v.background = DoodleBorderDrawable(
+                ContextCompat.getColor(this, R.color.axis_dim),
+                ContextCompat.getColor(this, R.color.surface),
+                seed, d, DoodleBorderDrawable.MAT_ROCK)
+            v.setTextColor(ContextCompat.getColor(this, R.color.text_dim))
+        }
+    }
+
     private fun applyDoodleStyle() {
         val d = resources.displayMetrics.density
         fun col(id: Int) = ContextCompat.getColor(this, id)
