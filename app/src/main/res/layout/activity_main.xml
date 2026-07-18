@@ -8,7 +8,7 @@
         android:layout_height="wrap_content"
         android:orientation="vertical"
         android:gravity="center_horizontal"
-        android:padding="18dp">
+        android:padding="11dp">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -56,7 +56,7 @@
             android:id="@+id/headerScene"
             android:layout_width="match_parent"
             android:layout_height="84dp"
-            android:layout_marginTop="10dp" />
+            android:layout_marginTop="7dp" />
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -164,7 +164,7 @@
             android:text="СЧЁТ НЕ ИДЁТ"
             android:textColor="@color/accent_red_bright"
             android:textSize="16sp"
-            android:layout_marginTop="10dp" />
+            android:layout_marginTop="7dp" />
 
         <Button
             android:id="@+id/toggleButton"
@@ -183,7 +183,7 @@
             android:text="Уклон: ровно"
             android:textColor="@color/text_dim"
             android:textSize="14sp"
-            android:layout_marginTop="12dp" />
+            android:layout_marginTop="9dp" />
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -200,8 +200,8 @@
                 android:text="↗ В гору"
                 android:textColor="@color/accent_amber_bright"
                 android:textSize="14sp"
-                android:paddingTop="13dp"
-                android:paddingBottom="13dp"
+                android:paddingTop="10dp"
+                android:paddingBottom="10dp"
                 android:layout_marginEnd="4dp" />
 
             <TextView
@@ -213,8 +213,8 @@
                 android:text="Ровно"
                 android:textColor="@color/text_main"
                 android:textSize="14sp"
-                android:paddingTop="13dp"
-                android:paddingBottom="13dp"
+                android:paddingTop="10dp"
+                android:paddingBottom="10dp"
                 android:layout_marginStart="3dp"
                 android:layout_marginEnd="3dp" />
 
@@ -227,8 +227,8 @@
                 android:text="↘ С горы"
                 android:textColor="@color/accent_teal_bright"
                 android:textSize="14sp"
-                android:paddingTop="13dp"
-                android:paddingBottom="13dp"
+                android:paddingTop="10dp"
+                android:paddingBottom="10dp"
                 android:layout_marginStart="4dp" />
         </LinearLayout>
 
@@ -236,7 +236,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:columnCount="2"
-            android:layout_marginTop="14dp">
+            android:layout_marginTop="10dp">
 
             <LinearLayout
                 android:id="@+id/distanceChip"
@@ -318,7 +318,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:layout_marginTop="10dp">
+            android:layout_marginTop="7dp">
 
             <FrameLayout
                 android:id="@+id/yesterdayCard"
@@ -335,7 +335,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical"
-                    android:padding="14dp">
+                    android:padding="11dp">
 
                     <TextView
                         android:layout_width="wrap_content" android:layout_height="wrap_content"
@@ -391,7 +391,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical"
-                    android:padding="14dp">
+                    android:padding="11dp">
 
                     <TextView
                         android:layout_width="wrap_content" android:layout_height="wrap_content"
@@ -432,7 +432,7 @@
         <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="14dp">
+            android:layout_marginTop="10dp">
 
             <com.vasil.stepcore.DoodleSceneView
                 android:id="@+id/expeditionScene"
@@ -445,7 +445,7 @@
             android:layout_height="wrap_content"
             android:orientation="horizontal"
             android:gravity="center_vertical"
-            android:padding="16dp">
+            android:padding="10dp">
 
             <com.vasil.stepcore.survival.SeasonDiamondView
                 android:id="@+id/expeditionSeasonView"
@@ -501,7 +501,7 @@
                 android:layout_height="match_parent"
                 android:orientation="vertical"
                 android:gravity="center_vertical"
-                android:padding="14dp"
+                android:padding="11dp"
                 android:layout_marginEnd="5dp">
                 <TextView
                     android:layout_width="wrap_content" android:layout_height="wrap_content"
@@ -602,7 +602,7 @@
             android:text="Вибрация на шаг"
             android:textColor="@color/text_main"
             android:textSize="19sp"
-            android:layout_marginTop="16dp" />
+            android:layout_marginTop="11dp" />
 
         <TextView
             android:id="@+id/toolsToggle"
@@ -628,7 +628,7 @@
                 android:text="Калибровки перенесены на отдельный экран — кнопка «Калибровка» выше."
                 android:textColor="@color/text_dim"
                 android:textSize="15sp"
-                android:layout_marginBottom="10dp" />
+                android:layout_marginBottom="7dp" />
 
             <androidx.appcompat.widget.SwitchCompat
                 android:id="@+id/detailLogSwitch"
@@ -637,7 +637,7 @@
                 android:text="Детальный лог (диагностика)"
                 android:textColor="@color/text_main"
                 android:textSize="18sp"
-                android:layout_marginTop="12dp" />
+                android:layout_marginTop="9dp" />
 
             <Button
                 android:id="@+id/diagButton"
@@ -654,7 +654,7 @@
                 android:textColor="@color/text_dim"
                 android:fontFamily="monospace"
                 android:textSize="14sp"
-                android:layout_marginTop="12dp" />
+                android:layout_marginTop="9dp" />
         </LinearLayout>
 
     </LinearLayout>

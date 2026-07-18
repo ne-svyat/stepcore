@@ -23,7 +23,7 @@
     <color name="accent_amber_bright">#FAC775</color>
     <color name="surface_amber">#241A08</color>
     <color name="text_main">#F5F5F5</color>
-    <color name="text_dim">#9A9A9A</color>
+    <color name="text_dim">#ADADAD</color>
     <color name="axis_dim">#5A5A5A</color>
     <!-- уровни активности: красный(мало) -> зелёный(много) -->
     <color name="hm_empty">#161616</color>
