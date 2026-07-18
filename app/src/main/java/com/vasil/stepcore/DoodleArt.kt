@@ -1900,12 +1900,14 @@ class DoodleSceneView @JvmOverloads constructor(
             // Кубик: в руках -> падает на стопку -> сорван ветром -> летит в
             // затылок -> улетает вместе с носильщиком.
             if (t < 0.38f) {
+                // Кубик один и тот же на всём пути: тот же цвет и размер,
+                // что у кубиков стопки - иначе он читается как чужой предмет.
                 val bob = 1.4f * d * sin((ph3 * 6f).toDouble()).toFloat()
-                cubeIso(c, fx, base - sz * 2.05f + bob, sz * 0.72f, blueBr)
+                cubeIso(c, fx + sz * 0.10f, base - sz * 1.72f + bob, sz, blue)
             } else if (t < 0.46f) {
                 val fall = (t - 0.38f) / 0.08f
-                val fromY = base - sz * 2.05f
-                cubeIso(c, dropX, fromY + (stackTopY - fromY) * (fall * fall), sz * 0.72f, blueBr)
+                val fromY = base - sz * 1.72f
+                cubeIso(c, dropX, fromY + (stackTopY - fromY) * (fall * fall), sz, blue)
             } else if (t < 0.72f && t >= 0.62f) {
                 // сорвало и понесло: догоняет носильщика, ускоряясь
                 val fr = (t - 0.62f) / 0.10f
@@ -1913,14 +1915,14 @@ class DoodleSceneView @JvmOverloads constructor(
                 val cxp = dropX + (toX - dropX) * (fr * fr)
                 val cyp = stackTopY - h * 0.16f * kotlin.math.sin((Math.PI * fr).toDouble()).toFloat()
                 c.save(); c.translate(cxp, cyp); c.rotate(300f * fr)
-                cubeIso(c, 0f, sz * 0.36f, sz * 0.72f, blueBr)
+                cubeIso(c, 0f, sz * 0.36f, sz, blue)
                 c.restore()
             } else if (t < 0.90f) {
                 val fr = (t - 0.72f) / 0.18f
                 val cxp = w * 0.30f + sz * 0.9f - (w * 0.44f) * fr
                 val cyp = base - sz * 1.4f - h * 0.22f * kotlin.math.sin((Math.PI * fr * 0.9f).toDouble()).toFloat()
                 c.save(); c.translate(cxp, cyp); c.rotate(300f + 420f * fr)
-                cubeIso(c, 0f, sz * 0.36f, sz * 0.72f, blueBr)
+                cubeIso(c, 0f, sz * 0.36f, sz, blue)
                 c.restore()
             }
 
@@ -1946,7 +1948,11 @@ class DoodleSceneView @JvmOverloads constructor(
                         fig.moveTo(0f, -sz * 1.55f); fig.lineTo(0f, -sz * 0.72f)
                         fig.moveTo(0f, -sz * 0.72f); fig.lineTo(-2.8f * d - 2f * d * stepPh, 0f)
                         fig.moveTo(0f, -sz * 0.72f); fig.lineTo(2.8f * d + 2f * d * stepPh, 0f)
-                        if (!carry) { fig.moveTo(0f, -sz * 1.35f); fig.lineTo(-4.4f * d, -sz * 1.05f) }
+                        if (carry) {
+                            // руки подняты к кубику - видно, что он его несёт
+                            fig.moveTo(0f, -sz * 1.40f); fig.lineTo(sz * 0.10f, -sz * 1.66f)
+                            fig.moveTo(0f, -sz * 1.30f); fig.lineTo(-sz * 0.22f, -sz * 1.60f)
+                        } else { fig.moveTo(0f, -sz * 1.35f); fig.lineTo(-4.4f * d, -sz * 1.05f) }
                     }
                 }
                 val headY = if (pose == 3) -sz * 1.25f else if (pose == 1) -sz * 1.55f else -sz * 1.80f
