@@ -76,7 +76,7 @@ class MotiveScrollView @JvmOverloads constructor(
         pending = line
         if (current.isEmpty()) {          // самый первый показ - без гибели
             current = line; pending = null
-            seqStart = System.currentTimeMillis() - PHASE_UNROLL
+            seqStart = System.currentTimeMillis() - PHASE_UNROLL.toLong()
         } else {
             seqStart = System.currentTimeMillis()
             byFire = !byFire
