@@ -1411,6 +1411,34 @@ class DoodleSceneView @JvmOverloads constructor(
      * идёт штриховка), строки данных, штрих-код. Красный луч идёт сверху
      * вниз по петле и подсвечивает то, что пересекает.
      */
+    /** Силуэт в фотографии: 3 разных лица (форма головы и плеч). */
+    private fun facePath(px: Float, py: Float, pw: Float, phh: Float, idx: Int): Path {
+        val p = Path()
+        val fcx = px + pw / 2f
+        val hy = py + phh * 0.36f
+        val hr = pw * (0.20f + 0.03f * idx)
+        when (idx) {
+            0 -> p.addCircle(fcx, hy, hr, Path.Direction.CW)
+            1 -> {
+                p.addOval(fcx - hr * 0.85f, hy - hr * 1.15f,
+                    fcx + hr * 0.85f, hy + hr * 1.05f, Path.Direction.CW)
+                p.addRect(fcx - hr * 0.92f, hy - hr * 1.30f,
+                    fcx + hr * 0.92f, hy - hr * 0.55f, Path.Direction.CW)
+            }
+            else -> {
+                p.moveTo(fcx - hr, hy - hr * 0.60f)
+                p.lineTo(fcx, hy - hr * 1.15f)
+                p.lineTo(fcx + hr, hy - hr * 0.60f)
+                p.lineTo(fcx + hr * 0.75f, hy + hr * 0.95f)
+                p.lineTo(fcx - hr * 0.75f, hy + hr * 0.95f)
+                p.close()
+            }
+        }
+        p.addOval(fcx - pw * 0.40f, py + phh * 0.66f,
+            fcx + pw * 0.40f, py + phh * 1.30f, Path.Direction.CW)
+        return p
+    }
+
     private fun drawPassport(c: Canvas, w: Float, h: Float, r: Wobble) {
         val cx = w * 0.72f
         val cy = h * 0.50f
@@ -1422,6 +1450,38 @@ class DoodleSceneView @JvmOverloads constructor(
         Doodle.ink(c, doc, stroke(violet, 2f), 0.8f * d)
         Doodle.ink(c, photo, stroke(violetBr, 1.4f), 0.8f * d)
         c.drawPath(bars, fill(violetBr, 150))
+
+        // Личность в базе «перебирается»: силуэт меняется с коротким глитчем.
+        run {
+            val px = cx - dw / 2f + dw * 0.04f
+            val py = cy - dh / 2f + dh * 0.06f
+            val pw = dw * 0.26f
+            val phh = dh * 0.52f
+            val tt = loop(6f, 0f) * 3f
+            val idx = tt.toInt().coerceIn(0, 2)
+            val frac = tt - idx
+            val g = if (frac < 0.14f) 1f - frac / 0.14f else 0f
+            val sil = facePath(px, py, pw, phh, idx)
+            c.save()
+            c.clipRect(px, py, px + pw, py + phh)
+            if (g > 0f) {
+                val prev = facePath(px, py, pw, phh, (idx + 2) % 3)
+                c.drawPath(prev, fill(red, (95f * g).toInt().coerceIn(0, 255)))
+            }
+            val slices = 5
+            for (k in 0 until slices) {
+                val y0 = py + phh * k / slices
+                val y1 = py + phh * (k + 1) / slices
+                val off = g * 4.5f * d *
+                    sin((BoilClock.phase * 9f + k * 2.1f).toDouble()).toFloat()
+                c.save()
+                c.clipRect(px, y0, px + pw, y1)
+                c.translate(off, 0f)
+                c.drawPath(sil, fill(violetBr, 180))
+                c.restore()
+            }
+            c.restore()
+        }
 
         val corners = Path()
         Doodle.scanCorners(corners, cx, cy, dw, dh, 10f * d)
@@ -1458,6 +1518,37 @@ class DoodleSceneView @JvmOverloads constructor(
         firRich(c, w * 0.14f, base, h * 0.36f, r)
         firRich(c, w * 0.90f, base, h * 0.42f, r)
         drifting(c, w, h, r, violet, listOf(Triple(0.16f, 0.10f, 30f)))
+
+        // Ступени-шкалы: столбики растут слева направо, по ним прыжками
+        // взбирается фигурка - рост показателей как восхождение.
+        run {
+            val n = 5
+            val bx0 = w * 0.05f; val bw = w * 0.055f; val gap = w * 0.017f
+            val tops = FloatArray(n); val cxs = FloatArray(n)
+            for (i in 0 until n) {
+                val bh = h * (0.13f + 0.095f * i)
+                val x0 = bx0 + i * (bw + gap)
+                tops[i] = base - bh; cxs[i] = x0 + bw / 2f
+                c.drawRect(x0, tops[i], x0 + bw, base, fill(blue, 95))
+                val bp = Path()
+                Doodle.roundRect(bp, x0, tops[i], bw, bh, 2f * d, 1f * d, r)
+                Doodle.ink(c, bp, stroke(blueBr, 1.6f, 165), 0.7f * d)
+            }
+            val t = loop(7f, 0f) * n
+            val i0 = t.toInt().coerceIn(0, n - 1)
+            val fr = t - i0
+            val i1 = (i0 + 1).coerceAtMost(n - 1)
+            val fx = cxs[i0] + (cxs[i1] - cxs[i0]) * fr
+            val hop = 7f * d * sin((Math.PI * fr).toDouble()).toFloat()
+            val fy = tops[i0] + (tops[i1] - tops[i0]) * fr - hop
+            val fig = Path()
+            fig.moveTo(fx, fy - 5.5f * d); fig.lineTo(fx, fy - 1.5f * d)
+            fig.moveTo(fx, fy - 1.5f * d); fig.lineTo(fx - 2.6f * d, fy)
+            fig.moveTo(fx, fy - 1.5f * d); fig.lineTo(fx + 2.6f * d, fy)
+            c.drawCircle(fx, fy - 8f * d, 2.6f * d, fill(amberBr, 235))
+            Doodle.ink(c, fig, stroke(amberBr, 2f, 235), 0.6f * d)
+        }
+
         stars(c, blueBr, listOf(Triple(0.32f, 0.20f, 0.09f), Triple(0.70f, 0.12f, 0.06f)), w, h, r)
     }
 
