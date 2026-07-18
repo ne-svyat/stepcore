@@ -577,6 +577,19 @@ class DoodleBorderDrawable(
     private val riftPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
     }
+    // Лиана: вьётся по краю плиты, приглушённая зелень (не спорит со смыслом).
+    private val vinePath = Path()
+    private val leafPath = Path()
+    private val vinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
+        color = 0xFF2F8A6A.toInt(); alpha = 165
+    }
+    private val leafFill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL; color = 0xFF3FAE86.toInt(); alpha = 150
+    }
+    private val leafEdge = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; color = 0xFF14503B.toInt(); alpha = 165
+    }
     /** Готовые варианты контура - по одному на кадр "кипения". */
     private val frames = Array(BoilClock.FRAMES) { Path() }
     private var builtFor = Rect()
@@ -636,6 +649,31 @@ class DoodleBorderDrawable(
             riftPath.lineTo(tx, ty)
             rx = tx; ry = ty
         }
+
+        // Лиана по вертикальному краю: сторона и изгибы - от сида плиты.
+        val vw = Wobble(seed * 197L + 23L)
+        val leftSide = vw.j(1f) < 0f
+        val edgeX = if (leftSide) inset + 5f * d else wid - inset - 5f * d
+        val dirIn = if (leftSide) 1f else -1f
+        vinePath.reset(); leafPath.reset()
+        vinePath.moveTo(edgeX, inset + 2f * d)
+        val segs = 3
+        var vy = inset + 2f * d
+        val segH = (hgt - 2 * inset - 4f * d) / segs
+        for (k in 1..segs) {
+            val ny = vy + segH
+            val bend = dirIn * (5f + 4f * ((vw.j(1f) + 1f) * 0.5f)) * d * (if (k % 2 == 0) -1f else 1f)
+            vinePath.quadTo(edgeX + bend, vy + segH * 0.5f, edgeX, ny)
+            // Лист у изгиба.
+            val lx = edgeX + bend * 1.15f
+            val ly = vy + segH * 0.5f
+            val ls = 6.5f * d
+            leafPath.moveTo(lx, ly)
+            leafPath.quadTo(lx + dirIn * ls * 1.5f, ly - ls * 0.95f, lx + dirIn * ls * 2.1f, ly - ls * 0.15f)
+            leafPath.quadTo(lx + dirIn * ls * 1.2f, ly + ls * 0.55f, lx, ly)
+            leafPath.close()
+            vy = ny
+        }
     }
 
     /**
@@ -670,6 +708,17 @@ class DoodleBorderDrawable(
                 canvas.drawCircle(cx, cy, rr * 0.82f, rivFill)
                 canvas.drawCircle(cx - rr * 0.3f, cy - rr * 0.3f, rr * 0.3f, rivHi)
             }
+            // Лиана: лёгкое покачивание на ветру (общий такт).
+            val vp = BoilClock.phase
+            val swayV = 1.6f * d * kotlin.math.sin((vp * 0.55f).toDouble()).toFloat()
+            canvas.save(); canvas.translate(swayV, 0f)
+            vinePaint.strokeWidth = 2.6f * d
+            canvas.drawPath(vinePath, vinePaint)
+            canvas.drawPath(leafPath, leafFill)
+            leafEdge.strokeWidth = 1.1f * d
+            canvas.drawPath(leafPath, leafEdge)
+            canvas.restore()
+
             // Разлом: слои свечения + яркое ядро, медленное дыхание.
             val rp = BoilClock.phase
             val breath = 0.6f + 0.4f * kotlin.math.sin((rp * 0.9f).toDouble()).toFloat()
