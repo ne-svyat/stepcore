@@ -10,47 +10,6 @@
         android:gravity="center_horizontal"
         android:padding="11dp">
 
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:layout_marginTop="4dp">
-
-            <TextView
-                android:id="@+id/modeText"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Покой"
-                android:textColor="@color/text_main"
-                android:textSize="18sp"
-                android:letterSpacing="0.08"
-                android:paddingLeft="16dp"
-                android:paddingRight="16dp"
-                android:paddingTop="6dp"
-                android:paddingBottom="6dp" />
-
-            <View android:layout_width="0dp" android:layout_height="1dp"
-                android:layout_weight="1" />
-
-            <com.vasil.stepcore.BackpackView
-                android:id="@+id/backpackView"
-                android:layout_width="34dp"
-                android:layout_height="34dp"
-                android:layout_gravity="center_vertical" />
-
-            <TextView
-                android:id="@+id/cargoChip"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Груз выкл"
-                android:textColor="@color/text_dim"
-                android:textSize="15sp"
-                android:paddingLeft="12dp"
-                android:paddingRight="12dp"
-                android:paddingTop="6dp"
-                android:paddingBottom="6dp" />
-        </LinearLayout>
 
         <com.vasil.stepcore.DoodleSceneView
             android:id="@+id/headerScene"
@@ -162,6 +121,51 @@
                     android:text=""
                     android:textColor="@color/text_dim"
                     android:textSize="18sp" />
+
+                <!-- ШАГ3_СТАТУС: режим и груз переехали сюда из верхней
+                     полосы - заполняют простор справа от горы -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginTop="6dp">
+
+                    <TextView
+                        android:id="@+id/modeText"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Покой"
+                        android:textColor="@color/text_main"
+                        android:textSize="15sp"
+                        android:letterSpacing="0.06"
+                        android:maxLines="1"
+                        android:paddingLeft="11dp"
+                        android:paddingRight="11dp"
+                        android:paddingTop="5dp"
+                        android:paddingBottom="5dp" />
+
+                    <View android:layout_width="0dp" android:layout_height="1dp"
+                        android:layout_weight="1" />
+
+                    <com.vasil.stepcore.BackpackView
+                        android:id="@+id/backpackView"
+                        android:layout_width="30dp"
+                        android:layout_height="30dp" />
+
+                    <TextView
+                        android:id="@+id/cargoChip"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Груз выкл"
+                        android:textColor="@color/text_dim"
+                        android:textSize="13sp"
+                        android:maxLines="1"
+                        android:paddingLeft="8dp"
+                        android:paddingRight="8dp"
+                        android:paddingTop="5dp"
+                        android:paddingBottom="5dp" />
+                </LinearLayout>
 
                 <TextView
                     android:id="@+id/statusText"
