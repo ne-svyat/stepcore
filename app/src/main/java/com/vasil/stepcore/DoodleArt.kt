@@ -2079,12 +2079,117 @@ class DoodleSceneView @JvmOverloads constructor(
     }
 
     /** История: стопка тетрадей - нейтральный серый, экран архивный. */
+    /**
+     * История как свиток. Цикл: разворот -> канатоходец с шестом идёт по
+     * полотну слева направо и уходит за кадр -> свиток сворачивается ->
+     * его запечатывают семь печатей -> заново.
+     */
+    private fun scrollAct(c: Canvas, w: Float, h: Float, r: Wobble) {
+        val t = loop(14f, 0f)
+        val ph = BoilClock.phase
+        val cx = w * 0.50f
+        val yTop = h * 0.54f
+        val thick = h * 0.20f
+        val halfMax = w * 0.40f
+
+        val raw = when {
+            t < 0.10f -> t / 0.10f
+            t < 0.74f -> 1f
+            t < 0.86f -> 1f - (t - 0.74f) / 0.12f
+            else -> 0f
+        }
+        val open = raw * raw * (3f - 2f * raw)
+        val xL = cx - halfMax * open
+        val xR = cx + halfMax * open
+
+        // Полотно с рукописными строками.
+        if (open > 0.03f) {
+            val body = Path()
+            body.addRect(xL, yTop, xR, yTop + thick, Path.Direction.CW)
+            skyFill.color = 0xFFE8DCC0.toInt(); skyFill.alpha = 205
+            c.drawPath(body, skyFill)
+            rayPaint.color = 0xFF8A7B58.toInt(); rayPaint.alpha = 165
+            rayPaint.strokeWidth = 1.2f * d
+            for (k in 1..3) {
+                val ly = yTop + thick * (k / 4f)
+                if (xR - xL > 16f * d) c.drawLine(xL + 7f * d, ly, xR - 7f * d, ly, rayPaint)
+            }
+            skyOutline.color = 0xFF6B5C3C.toInt()
+            Doodle.ink(c, body, skyOutline, 0.6f * d)
+        }
+
+        // Валики по краям.
+        val rr = thick * 0.66f
+        for (sx in floatArrayOf(xL, xR)) {
+            skyFill.color = 0xFF7A5A32.toInt(); skyFill.alpha = 245
+            c.drawRoundRect(sx - rr * 0.46f, yTop - rr * 0.30f,
+                sx + rr * 0.46f, yTop + thick + rr * 0.30f, rr * 0.4f, rr * 0.4f, skyFill)
+            skyFill.color = 0xFFB08A50.toInt(); skyFill.alpha = 220
+            c.drawRoundRect(sx - rr * 0.22f, yTop - rr * 0.22f,
+                sx + rr * 0.10f, yTop + thick + rr * 0.22f, rr * 0.3f, rr * 0.3f, skyFill)
+        }
+
+        // Канатоходец: идёт по кромке, балансируя шестом.
+        if (t >= 0.10f && t < 0.74f) {
+            val pp = (t - 0.10f) / 0.64f
+            val fx = xL + (xR - xL + w * 0.16f) * pp
+            val fy = yTop
+            val tilt = 7.5f * kotlin.math.sin((ph * 2.2f).toDouble()).toFloat()
+            val bob = 1.2f * d * kotlin.math.sin((ph * 6.5f).toDouble()).toFloat()
+            c.save()
+            c.translate(fx, fy + bob)
+            c.rotate(tilt)
+            val fig = Path()
+            fig.moveTo(0f, -13f * d); fig.lineTo(0f, -5.5f * d)
+            val stride = 3.2f * d * kotlin.math.sin((ph * 6.5f).toDouble()).toFloat()
+            fig.moveTo(0f, -5.5f * d); fig.lineTo(-stride, 0f)
+            fig.moveTo(0f, -5.5f * d); fig.lineTo(stride, 0f)
+            skyFill.color = 0xFFEFC06A.toInt(); skyFill.alpha = 245
+            c.drawCircle(0f, -16f * d, 2.8f * d, skyFill)
+            skyOutline.color = 0xFFEFC06A.toInt()
+            Doodle.ink(c, fig, skyOutline, 0.6f * d)
+            // Шест: наклоняется против качания - так и держат равновесие.
+            c.rotate(-tilt * 1.8f)
+            rayPaint.color = 0xFFD9C089.toInt(); rayPaint.alpha = 235
+            rayPaint.strokeWidth = 1.8f * d
+            c.drawLine(-14f * d, -11f * d, 14f * d, -11f * d, rayPaint)
+            c.restore()
+        }
+
+        // Семь печатей: вспыхивают по кругу, когда свиток свёрнут.
+        if (t >= 0.86f) {
+            val sp = (t - 0.86f) / 0.14f
+            val ring = h * 0.30f
+            for (k in 0 until 7) {
+                val kt = (sp * 7f) - k
+                if (kt < 0f) continue
+                val pop = if (kt < 0.35f) kt / 0.35f else 1f
+                val fade = (1f - (kt - 1.2f).coerceAtLeast(0f) / 2f).coerceIn(0f, 1f)
+                val a2 = Math.toRadians((-90f + k * (360f / 7f)).toDouble())
+                val sx = cx + ring * kotlin.math.cos(a2).toFloat()
+                val sy = yTop + thick * 0.5f + ring * 0.52f * kotlin.math.sin(a2).toFloat()
+                val rad = (4.5f + 2.5f * pop) * d
+                skyFill.color = 0xFFE23636.toInt()
+                skyFill.alpha = (60f * pop * fade).toInt().coerceIn(0, 255)
+                c.drawCircle(sx, sy, rad * 1.9f, skyFill)
+                skyFill.alpha = (215f * pop * fade).toInt().coerceIn(0, 255)
+                c.drawCircle(sx, sy, rad, skyFill)
+                rayPaint.color = 0xFFFFE9C9.toInt()
+                rayPaint.alpha = (230f * pop * fade).toInt().coerceIn(0, 255)
+                rayPaint.strokeWidth = 1.4f * d
+                c.drawLine(sx - rad * 0.5f, sy - rad * 0.25f, sx + rad * 0.5f, sy - rad * 0.25f, rayPaint)
+                c.drawLine(sx, sy - rad * 0.55f, sx, sy + rad * 0.5f, rayPaint)
+            }
+        }
+        skyFill.alpha = 255
+    }
+
     private fun drawHistory(c: Canvas, w: Float, h: Float, r: Wobble) {
         val nb = Path()
-        Doodle.notebook(nb, w * 0.18f, h * 0.52f, w * 0.16f, h * 0.60f, r)
-        Doodle.notebook(nb, w * 0.40f, h * 0.56f, w * 0.14f, h * 0.50f, r)
+        Doodle.notebook(nb, w * 0.09f, h * 0.54f, w * 0.10f, h * 0.44f, r)
         Doodle.ink(c, nb, stroke(gray, 2f), 0.8f * d)
-        stars(c, gray, listOf(Triple(0.70f, 0.30f, 0.10f), Triple(0.88f, 0.62f, 0.07f)), w, h, r)
+        scrollAct(c, w, h, r)
+        stars(c, gray, listOf(Triple(0.88f, 0.22f, 0.08f)), w, h, r)
         drifting(c, w, h, r, gray, listOf(Triple(0.20f, 0.10f, 38f)))
     }
 }
