@@ -1826,65 +1826,107 @@ class DoodleSceneView @JvmOverloads constructor(
         drifting(c, w, h, r, violet, listOf(Triple(0.16f, 0.10f, 30f)))
 
 
-        // Кубики-дни: носильщик доносит кубик, ставит его на стопку,
-        // отбегает и уходит сальто за левый край - номер замкнут и
-        // начинается заново справа. Цикл 8 с.
+        // Кубики-дни: носильщик ставит кубик на стопку, а поднявшийся
+        // Ветер срывает кубик обратно и сбивает им носильщика - оба уходят
+        // за левый край. Исчезновение кубика получает причину, и петля
+        // замыкается честно. Цикл 9 с.
         run {
             val ph3 = BoilClock.phase
             val sz = h * 0.15f
             val stacks = intArrayOf(2, 1, 3, 1)
             val x0 = w * 0.10f; val step = w * 0.115f
             val dropX = x0 + 3 * step
-            val t = loop(8f, 0f)
+            val t = loop(9f, 0f)
+            val stackTopY = base - stacks[3] * sz
 
-            // Последняя стопка подрастает, как только кубик лёг.
-            val placed = t in 0.46f..0.92f
+            // Сила ветра: нарастает после установки, спадает после удара.
+            val wind = when {
+                t < 0.46f -> 0f
+                t < 0.60f -> (t - 0.46f) / 0.14f
+                t < 0.86f -> 1f
+                t < 0.96f -> 1f - (t - 0.86f) / 0.10f
+                else -> 0f
+            }
+
+            // Кубик стоит на стопке только до того, как его сорвало.
+            val onStack = t in 0.46f..0.62f
             for (i in stacks.indices) {
                 val cx = x0 + i * step
-                val extra = if (i == 3 && placed) 1 else 0
+                val extra = if (i == 3 && onStack) 1 else 0
                 for (k in 0 until stacks[i] + extra) cubeIso(c, cx, base - k * sz, sz, blue)
+            }
+
+            // Потоки ветра: длинные полосы и мелкий сор летят влево.
+            if (wind > 0.02f) {
+                for (k in 0 until 9) {
+                    var g = (ph3 * 1.35f + k * 0.1111f) % 1f
+                    if (g < 0f) g += 1f
+                    val wy = h * (0.14f + 0.72f * ((k * 37) % 9) / 8f)
+                    val wx = w * 1.05f - w * 1.25f * g
+                    val len = w * (0.06f + 0.09f * ((k * 53) % 5) / 4f) * wind
+                    val a2 = (150f * wind * (1f - kotlin.math.abs(0.5f - g) * 1.4f)).toInt().coerceIn(0, 255)
+                    c.drawLine(wx, wy, wx + len, wy - 2f * d, stroke(blueBr, 1.6f, a2))
+                }
+                for (k in 0 until 5) {
+                    var g = (ph3 * 0.95f + k * 0.2f) % 1f
+                    if (g < 0f) g += 1f
+                    val dy = base - h * 0.12f * kotlin.math.sin((g * 7f + k).toDouble()).toFloat()
+                    c.drawCircle(w * 1.02f - w * 1.2f * g, dy, 1.6f * d,
+                        fill(gray, (190f * wind * (1f - g)).toInt().coerceIn(0, 255)))
+                }
             }
 
             var fx: Float; var fy = base; var rot = 0f; var pose = 0
             var visible = true; var carry = true
             when {
-                t < 0.38f -> {                       // несёт кубик к стопке
-                    fx = w * 0.95f - (w * 0.95f - dropX) * (t / 0.38f)
+                t < 0.38f -> { fx = w * 0.95f - (w * 0.95f - dropX) * (t / 0.38f) }
+                t < 0.46f -> { fx = dropX; pose = 1 }              // ставит кубик
+                t < 0.72f -> {                                     // уходит влево
+                    val fr = (t - 0.46f) / 0.26f
+                    fx = dropX - (dropX - w * 0.30f) * fr
+                    carry = false; pose = 2
                 }
-                t < 0.46f -> {                       // ставит: приседает
-                    fx = dropX; pose = 1
+                t < 0.90f -> {                                     // сбит и катится
+                    val fr = (t - 0.72f) / 0.18f
+                    fx = w * 0.30f - (w * 0.42f) * fr
+                    fy = base - h * 0.30f * kotlin.math.sin((Math.PI * fr).toDouble()).toFloat()
+                    rot = -520f * fr
+                    carry = false; pose = 3
+                    visible = fx > -w * 0.12f
                 }
-                t < 0.60f -> {                       // отступает и разгоняется
-                    val fr = (t - 0.46f) / 0.14f
-                    fx = dropX - w * 0.16f * fr; carry = false; pose = 2
-                }
-                t < 0.84f -> {                       // разбег и сальто за кадр
-                    val fr = (t - 0.60f) / 0.24f
-                    fx = dropX - w * 0.16f - (dropX - w * 0.16f + w * 0.12f) * fr
-                    carry = false
-                    if (fr > 0.45f) {
-                        val ff = (fr - 0.45f) / 0.55f
-                        fy = base - h * 0.55f * kotlin.math.sin((Math.PI * ff).toDouble()).toFloat()
-                        rot = -400f * ff; pose = 3
-                    } else pose = 2
-                }
-                else -> { fx = -w * 0.1f; visible = false; carry = false }
+                else -> { fx = -w * 0.2f; visible = false; carry = false }
             }
 
-            // Кубик: в руках, затем падает на стопку.
+            // Кубик: в руках -> падает на стопку -> сорван ветром -> летит в
+            // затылок -> улетает вместе с носильщиком.
             if (t < 0.38f) {
                 val bob = 1.4f * d * sin((ph3 * 6f).toDouble()).toFloat()
                 cubeIso(c, fx, base - sz * 2.05f + bob, sz * 0.72f, blueBr)
             } else if (t < 0.46f) {
                 val fall = (t - 0.38f) / 0.08f
                 val fromY = base - sz * 2.05f
-                val toY = base - stacks[3] * sz
-                cubeIso(c, dropX, fromY + (toY - fromY) * (fall * fall), sz * 0.72f, blueBr)
+                cubeIso(c, dropX, fromY + (stackTopY - fromY) * (fall * fall), sz * 0.72f, blueBr)
+            } else if (t < 0.72f && t >= 0.62f) {
+                // сорвало и понесло: догоняет носильщика, ускоряясь
+                val fr = (t - 0.62f) / 0.10f
+                val toX = w * 0.30f + sz * 0.9f
+                val cxp = dropX + (toX - dropX) * (fr * fr)
+                val cyp = stackTopY - h * 0.16f * kotlin.math.sin((Math.PI * fr).toDouble()).toFloat()
+                c.save(); c.translate(cxp, cyp); c.rotate(300f * fr)
+                cubeIso(c, 0f, sz * 0.36f, sz * 0.72f, blueBr)
+                c.restore()
+            } else if (t < 0.90f) {
+                val fr = (t - 0.72f) / 0.18f
+                val cxp = w * 0.30f + sz * 0.9f - (w * 0.44f) * fr
+                val cyp = base - sz * 1.4f - h * 0.22f * kotlin.math.sin((Math.PI * fr * 0.9f).toDouble()).toFloat()
+                c.save(); c.translate(cxp, cyp); c.rotate(300f + 420f * fr)
+                cubeIso(c, 0f, sz * 0.36f, sz * 0.72f, blueBr)
+                c.restore()
             }
 
             if (visible) {
                 c.save(); c.translate(fx, fy); if (rot != 0f) c.rotate(rot)
-                val stepPh = sin((ph3 * (if (pose == 2) 11f else 7f)).toDouble()).toFloat()
+                val stepPh = sin((ph3 * (if (pose == 2) 10f else 7f)).toDouble()).toFloat()
                 val fig = Path()
                 when (pose) {
                     1 -> {                            // ставит кубик: присед
@@ -1893,22 +1935,21 @@ class DoodleSceneView @JvmOverloads constructor(
                         fig.moveTo(0f, -sz * 0.60f); fig.lineTo(3.4f * d, 0f)
                         fig.moveTo(0f, -sz * 1.15f); fig.lineTo(5f * d, -sz * 1.55f)
                     }
-                    3 -> {                            // сальто: группировка
-                        fig.moveTo(0f, -sz * 1.05f); fig.lineTo(0f, -sz * 0.45f)
-                        fig.moveTo(0f, -sz * 0.45f); fig.lineTo(-4f * d, sz * 0.15f)
-                        fig.moveTo(0f, -sz * 0.45f); fig.lineTo(3.2f * d, sz * 0.30f)
-                        fig.moveTo(0f, -sz * 0.95f); fig.lineTo(-4.6f * d, -sz * 0.55f)
+                    3 -> {                            // сбит: кувырком
+                        fig.moveTo(0f, -sz * 1.00f); fig.lineTo(0f, -sz * 0.40f)
+                        fig.moveTo(0f, -sz * 0.40f); fig.lineTo(-4.4f * d, sz * 0.20f)
+                        fig.moveTo(0f, -sz * 0.40f); fig.lineTo(3.6f * d, sz * 0.34f)
+                        fig.moveTo(0f, -sz * 0.90f); fig.lineTo(-5f * d, -sz * 0.50f)
+                        fig.moveTo(0f, -sz * 0.90f); fig.lineTo(4.6f * d, -sz * 1.20f)
                     }
-                    else -> {                         // ход/разбег
+                    else -> {                         // ход / уход против ветра
                         fig.moveTo(0f, -sz * 1.55f); fig.lineTo(0f, -sz * 0.72f)
                         fig.moveTo(0f, -sz * 0.72f); fig.lineTo(-2.8f * d - 2f * d * stepPh, 0f)
                         fig.moveTo(0f, -sz * 0.72f); fig.lineTo(2.8f * d + 2f * d * stepPh, 0f)
-                        if (!carry) {
-                            fig.moveTo(0f, -sz * 1.35f); fig.lineTo(-4.4f * d, -sz * 1.05f)
-                        }
+                        if (!carry) { fig.moveTo(0f, -sz * 1.35f); fig.lineTo(-4.4f * d, -sz * 1.05f) }
                     }
                 }
-                val headY = if (pose == 3) -sz * 1.30f else if (pose == 1) -sz * 1.55f else -sz * 1.80f
+                val headY = if (pose == 3) -sz * 1.25f else if (pose == 1) -sz * 1.55f else -sz * 1.80f
                 c.drawCircle(0f, headY, 2.8f * d, fill(amberBr, 240))
                 Doodle.ink(c, fig, stroke(amberBr, 2f, 240), 0.6f * d)
                 c.restore()
