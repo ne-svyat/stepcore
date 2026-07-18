@@ -96,8 +96,31 @@ class CrystalRingView @JvmOverloads constructor(
     private val gemBody = ArrayList<Path>()
     private val gemDark = ArrayList<Path>()
     private val gemGlint = ArrayList<Path>()
-    private val sparkX = FloatArray(3)
-    private val sparkY = FloatArray(3)
+    // Пять алмазов - пять целей (×1..×5). Число вынесено, чтобы шкала
+    // достижений и ярусы заливки никогда не разъехались.
+    private val GEM_COUNT = 5
+    private val sparkX = FloatArray(GEM_COUNT)
+    private val sparkY = FloatArray(GEM_COUNT)
+    private val gemCx = FloatArray(GEM_COUNT)
+    private val gemCy = FloatArray(GEM_COUNT)
+    private val gemSz = FloatArray(GEM_COUNT)
+    private val gemDeadPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL; color = 0xFF39435A.toInt()
+    }
+    private val gemGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val auroraPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
+    }
+    private val crownPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND
+    }
+    private val bloodPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val auroraPath = Path()
+    private var peakXf = 0f
+    private var peakYf = 0f
+    private var moonCx = 0f
+    private var moonCy = 0f
+    private var moonR = 0f
     private val moonPath = Path()
     private val moonCraters = Path()
     private val moonCraterPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -261,6 +284,7 @@ class CrystalRingView @JvmOverloads constructor(
 
         // Луна-полумесяц в небе над вершиной (символ «шёл весь день»).
         val mcx = ww * 0.84f; val mcy = pad + inner * 0.10f; val mr = ww * 0.095f
+        moonCx = mcx; moonCy = mcy; moonR = mr
         moonPath.reset()
         moonPath.addCircle(mcx, mcy, mr, Path.Direction.CW)
         moonCraters.reset()
@@ -268,11 +292,25 @@ class CrystalRingView @JvmOverloads constructor(
         moonCraters.addCircle(mcx + mr * 0.12f, mcy + mr * 0.32f, mr * 0.16f, Path.Direction.CW)
         moonCraters.addCircle(mcx - mr * 0.04f, mcy - mr * 0.54f, mr * 0.11f, Path.Direction.CW)
 
-        // Алмазы, вплавленные в склоны.
+        // Алмазы целей: по одному на ярус, поочерёдно слева и справа от
+        // тропы, вписаны в ширину склона на своей высоте.
+        peakXf = peak[0]; peakYf = peak[1]
         gemBody.clear(); gemDark.clear(); gemGlint.clear()
-        addGem(ww * 0.34f, pad + inner * 0.60f, ww * 0.055f, 0)
-        addGem(ww * 0.66f, pad + inner * 0.50f, ww * 0.050f, 1)
-        addGem(ww * 0.50f, pad + inner * 0.80f, ww * 0.060f, 2)
+        for (i in 0 until GEM_COUNT) {
+            val gy = bodyBottom - (i + 0.55f) * ((bodyBottom - pad) / GEM_COUNT)
+            val lx = if (gy < ls[1]) lerpX(gy, peak[0], peak[1], ls[0], ls[1])
+                     else lerpX(gy, ls[0], ls[1], lb[0], lb[1])
+            val rx = if (gy < rs[1]) lerpX(gy, peak[0], peak[1], rs[0], rs[1])
+                     else lerpX(gy, rs[0], rs[1], rb[0], rb[1])
+            val mid = (lx + rx) * 0.5f
+            val halfW = (rx - lx) * 0.5f
+            val side = if (i % 2 == 0) -1f else 1f
+            val sz = (ww * 0.055f - i * ww * 0.004f).coerceAtMost(halfW * 0.55f)
+            gemCx[i] = mid + side * halfW * 0.40f
+            gemCy[i] = gy
+            gemSz[i] = sz
+            addGem(gemCx[i], gy, sz, i)
+        }
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -280,10 +318,60 @@ class CrystalRingView @JvmOverloads constructor(
         val bodyH = bodyBottom - bodyTop
         val tierH = bodyH / 5f
 
-        // Луна за горой (небо).
+        val prog = if (storedGoal > 0) storedTotal.toFloat() / storedGoal else 0f
+        val tms = System.currentTimeMillis()
+        val maxed = prog >= 5f
+
+        // Северное сияние за горой: разгорается по мере прогресса - мир
+        // отзывается на пройденный путь.
+        val auroraK = (prog / 5f).coerceIn(0f, 1f)
+        if (auroraK > 0.02f) {
+            for (b2 in 0 until 3) {
+                auroraPath.reset()
+                val yBase = bodyTop + bodyH * (0.06f + 0.07f * b2)
+                val amp = bodyH * (0.035f + 0.02f * b2)
+                var x = 0f
+                auroraPath.moveTo(0f, yBase)
+                while (x <= width) {
+                    val k = x / width
+                    val y = yBase + amp * Math.sin((k * 6.0 + tms * 0.0007 + b2)).toFloat()
+                    auroraPath.lineTo(x, y)
+                    x += 6f * d
+                }
+                auroraPaint.color = if (b2 == 1) 0xFF35D6A0.toInt() else 0xFF7B6BFF.toInt()
+                auroraPaint.strokeWidth = (7f - b2 * 1.6f) * d
+                auroraPaint.alpha = (70f * auroraK * (1f - b2 * 0.22f)).toInt().coerceIn(0, 255)
+                canvas.drawPath(auroraPath, auroraPaint)
+            }
+        }
+
+        // Луна за горой. При закрытых пяти целях багровеет, и с неё
+        // срываются тяжёлые капли - у рекорда есть цена.
+        if (maxed) {
+            moonFillPaint.color = 0xFFB6262B.toInt()
+            moonStrokePaint.color = 0xFF7A1418.toInt()
+            moonCraterPaint.color = 0xFF7E1A1E.toInt()
+        } else {
+            moonFillPaint.color = 0xFFFFF1CF.toInt()
+            moonStrokePaint.color = 0xFFD9B45F.toInt()
+            moonCraterPaint.color = 0xFFD8C08A.toInt()
+        }
         canvas.drawPath(moonPath, moonFillPaint)
         canvas.drawPath(moonCraters, moonCraterPaint)
         canvas.drawPath(moonPath, moonStrokePaint)
+        if (maxed) {
+            for (k in 0 until 3) {
+                var g = ((tms * 0.00035f) + k * 0.333f) % 1f
+                if (g < 0f) g += 1f
+                val dx = moonCx + moonR * (0.30f - 0.30f * k)
+                val dy = moonCy + moonR * 0.85f + g * bodyH * 0.42f
+                bloodPaint.color = 0xFFB6262B.toInt()
+                bloodPaint.alpha = (235f * (1f - g)).toInt().coerceIn(0, 255)
+                val rr = (2.6f - 1.2f * g) * d
+                canvas.drawCircle(dx, dy, rr, bloodPaint)
+                canvas.drawOval(dx - rr * 0.55f, dy - rr * 2.1f, dx + rr * 0.55f, dy, bloodPaint)
+            }
+        }
 
         canvas.save()
         canvas.clipPath(mountainPath)
@@ -348,11 +436,28 @@ class CrystalRingView @JvmOverloads constructor(
                 canvas.restore()
             }
         }
-        // Алмазы на склонах (грани + блик).
+        // Алмазы целей: спящий камень, взятая цель или ближайшая (пульс).
         for (i in gemBody.indices) {
-            canvas.drawPath(gemBody[i], gemLightPaint)
-            canvas.drawPath(gemDark[i], gemDarkPaint)
-            canvas.drawPath(gemGlint[i], gemGlintPaint)
+            val lit = prog >= (i + 1)
+            val next = !lit && prog >= i
+            if (lit) {
+                val gl = 0.55f + 0.45f * Math.sin(tms * 0.0035 + i * 1.7).toFloat()
+                gemGlowPaint.color = 0xFF7FB2FF.toInt()
+                gemGlowPaint.alpha = (60f + 60f * gl).toInt().coerceIn(0, 255)
+                canvas.drawCircle(gemCx[i], gemCy[i], gemSz[i] * (2.1f + 0.35f * gl), gemGlowPaint)
+                canvas.drawPath(gemBody[i], gemLightPaint)
+                canvas.drawPath(gemDark[i], gemDarkPaint)
+                canvas.drawPath(gemGlint[i], gemGlintPaint)
+            } else {
+                canvas.drawPath(gemBody[i], gemDeadPaint)
+                if (next) {
+                    // Ближайшая цель тихо дышит - видно, к чему идёшь.
+                    val pl = 0.5f + 0.5f * Math.sin(tms * 0.0022 + i).toFloat()
+                    gemGlowPaint.color = 0xFF7FB2FF.toInt()
+                    gemGlowPaint.alpha = (28f + 42f * pl).toInt().coerceIn(0, 255)
+                    canvas.drawCircle(gemCx[i], gemCy[i], gemSz[i] * (1.5f + 0.30f * pl), gemGlowPaint)
+                }
+            }
             canvas.drawPath(gemBody[i], gemEdgePaint)
         }
         // Снежная шапка.
@@ -371,14 +476,34 @@ class CrystalRingView @JvmOverloads constructor(
         canvas.drawPath(mountainPath, contourPaint)
         canvas.drawPath(mountainPath, kantPaint)
 
-        // Искры у алмазов (мерцают при заряде; иначе статичны).
-        val st = System.currentTimeMillis()
+        // Искры вспыхивают только у ВЗЯТЫХ целей - награда, а не украшение.
         for (i in sparkX.indices) {
-            var tw = Math.sin(st * 0.004 + i * 2.1).toFloat(); tw = (tw + 1f) * 0.5f
+            if (prog < (i + 1)) continue
+            var tw = Math.sin(tms * 0.004 + i * 2.1).toFloat(); tw = (tw + 1f) * 0.5f
             sparkPaint.alpha = (70f + 160f * tw).toInt().coerceIn(0, 255)
             sparkle(canvas, sparkX[i], sparkY[i], (2.5f + 1.5f * tw) * d)
         }
         sparkPaint.alpha = 255
+
+        // Венец вершины: загорается, когда взяты все пять целей.
+        if (maxed) {
+            val pl = 0.6f + 0.4f * Math.sin(tms * 0.0045).toFloat()
+            gemGlowPaint.color = 0xFFFFE9A8.toInt()
+            gemGlowPaint.alpha = (55f + 55f * pl).toInt().coerceIn(0, 255)
+            canvas.drawCircle(peakXf, peakYf, bodyH * 0.11f * (1f + 0.18f * pl), gemGlowPaint)
+            crownPaint.color = 0xFFFFE9A8.toInt()
+            crownPaint.alpha = (150f + 90f * pl).toInt().coerceIn(0, 255)
+            crownPaint.strokeWidth = 2.2f * d
+            for (k in 0 until 8) {
+                val a3 = Math.toRadians((k * 45f + tms * 0.02f).toDouble())
+                val r0 = bodyH * 0.055f
+                val r1 = bodyH * (0.09f + 0.03f * pl)
+                canvas.drawLine(
+                    peakXf + r0 * Math.cos(a3).toFloat(), peakYf + r0 * Math.sin(a3).toFloat(),
+                    peakXf + r1 * Math.cos(a3).toFloat(), peakYf + r1 * Math.sin(a3).toFloat(),
+                    crownPaint)
+            }
+        }
 
         // Живая молния: перерисовка ~14 к/с, только пока есть заряд (батарея).
         if (storedTotal > 0) postInvalidateDelayed(70)
