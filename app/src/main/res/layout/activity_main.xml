@@ -187,6 +187,12 @@
             </LinearLayout>
         </LinearLayout>
 
+        <com.vasil.stepcore.MotiveScrollView
+            android:id="@+id/motiveScroll"
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
+            android:layout_marginTop="6dp" />
+
         <TextView
             android:id="@+id/inclineLabel"
             android:layout_width="wrap_content"

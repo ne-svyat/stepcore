@@ -35,6 +35,15 @@ class MainActivity : AppCompatActivity() {
     private lateinit var activeTimeText: TextView
     private lateinit var accuracyBadge: TextView
     private lateinit var cargoChip: TextView
+    private lateinit var motiveScroll: MotiveScrollView
+    private val quipHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    /** Смена реплики через случайные 15-60 с: ритм не должен быть машинным. */
+    private val quipTick = object : Runnable {
+        override fun run() {
+            showQuip()
+            quipHandler.postDelayed(this, (15_000..60_000).random().toLong())
+        }
+    }
     private lateinit var backpackView: BackpackView
     private lateinit var lapBadgeText: TextView
     private lateinit var walkShareText: TextView
@@ -88,6 +97,7 @@ class MainActivity : AppCompatActivity() {
         activeTimeText = findViewById(R.id.activeTimeText)
         accuracyBadge = findViewById(R.id.accuracyBadge)
         cargoChip = findViewById(R.id.cargoChip)
+        motiveScroll = findViewById(R.id.motiveScroll)
         backpackView = findViewById(R.id.backpackView)
         // Груз меняют чаще, чем остальной профиль (взял рюкзак - снял), и
         // ради этого не должно требоваться заходить в Профиль.
@@ -657,8 +667,27 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** Реплика под текущую активность. Правила выбора живут в Quips. */
+    private fun showQuip() {
+        if (!::motiveScroll.isInitialized) return
+        val ctx = QuipContext(
+            steps = StepsState.steps.value,
+            hourOfDay = java.time.LocalTime.now().hour,
+        )
+        motiveScroll.show(Quips.next(ctx))
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // Экран не виден - смена реплик полностью останавливается.
+        quipHandler.removeCallbacks(quipTick)
+    }
+
     override fun onResume() {
         super.onResume()
+        quipHandler.removeCallbacks(quipTick)
+        showQuip()
+        quipHandler.postDelayed(quipTick, (15_000..60_000).random().toLong())
         goal = getSharedPreferences(StepService.PREFS, MODE_PRIVATE).getInt("p_goal", 10000).coerceAtLeast(GOAL_MIN)
         if (::accuracyBadge.isInitialized) refreshAccuracyBadge()
         if (::cargoChip.isInitialized) refreshCargoChip()
