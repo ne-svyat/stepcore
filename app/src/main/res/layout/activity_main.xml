@@ -66,8 +66,8 @@
             android:layout_marginTop="6dp">
 
             <FrameLayout
-                android:layout_width="120dp"
-                android:layout_height="188dp">
+                android:layout_width="118dp"
+                android:layout_height="172dp">
 
                 <com.vasil.stepcore.CrystalRingView
                     android:id="@+id/progressRing"
@@ -94,12 +94,17 @@
 
                 <TextView
                     android:id="@+id/stepsText"
-                    android:layout_width="wrap_content"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="0"
                     android:textColor="@color/text_main"
                     android:textSize="44sp"
-                    android:textStyle="bold" />
+                    android:textStyle="bold"
+                    android:maxLines="1"
+                    android:autoSizeTextType="uniform"
+                    android:autoSizeMinTextSize="26sp"
+                    android:autoSizeMaxTextSize="44sp"
+                    android:autoSizeStepGranularity="1sp" />
 
                 <TextView
                     android:id="@+id/goalText"
@@ -321,12 +326,13 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
+            android:baselineAligned="false"
             android:layout_marginTop="7dp">
 
             <FrameLayout
                 android:id="@+id/yesterdayCard"
                 android:layout_width="0dp" android:layout_weight="1"
-                android:layout_height="wrap_content"
+                android:layout_height="match_parent"
                 android:layout_marginEnd="5dp">
 
                 <com.vasil.stepcore.DoodleSceneView
@@ -350,6 +356,11 @@
                         android:layout_width="wrap_content" android:layout_height="wrap_content"
                         android:text="нет данных" android:textColor="@color/text_main"
                         android:textSize="31sp"
+                        android:maxLines="2"
+                        android:autoSizeTextType="uniform"
+                        android:autoSizeMinTextSize="19sp"
+                        android:autoSizeMaxTextSize="31sp"
+                        android:autoSizeStepGranularity="1sp"
                     android:textStyle="bold" android:layout_marginTop="2dp" />
 
                     <LinearLayout
@@ -382,7 +393,7 @@
             <FrameLayout
                 android:id="@+id/todayCard"
                 android:layout_width="0dp" android:layout_weight="1"
-                android:layout_height="wrap_content"
+                android:layout_height="match_parent"
                 android:layout_marginStart="5dp">
 
                 <com.vasil.stepcore.DoodleSceneView
@@ -406,6 +417,11 @@
                         android:layout_width="wrap_content" android:layout_height="wrap_content"
                         android:text="0" android:textColor="@color/text_main"
                         android:textSize="31sp"
+                        android:maxLines="2"
+                        android:autoSizeTextType="uniform"
+                        android:autoSizeMinTextSize="19sp"
+                        android:autoSizeMaxTextSize="31sp"
+                        android:autoSizeStepGranularity="1sp"
                     android:textStyle="bold" android:layout_marginTop="2dp" />
 
                     <TextView android:id="@+id/tKm" android:layout_width="wrap_content"
