@@ -22,7 +22,7 @@ class ProfileActivity : AppCompatActivity() {
         setContentView(R.layout.activity_profile)
         // V14.3: дудл-стиль — лагерь в шапке, рамки "от руки" на карточках.
         findViewById<DoodleSceneView>(R.id.doodleHeader).setScene(DoodleSceneView.PROFILE)
-        DoodleUi.frame(findViewById(R.id.dataContainer), R.color.accent_violet, R.color.surface, 201L)
+        DoodleUi.frame(findViewById(R.id.dataContainer), R.color.accent_violet, R.color.surface, 201L, DoodleBorderDrawable.MAT_ROPE)
         // У контейнера "Паспорт" рамки НЕТ намеренно. Своя рамка у него была
         // бы рамкой вокруг рамок: карточки внутри идут во всю ширину без
         // отступов, и их красные/зелёные контуры ложились ровно на синий
@@ -99,7 +99,7 @@ class ProfileActivity : AppCompatActivity() {
         // "ДАННЫЕ" - главное действие экрана, а выглядело серой надписью, мимо
         // которой легко проскочить. Теперь это заметная кнопка: своя рамка,
         // янтарный акцент (единственный такой на экране) и мягкая пульсация.
-        DoodleUi.frame(dataToggle, R.color.accent_amber, R.color.surface_amber, 203L)
+        DoodleUi.frame(dataToggle, R.color.accent_amber, R.color.surface_amber, 203L, DoodleBorderDrawable.MAT_ROPE)
         dataToggle.setTextColor(ContextCompat.getColor(this, R.color.accent_amber_bright))
         dataToggle.setPadding(dp(16), dp(12), dp(16), dp(12))
         DoodleUi.pulse(dataToggle)

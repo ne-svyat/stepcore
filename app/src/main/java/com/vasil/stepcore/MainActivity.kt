@@ -510,26 +510,30 @@ class MainActivity : AppCompatActivity() {
     private fun applyDoodleStyle() {
         val d = resources.displayMetrics.density
         fun col(id: Int) = ContextCompat.getColor(this, id)
-        fun frame(v: View, stroke: Int, fill: Int, seed: Long) {
-            v.background = DoodleBorderDrawable(col(stroke), col(fill), seed, d)
+        fun frame(v: View, stroke: Int, fill: Int, seed: Long,
+                  mat: Int = DoodleBorderDrawable.MAT_ROCK) {
+            v.background = DoodleBorderDrawable(col(stroke), col(fill), seed, d, mat)
         }
-        frame(findViewById(R.id.yesterdayCard), R.color.accent_violet, R.color.surface_violet, 11L)
-        frame(todayCard, R.color.accent_teal, R.color.surface_teal, 22L)
-        frame(expeditionCard, R.color.accent_amber, R.color.surface_amber, 33L)
+        frame(findViewById(R.id.yesterdayCard), R.color.accent_violet, R.color.surface_violet, 11L,
+            DoodleBorderDrawable.MAT_LIGHTNING)
+        frame(todayCard, R.color.accent_green, R.color.surface_green, 22L,
+            DoodleBorderDrawable.MAT_LIGHTNING)
+        frame(expeditionCard, R.color.accent_amber, R.color.surface_amber, 33L,
+            DoodleBorderDrawable.MAT_FIRE)
         frame(findViewById(R.id.profileButton), R.color.accent_blue, R.color.surface_blue, 44L)
         frame(findViewById(R.id.calibrationButton), R.color.accent_violet, R.color.surface_violet, 55L)
         frame(findViewById(R.id.historyButton), R.color.axis_dim, R.color.surface, 66L)
-        frame(findViewById(R.id.analyticsTile), R.color.accent_teal, R.color.surface_teal, 77L)
+        frame(findViewById(R.id.analyticsTile), R.color.accent_green, R.color.surface_green, 77L)
         // Чипы дня - тот же язык, цвет по смыслу: путь синий, время
         // бирюзовое, горение янтарное, суммарный расход фиолетовый.
         frame(findViewById(R.id.distanceChip), R.color.accent_blue, R.color.surface, 101L)
-        frame(findViewById(R.id.activeTimeChip), R.color.accent_teal, R.color.surface, 102L)
+        frame(findViewById(R.id.activeTimeChip), R.color.accent_green, R.color.surface, 102L)
         frame(findViewById(R.id.activeKcalChip), R.color.accent_amber, R.color.surface, 103L)
         frame(findViewById(R.id.totalKcalChip), R.color.accent_violet, R.color.surface, 104L)
         // Грани уклона: цвет по смыслу - тёплый вверх, нейтраль, холодный вниз.
         frame(findViewById(R.id.inclineUpButton), R.color.accent_amber, R.color.surface_amber, 201L)
         frame(findViewById(R.id.inclineFlatButton), R.color.axis_dim, R.color.surface, 202L)
-        frame(findViewById(R.id.inclineDownButton), R.color.accent_teal, R.color.surface_teal, 203L)
+        frame(findViewById(R.id.inclineDownButton), R.color.accent_green, R.color.surface_green, 203L)
 
         findViewById<DoodleSceneView>(R.id.headerScene).setScene(DoodleSceneView.HEADER)
         findViewById<DoodleSceneView>(R.id.nightScene).setScene(DoodleSceneView.NIGHT)

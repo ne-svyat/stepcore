@@ -566,7 +566,25 @@ class DoodleBorderDrawable(
     private val fillColor: Int,
     private val seed: Long,
     density: Float,
+    private val material: Int = MAT_ROCK,
 ) : Drawable() {
+
+    companion object {
+        const val MAT_ROCK = 0       // тяжёлый двойной кант, глухой камень
+        const val MAT_LIGHTNING = 1  // свечение + яркое ядро, пульс
+        const val MAT_ROPE = 2       // две пряди + насечки витков
+        const val MAT_FIRE = 3       // тёплое дрожащее свечение
+        const val MAT_ICE = 4        // резкий кант + холодный отблеск
+        const val MAT_MECH = 5       // сегментированный контур (пунктир)
+    }
+
+    private val matPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeJoin = Paint.Join.ROUND; strokeCap = Paint.Cap.ROUND
+    }
+    private val ropeDash = android.graphics.DashPathEffect(
+        floatArrayOf(2.5f * density, 5f * density), 0f)
+    private val mechDash = android.graphics.DashPathEffect(
+        floatArrayOf(9f * density, 4.5f * density), 0f)
 
     private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -753,7 +771,7 @@ class DoodleBorderDrawable(
         canvas.save(); canvas.translate(off, off); canvas.drawPath(p, shPaint); canvas.restore()
         canvas.save(); canvas.translate(-off, -off); canvas.drawPath(p, hiPaint); canvas.restore()
         if (fillColor != Color.TRANSPARENT) canvas.drawPath(p, fillPaint)
-        Doodle.ink(canvas, p, strokePaint, 0.8f * d)
+        drawContour(canvas, p)
         // Кованые гвозди по углам (только крупные плиты).
         if (bigEnough) {
             val rr = 3.6f * d
@@ -803,6 +821,86 @@ class DoodleBorderDrawable(
                 dustPaint.alpha = (215f * fade * tw).toInt().coerceIn(0, 255)
                 val sway = 2.5f * d * kotlin.math.sin((ph * 0.9f + i).toDouble()).toFloat()
                 canvas.drawCircle(dustX[i] + sway, y, dustSize[i], dustPaint)
+            }
+        }
+    }
+
+    /** Контур в материале вкладки: камень, молния, канат, огонь, лёд, механика. */
+    private fun drawContour(canvas: Canvas, p: Path) {
+        val ph = BoilClock.phase
+        when (material) {
+            MAT_LIGHTNING -> {
+                val fl = 0.6f + 0.4f * kotlin.math.sin((ph * 5.5f).toDouble()).toFloat()
+                matPaint.pathEffect = null
+                matPaint.color = strokeColor
+                matPaint.strokeWidth = 5.5f * d; matPaint.alpha = (70f * fl).toInt().coerceIn(0, 255)
+                canvas.drawPath(p, matPaint)
+                matPaint.strokeWidth = 2.6f * d; matPaint.alpha = 205
+                canvas.drawPath(p, matPaint)
+                matPaint.color = lighten(strokeColor, 0.75f)
+                matPaint.strokeWidth = 1.1f * d
+                matPaint.alpha = (170f + 70f * fl).toInt().coerceIn(0, 255)
+                canvas.drawPath(p, matPaint)
+            }
+            MAT_ROPE -> {
+                matPaint.pathEffect = null
+                matPaint.color = darken(strokeColor, 0.40f)
+                matPaint.strokeWidth = 3.6f * d; matPaint.alpha = 235
+                canvas.drawPath(p, matPaint)
+                matPaint.color = strokeColor; matPaint.strokeWidth = 1.5f * d; matPaint.alpha = 230
+                canvas.save(); canvas.translate(0.9f * d, -0.9f * d); canvas.drawPath(p, matPaint); canvas.restore()
+                canvas.save(); canvas.translate(-0.9f * d, 0.9f * d); canvas.drawPath(p, matPaint); canvas.restore()
+                matPaint.pathEffect = ropeDash
+                matPaint.color = lighten(strokeColor, 0.40f)
+                matPaint.strokeWidth = 3.4f * d; matPaint.alpha = 110
+                canvas.drawPath(p, matPaint)
+                matPaint.pathEffect = null
+            }
+            MAT_FIRE -> {
+                val fl = 0.55f + 0.45f * kotlin.math.sin((ph * 3.3f).toDouble()).toFloat()
+                val fl2 = 0.5f + 0.5f * kotlin.math.sin((ph * 7.1f + 1.3f).toDouble()).toFloat()
+                matPaint.pathEffect = null
+                matPaint.color = darken(strokeColor, 0.25f)
+                matPaint.strokeWidth = 6.5f * d; matPaint.alpha = (55f * fl).toInt().coerceIn(0, 255)
+                canvas.drawPath(p, matPaint)
+                matPaint.color = strokeColor
+                matPaint.strokeWidth = 3f * d; matPaint.alpha = (150f + 60f * fl2).toInt().coerceIn(0, 255)
+                canvas.drawPath(p, matPaint)
+                matPaint.color = lighten(strokeColor, 0.55f)
+                matPaint.strokeWidth = 1.2f * d; matPaint.alpha = (140f + 90f * fl2).toInt().coerceIn(0, 255)
+                canvas.drawPath(p, matPaint)
+            }
+            MAT_ICE -> {
+                matPaint.pathEffect = null
+                matPaint.color = darken(strokeColor, 0.45f)
+                matPaint.strokeWidth = 4.2f * d; matPaint.alpha = 220
+                canvas.drawPath(p, matPaint)
+                matPaint.color = lighten(strokeColor, 0.30f)
+                matPaint.strokeWidth = 1.8f * d; matPaint.alpha = 240
+                canvas.drawPath(p, matPaint)
+                // Холодный отблеск скользит по канту.
+                val sh = 0.5f + 0.5f * kotlin.math.sin((ph * 1.1f).toDouble()).toFloat()
+                matPaint.color = 0xFFFFFFFF.toInt()
+                matPaint.strokeWidth = 1f * d; matPaint.alpha = (60f + 90f * sh).toInt().coerceIn(0, 255)
+                canvas.save(); canvas.translate(-1f * d, -1f * d); canvas.drawPath(p, matPaint); canvas.restore()
+            }
+            MAT_MECH -> {
+                matPaint.pathEffect = null
+                matPaint.color = darken(strokeColor, 0.50f)
+                matPaint.strokeWidth = 4f * d; matPaint.alpha = 210
+                canvas.drawPath(p, matPaint)
+                matPaint.pathEffect = mechDash
+                matPaint.color = lighten(strokeColor, 0.25f)
+                matPaint.strokeWidth = 2.2f * d; matPaint.alpha = 235
+                canvas.drawPath(p, matPaint)
+                matPaint.pathEffect = null
+            }
+            else -> {
+                matPaint.pathEffect = null
+                matPaint.color = darken(strokeColor, 0.55f)
+                matPaint.strokeWidth = 4.4f * d; matPaint.alpha = 205
+                canvas.drawPath(p, matPaint)
+                Doodle.ink(canvas, p, strokePaint, 0.8f * d)
             }
         }
     }
@@ -892,7 +990,8 @@ object DoodleUi {
         btn.setPadding((12 * d).toInt(), (9 * d).toInt(), (12 * d).toInt(), (9 * d).toInt())
     }
 
-    fun frame(v: View, strokeRes: Int, fillRes: Int, seed: Long) {
+    fun frame(v: View, strokeRes: Int, fillRes: Int, seed: Long,
+              material: Int = DoodleBorderDrawable.MAT_ROCK) {
         val c = v.context
         // Старую рамку ОБЯЗАТЕЛЬНО гасим перед заменой. Рамка подписана на
         // общий механизм и отписывается в setVisible(false); если просто
@@ -905,6 +1004,7 @@ object DoodleUi {
             ContextCompat.getColor(c, fillRes),
             seed,
             c.resources.displayMetrics.density,
+            material,
         )
     }
 }
