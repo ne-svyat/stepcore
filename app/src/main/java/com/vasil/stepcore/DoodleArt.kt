@@ -1248,6 +1248,7 @@ class DoodleSceneView @JvmOverloads constructor(
     private val blueBr = ContextCompat.getColor(context, R.color.accent_blue_bright)
     private val gray = ContextCompat.getColor(context, R.color.axis_dim)
     private val red = ContextCompat.getColor(context, R.color.accent_red)
+    private val green = ContextCompat.getColor(context, R.color.accent_green)
     private val beamPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND
     }
@@ -1912,20 +1913,24 @@ class DoodleSceneView @JvmOverloads constructor(
                 Doodle.ink(c, bp, stroke(blueBr, 1.6f, 175), 0.7f * d)
             }
 
-            val t = loop(7.5f, 0f)
+            val t = loop(6.5f, 0f)
             val fireX = bx0 + n * (bw + gap) + bw / 2f
-            val contactY = base - 5f * d
+            // Подхват происходит НА ВЕРШИНЕ столба, а не у земли - иначе
+            // герой выглядел проваливающимся внутрь огня.
+            val fireFullH = h * 0.26f
+            val contactY = base - fireFullH
+            val boardTone = green
 
             // Огненный столб успевает вырасти ровно к падению.
             val grow = when {
-                t < 0.60f -> 0f
-                t < 0.70f -> (t - 0.60f) / 0.10f
-                t < 0.88f -> 1f
-                t < 0.96f -> 1f - (t - 0.88f) / 0.08f
+                t < 0.50f -> 0f
+                t < 0.64f -> (t - 0.50f) / 0.14f
+                t < 0.90f -> 1f
+                t < 0.98f -> 1f - (t - 0.90f) / 0.08f
                 else -> 0f
             }
             if (grow > 0.02f) {
-                val fh = (base - (base - h * 0.42f)) * grow
+                val fh = fireFullH * grow
                 val fx0 = fireX - bw / 2f
                 c.drawRect(fx0, base - fh, fx0 + bw, base, fill(red, 125))
                 val fl = 0.7f + 0.3f * sin((ph2 * 8f).toDouble()).toFloat()
@@ -1953,17 +1958,17 @@ class DoodleSceneView @JvmOverloads constructor(
             var fx: Float; var fy: Float
             var onBoard = false; var lean = 0f; var visible = true
             var splash = 0f
-            if (t < 0.10f) {                       // разбег из-за кадра
-                val fr = t / 0.10f
-                fx = -w * 0.10f + (cxs[0] + w * 0.10f) * fr
+            if (t < 0.07f) {                       // разбег из-за кадра
+                val fr = t / 0.07f
+                fx = -w * 0.06f + (cxs[0] + w * 0.06f) * fr
                 fy = base
-            } else if (t < 0.16f) {                // прыжок на первую волну
-                val fr = (t - 0.10f) / 0.06f
+            } else if (t < 0.12f) {                // прыжок на первую волну
+                val fr = (t - 0.07f) / 0.05f
                 fx = cxs[0]
                 fy = base + (tops[0] - base) * fr - 12f * d * sin((Math.PI * fr).toDouble()).toFloat()
                 onBoard = fr > 0.35f
-            } else if (t < 0.54f) {                // сёрф вверх по волнам
-                val u = (t - 0.16f) / 0.38f * (n - 1)
+            } else if (t < 0.55f) {                // сёрф вверх по волнам
+                val u = (t - 0.12f) / 0.43f * (n - 1)
                 val i0 = u.toInt().coerceIn(0, n - 2)
                 val fr = u - i0
                 fx = cxs[i0] + (cxs[i0 + 1] - cxs[i0]) * fr
@@ -1972,36 +1977,39 @@ class DoodleSceneView @JvmOverloads constructor(
                 onBoard = true
                 lean = -16f * sin((Math.PI * fr).toDouble()).toFloat()
                 if (fr < 0.16f) splash = 1f - fr / 0.16f
-            } else if (t < 0.70f) {                // срыв и падение с ускорением
-                val fr = (t - 0.54f) / 0.16f
+            } else if (t < 0.66f) {                // срыв и падение с ускорением
+                val fr = (t - 0.55f) / 0.11f
                 fx = cxs[n - 1] + (fireX - cxs[n - 1]) * fr
                 fy = tops[n - 1] + (contactY - tops[n - 1]) * (fr * fr)
                 onBoard = true
                 lean = 22f * fr
-            } else {                               // подхват огнём и выброс
-                val fr = (t - 0.70f) / 0.26f
+            } else {                               // мгновенный выброс огнём
+                val fr = (t - 0.66f) / 0.28f
                 fx = fireX + w * 0.04f * fr
-                fy = contactY - (h * 2.1f) * (fr * fr)
-                lean = -30f * fr
+                // Импульс максимален СРАЗУ и затем гасится - подброс, а не
+                // плавный подъём (раньше старт был вялым).
+                val up = 1f - (1f - fr) * (1f - fr)
+                fy = contactY - (h * 2.3f) * up
+                lean = -34f * fr
                 visible = fy > -h * 0.7f
             }
 
             // Доска: под ногами, а после подхвата улетает вправо с вращением.
-            if (onBoard || t >= 0.70f) {
+            if (onBoard || t >= 0.66f) {
                 c.save()
-                if (t < 0.70f) {
+                if (t < 0.66f) {
                     c.translate(fx, fy + 1.5f * d); c.rotate(lean * 0.5f)
-                    c.drawRoundRect(-8.5f * d, -1.6f * d, 8.5f * d, 1.6f * d,
-                        1.6f * d, 1.6f * d, fill(amber, 240))
-                    c.drawLine(-8.5f * d, 0f, 8.5f * d, 0f, stroke(amberBr, 1.2f, 200))
+                    c.drawRoundRect(-9f * d, -1.8f * d, 9f * d, 1.8f * d,
+                        1.8f * d, 1.8f * d, fill(boardTone, 245))
+                    c.drawLine(-9f * d, 0f, 9f * d, 0f, stroke(lightenC(green, 0.40f), 1.4f, 220))
                 } else {
-                    val fr = ((t - 0.70f) / 0.30f).coerceAtMost(1f)
+                    val fr = ((t - 0.66f) / 0.34f).coerceAtMost(1f)
                     val bxx = fireX + w * 0.55f * fr
                     val byy = contactY - h * 0.55f * fr + h * 0.9f * fr * fr
                     c.translate(bxx, byy); c.rotate(760f * fr)
                     val al = (255f * (1f - fr)).toInt().coerceIn(0, 255)
-                    c.drawRoundRect(-8.5f * d, -1.6f * d, 8.5f * d, 1.6f * d,
-                        1.6f * d, 1.6f * d, fill(amber, al))
+                    c.drawRoundRect(-9f * d, -1.8f * d, 9f * d, 1.8f * d,
+                        1.8f * d, 1.8f * d, fill(boardTone, al))
                 }
                 c.restore()
             }
@@ -2019,13 +2027,13 @@ class DoodleSceneView @JvmOverloads constructor(
 
             if (visible) {
                 // Краснеет РОВНО с касанием огня, не раньше.
-                val tint = if (t >= 0.70f) red else amberBr
+                val tint = if (t >= 0.66f) red else amberBr
                 c.save()
                 c.translate(fx, fy); c.rotate(lean * 0.35f)
                 val stride = 3f * d * sin((ph2 * 9f).toDouble()).toFloat()
                 val fig = Path()
                 fig.moveTo(0f, -5.5f * d); fig.lineTo(0f, -1.5f * d)
-                if (t >= 0.70f) {                  // выброс: ноги поджаты, руки вверх
+                if (t >= 0.66f) {                  // выброс: ноги поджаты, руки вверх
                     fig.moveTo(0f, -1.5f * d); fig.lineTo(-3.4f * d, 1.4f * d)
                     fig.moveTo(0f, -1.5f * d); fig.lineTo(3.4f * d, 1.4f * d)
                     fig.moveTo(0f, -4.6f * d); fig.lineTo(-4.2f * d, -8.6f * d)
