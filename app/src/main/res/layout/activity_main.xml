@@ -147,34 +147,36 @@
                 </LinearLayout>
 
                 <!-- ОТКАТ_V169: строка сравнения и кнопка вернулись на места -->
+                <!-- ШАГ2_КНОПКА: состояние и Старт/Стоп занимают место
+                     строки сравнения рядом с горой, а не отдельные полосы -->
                 <TextView
                     android:id="@+id/heroCompareText"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
+                    android:visibility="gone"
                     android:text=""
                     android:textColor="@color/text_dim"
                     android:textSize="18sp" />
+
+                <TextView
+                    android:id="@+id/statusText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="СЧЁТ НЕ ИДЁТ"
+                    android:textColor="@color/accent_red_bright"
+                    android:textSize="14sp"
+                    android:layout_marginTop="6dp" />
+
+                <Button
+                    android:id="@+id/toggleButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="60dp"
+                    android:text="Старт"
+                    android:textSize="20sp"
+                    android:textStyle="bold"
+                    android:layout_marginTop="4dp" />
             </LinearLayout>
         </LinearLayout>
-
-        <TextView
-            android:id="@+id/statusText"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center_horizontal"
-            android:text="СЧЁТ НЕ ИДЁТ"
-            android:textColor="@color/accent_red_bright"
-            android:textSize="16sp"
-            android:layout_marginTop="7dp" />
-
-        <Button
-            android:id="@+id/toggleButton"
-            android:layout_width="match_parent"
-            android:layout_height="72dp"
-            android:text="Старт"
-            android:textSize="22sp"
-            android:textStyle="bold"
-            android:layout_marginTop="8dp" />
 
         <TextView
             android:id="@+id/inclineLabel"
