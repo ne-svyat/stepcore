@@ -2382,53 +2382,56 @@ class DoodleSceneView @JvmOverloads constructor(
 
     /** История: стопка тетрадей - нейтральный серый, экран архивный. */
     /**
-     * Побег с архивом. Цикл 9 с: герой вбегает слева со свитком, за спиной
-     * рвутся взрывы (кадр трясёт), делает сальто через разлом, бросает
-     * печать в пол - расходится лёд, скользит по нему к порталу, прыгает
-     * внутрь, вспышка, и загорается табличка SAVE. Архив спасён.
+     * Кино: побег с архивом. Цикл 10 с и семь тактов: вспышка-старт ->
+     * бег со свитком под взрывами -> сальто в слоу-мо (камера наезжает,
+     * мир обесцвечивается) -> приземление возвращает цвет -> печать в пол
+     * и ледяная дорожка -> быстрое скольжение -> прыжок в портал ->
+     * вспышка с глюком -> табличка SAVE -> снова вспышка и по кругу.
+     *
+     * Тряски нет намеренно: дрожащий кадр читался как дефект. Вместо неё
+     * лёгкий наклон перспективы - тревога есть, читаемость цела.
      */
     private fun scrollAct(c: Canvas, w: Float, h: Float, r: Wobble) {
-        val t = loop(9f, 0f)
+        val t = loop(10f, 0f)
         val ph = BoilClock.phase
         val ground = h * 0.90f
         val portalX = w * 0.84f
 
-        // Тряска кадра, пока идёт погоня, и затухание после портала.
-        val quake = when {
-            t < 0.64f -> 1f
-            t < 0.78f -> 1f - (t - 0.64f) / 0.14f
+        // Слоу-мо: на сальто время идёт медленнее, камера ближе, мир серый.
+        val slow = when {
+            t < 0.20f -> 0f
+            t < 0.24f -> (t - 0.20f) / 0.04f
+            t < 0.38f -> 1f
+            t < 0.43f -> 1f - (t - 0.38f) / 0.05f
             else -> 0f
         }
+
         c.save()
-        if (quake > 0f) {
-            c.translate(
-                2.8f * d * quake * sin((ph * 33f).toDouble()).toFloat(),
-                2f * d * quake * sin((ph * 27f + 1.3f).toDouble()).toFloat())
-        }
+        // Мягкий сдвиг перспективы вместо тряски.
+        val tilt = if (t < 0.78f) 0.010f * sin((ph * 1.7f).toDouble()).toFloat() else 0f
+        c.skew(tilt, 0f)
+        c.translate(-w * tilt * 0.5f, 0f)
 
         // ---- Позиция и поза героя ----
         var hx: Float; var hy = ground; var rot = 0f; var pose = 0
         var visible = true
         when {
-            t < 0.16f -> { hx = -w * 0.10f + (w * 0.32f) * (t / 0.16f) }
-            t < 0.29f -> {                       // сальто через разлом
-                val fr = (t - 0.16f) / 0.13f
-                hx = w * 0.22f + w * 0.18f * fr
-                hy = ground - 30f * d * sin((Math.PI * fr).toDouble()).toFloat()
+            t < 0.06f -> { hx = -w * 0.10f; visible = false }         // вспышка-старт
+            t < 0.20f -> { hx = -w * 0.10f + (w * 0.34f) * ((t - 0.06f) / 0.14f) }
+            t < 0.40f -> {                                            // сальто в слоу-мо
+                val fr = (t - 0.20f) / 0.20f
+                hx = w * 0.24f + w * 0.16f * fr
+                hy = ground - 36f * d * sin((Math.PI * fr).toDouble()).toFloat()
                 rot = -360f * fr; pose = 1
             }
-            t < 0.37f -> {                       // бросок печати вниз
-                val fr = (t - 0.29f) / 0.08f
-                hx = w * 0.40f + w * 0.08f * fr
-                pose = 2
-            }
-            t < 0.66f -> {                       // скольжение по льду
-                val fr = (t - 0.37f) / 0.29f
-                hx = w * 0.48f + (portalX - w * 0.06f - w * 0.48f) * fr
+            t < 0.48f -> { hx = w * 0.40f + w * 0.08f * ((t - 0.40f) / 0.08f); pose = 2 }
+            t < 0.74f -> {                                            // скольжение, быстро
+                val fr = (t - 0.48f) / 0.26f
+                hx = w * 0.48f + (portalX - w * 0.06f - w * 0.48f) * (fr * (2f - fr))
                 pose = 3
             }
-            t < 0.74f -> {                       // прыжок в портал
-                val fr = (t - 0.66f) / 0.08f
+            t < 0.80f -> {
+                val fr = (t - 0.74f) / 0.06f
                 hx = portalX - w * 0.06f + w * 0.06f * fr
                 hy = ground - 34f * d * sin((Math.PI * fr).toDouble()).toFloat()
                 rot = -80f * fr; pose = 4
@@ -2436,141 +2439,181 @@ class DoodleSceneView @JvmOverloads constructor(
             else -> { hx = portalX; visible = false }
         }
 
-        // ---- Взрывы за спиной: волна, ядро, обломки ----
-        val blasts = floatArrayOf(0.05f, 0.22f, 0.44f)
+        // Камера наезжает на слоу-мо.
+        if (slow > 0f) {
+            val z = 1f + 0.28f * slow
+            c.scale(z, z, hx, hy - h * 0.10f)
+        }
+
+        // ---- Взрывы: ядро, языки пламени, дым, обломки ----
+        val blasts = floatArrayOf(0.07f, 0.26f, 0.50f)
         for ((bi, b0) in blasts.withIndex()) {
-            val age = (t - b0) / 0.20f
+            val age = (t - b0) / 0.22f
             if (age < 0f || age > 1f) continue
             val bx = w * (0.02f + 0.24f * bi)
             val by = ground - h * 0.10f
-            val rad = h * (0.10f + 0.55f * age)
-            // ударная волна
+            val rad = h * (0.10f + 0.62f * age)
             savePaint.style = Paint.Style.STROKE
-            savePaint.strokeWidth = (3.5f - 2.5f * age) * d
+            savePaint.strokeWidth = (4f - 3f * age) * d
             savePaint.color = amberBr
-            savePaint.alpha = (170f * (1f - age)).toInt().coerceIn(0, 255)
+            savePaint.alpha = (185f * (1f - age)).toInt().coerceIn(0, 255)
             c.drawCircle(bx, by, rad, savePaint)
             savePaint.style = Paint.Style.FILL
-            // ядро
-            savePaint.color = red; savePaint.alpha = (185f * (1f - age)).toInt().coerceIn(0, 255)
-            c.drawCircle(bx, by, rad * 0.55f, savePaint)
-            savePaint.color = amberBr; savePaint.alpha = (225f * (1f - age * 1.3f)).toInt().coerceIn(0, 255)
-            c.drawCircle(bx, by, rad * 0.30f, savePaint)
-            // обломки летят по параболе
-            for (k in 0 until 7) {
-                val a2 = Math.PI * (0.12 + 0.76 * k / 6.0)
-                val sp = (0.6f + 0.4f * ((k * 37) % 10) / 10f) * h * 1.1f
+            // языки пламени пожирают пространство вокруг ядра
+            for (k in 0 until 9) {
+                val a2 = Math.toRadians((k * 40f + age * 60f).toDouble())
+                val fl = rad * (0.52f + 0.30f * kotlin.math.sin((ph * 9f + k).toDouble()).toFloat())
+                val tongue = Path()
+                val tx = bx + fl * kotlin.math.cos(a2).toFloat()
+                val ty = by + fl * kotlin.math.sin(a2).toFloat()
+                tongue.moveTo(bx, by)
+                tongue.quadTo(bx + fl * 0.6f * kotlin.math.cos(a2 - 0.4).toFloat(),
+                    by + fl * 0.6f * kotlin.math.sin(a2 - 0.4).toFloat(), tx, ty)
+                tongue.quadTo(bx + fl * 0.6f * kotlin.math.cos(a2 + 0.4).toFloat(),
+                    by + fl * 0.6f * kotlin.math.sin(a2 + 0.4).toFloat(), bx, by)
+                savePaint.color = if (k % 2 == 0) red else amberBr
+                savePaint.alpha = (150f * (1f - age)).toInt().coerceIn(0, 255)
+                c.drawPath(tongue, savePaint)
+            }
+            savePaint.color = amberBr; savePaint.alpha = (235f * (1f - age * 1.25f)).toInt().coerceIn(0, 255)
+            c.drawCircle(bx, by, rad * 0.28f, savePaint)
+            // дым поднимается следом
+            for (k in 0 until 4) {
+                val g = (age + k * 0.18f) % 1f
+                savePaint.color = gray; savePaint.alpha = (110f * (1f - g) * (1f - age)).toInt().coerceIn(0, 255)
+                c.drawCircle(bx + (k - 1.5f) * rad * 0.28f, by - rad * (0.5f + g),
+                    rad * (0.18f + 0.22f * g), savePaint)
+            }
+            // обломки по параболе
+            for (k in 0 until 8) {
+                val a2 = Math.PI * (0.10 + 0.80 * k / 7.0)
+                val sp = (0.6f + 0.4f * ((k * 37) % 10) / 10f) * h * 1.2f
                 val dx = kotlin.math.cos(a2).toFloat() * sp * age
-                val dy = -kotlin.math.sin(a2).toFloat() * sp * age + h * 1.5f * age * age
-                savePaint.color = gray; savePaint.alpha = (215f * (1f - age)).toInt().coerceIn(0, 255)
-                c.drawCircle(bx + dx, by + dy, (1.2f + 1.4f * (1f - age)) * d, savePaint)
+                val dy = -kotlin.math.sin(a2).toFloat() * sp * age + h * 1.6f * age * age
+                savePaint.color = gray; savePaint.alpha = (220f * (1f - age)).toInt().coerceIn(0, 255)
+                c.drawCircle(bx + dx, by + dy, (1.2f + 1.5f * (1f - age)) * d, savePaint)
             }
         }
 
-        // ---- Лёд от печати ----
-        if (t >= 0.33f) {
-            val sp = ((t - 0.33f) / 0.10f).coerceAtMost(1f)
+        // ---- Лёд: слоистая плита, трещины, грани, кристаллы ----
+        if (t >= 0.44f) {
+            val sp = ((t - 0.44f) / 0.08f).coerceAtMost(1f)
             val x0 = w * 0.44f
             val x1 = x0 + (portalX - x0) * sp
             savePaint.style = Paint.Style.FILL
-            savePaint.color = blueBr; savePaint.alpha = 90
-            c.drawRect(x0, ground - 3f * d, x1, ground + 2f * d, savePaint)
-            savePaint.color = 0xFFFFFFFF.toInt(); savePaint.alpha = 150
-            c.drawRect(x0, ground - 3f * d, x1, ground - 1.6f * d, savePaint)
-            savePaint.style = Paint.Style.STROKE; savePaint.strokeWidth = 1.4f * d
-            savePaint.color = blueBr; savePaint.alpha = 190
+            savePaint.color = blue; savePaint.alpha = 120
+            c.drawRect(x0, ground - 5f * d, x1, ground + 3f * d, savePaint)
+            savePaint.color = blueBr; savePaint.alpha = 150
+            c.drawRect(x0, ground - 5f * d, x1, ground - 2.4f * d, savePaint)
+            savePaint.color = 0xFFFFFFFF.toInt(); savePaint.alpha = 175
+            c.drawRect(x0, ground - 5f * d, x1, ground - 3.8f * d, savePaint)
+            savePaint.style = Paint.Style.STROKE; savePaint.strokeWidth = 1.2f * d
+            savePaint.color = 0xFFFFFFFF.toInt(); savePaint.alpha = 120
             var ix = x0
+            var seg = 0
             while (ix < x1) {
-                val hgt = (3f + 4f * ((ix / (7f * d)).toInt() % 3)) * d
-                c.drawLine(ix, ground - 3f * d, ix + 2.5f * d, ground - 3f * d - hgt, savePaint)
-                ix += 11f * d
+                // грани и трещины внутри плиты
+                c.drawLine(ix, ground - 5f * d, ix + 5f * d, ground + 3f * d, savePaint)
+                if (seg % 2 == 0) c.drawLine(ix + 2f * d, ground - 1f * d, ix + 9f * d, ground - 2.5f * d, savePaint)
+                // кристаллы инея по кромке
+                savePaint.color = blueBr; savePaint.alpha = 190
+                val hgt = (4f + 5f * (seg % 3)) * d
+                c.drawLine(ix, ground - 5f * d, ix + 2.5f * d, ground - 5f * d - hgt, savePaint)
+                c.drawLine(ix + 2.5f * d, ground - 5f * d - hgt,
+                    ix + 0.6f * d, ground - 5f * d - hgt * 0.6f, savePaint)
+                savePaint.color = 0xFFFFFFFF.toInt(); savePaint.alpha = 120
+                ix += 12f * d; seg++
             }
             savePaint.style = Paint.Style.FILL
+            // искры на льду
+            for (k in 0 until 4) {
+                var g = (ph * 0.8f + k * 0.25f) % 1f
+                if (g < 0f) g += 1f
+                savePaint.color = 0xFFFFFFFF.toInt()
+                savePaint.alpha = (180f * (1f - kotlin.math.abs(0.5f - g) * 2f)).toInt().coerceIn(0, 255)
+                c.drawCircle(x0 + (x1 - x0) * g, ground - 4.4f * d, 1.5f * d, savePaint)
+            }
         }
-        // печать в момент броска
-        if (t >= 0.31f && t < 0.40f) {
-            val fr = (t - 0.31f) / 0.09f
-            val pxx = w * 0.44f; val pyy = ground - 2f * d
-            savePaint.color = blueBr; savePaint.alpha = (200f * (1f - fr)).toInt().coerceIn(0, 255)
-            c.drawCircle(pxx, pyy, (6f + 22f * fr) * d, savePaint)
+        if (t >= 0.42f && t < 0.50f) {                       // печать бьёт в пол
+            val fr = (t - 0.42f) / 0.08f
+            savePaint.style = Paint.Style.FILL
+            savePaint.color = blueBr; savePaint.alpha = (210f * (1f - fr)).toInt().coerceIn(0, 255)
+            c.drawCircle(w * 0.44f, ground - 2f * d, (6f + 26f * fr) * d, savePaint)
         }
 
         // ---- Портал ----
-        if (t >= 0.42f) {
-            val op = ((t - 0.42f) / 0.10f).coerceAtMost(1f)
-            val cl = if (t > 0.74f) (1f - (t - 0.74f) / 0.10f).coerceAtLeast(0f) else 1f
-            val k = op * cl
-            if (k > 0.01f) {
+        if (t >= 0.52f) {
+            val op = ((t - 0.52f) / 0.10f).coerceAtMost(1f)
+            val cl = if (t > 0.80f) (1f - (t - 0.80f) / 0.08f).coerceAtLeast(0f) else 1f
+            val k2 = op * cl
+            if (k2 > 0.01f) {
                 val py = ground - h * 0.30f
-                val rw = w * 0.055f * k; val rh = h * 0.34f * k
+                val rw = w * 0.055f * k2; val rh = h * 0.34f * k2
                 savePaint.style = Paint.Style.FILL
-                savePaint.color = violet; savePaint.alpha = (70f * k).toInt().coerceIn(0, 255)
-                c.drawOval(portalX - rw * 1.7f, py - rh * 1.2f,
-                    portalX + rw * 1.7f, py + rh * 1.2f, savePaint)
+                savePaint.color = violet; savePaint.alpha = (80f * k2).toInt().coerceIn(0, 255)
+                c.drawOval(portalX - rw * 1.8f, py - rh * 1.25f, portalX + rw * 1.8f, py + rh * 1.25f, savePaint)
                 savePaint.style = Paint.Style.STROKE
                 for (i2 in 0 until 3) {
                     val kk = 1f - i2 * 0.22f
-                    savePaint.strokeWidth = (2.6f - i2 * 0.5f) * d
+                    savePaint.strokeWidth = (2.8f - i2 * 0.5f) * d
                     savePaint.color = if (i2 == 0) 0xFFFFFFFF.toInt() else violetBr
-                    savePaint.alpha = (200f * k).toInt().coerceIn(0, 255)
-                    c.save(); c.rotate(ph * (14f + i2 * 9f), portalX, py)
-                    c.drawOval(portalX - rw * kk, py - rh * kk,
-                        portalX + rw * kk, py + rh * kk, savePaint)
+                    savePaint.alpha = (210f * k2).toInt().coerceIn(0, 255)
+                    c.save(); c.rotate(ph * (16f + i2 * 10f), portalX, py)
+                    c.drawOval(portalX - rw * kk, py - rh * kk, portalX + rw * kk, py + rh * kk, savePaint)
                     c.restore()
                 }
                 savePaint.style = Paint.Style.FILL
-                // частицы затягивает внутрь
-                for (i2 in 0 until 5) {
-                    var g = (ph * 0.7f + i2 * 0.2f) % 1f
+                for (i2 in 0 until 6) {
+                    var g = (ph * 0.75f + i2 * 0.17f) % 1f
                     if (g < 0f) g += 1f
-                    val rr = (1f - g) * w * 0.10f
-                    val a3 = Math.toRadians((i2 * 72f + ph * 40f).toDouble())
-                    savePaint.color = violetBr; savePaint.alpha = (200f * g * k).toInt().coerceIn(0, 255)
+                    val rr = (1f - g) * w * 0.11f
+                    val a3 = Math.toRadians((i2 * 60f + ph * 44f).toDouble())
+                    savePaint.color = violetBr; savePaint.alpha = (210f * g * k2).toInt().coerceIn(0, 255)
                     c.drawCircle(portalX + rr * kotlin.math.cos(a3).toFloat(),
-                        py + rr * 0.7f * kotlin.math.sin(a3).toFloat(), 1.6f * d, savePaint)
+                        py + rr * 0.7f * kotlin.math.sin(a3).toFloat(), 1.7f * d, savePaint)
                 }
-            }
-            // вспышка на входе
-            if (t in 0.72f..0.80f) {
-                val fl = 1f - (t - 0.72f) / 0.08f
-                savePaint.color = 0xFFFFFFFF.toInt(); savePaint.alpha = (200f * fl).toInt().coerceIn(0, 255)
-                c.drawCircle(portalX, ground - h * 0.30f, h * 0.42f * (1f - fl * 0.5f), savePaint)
             }
         }
 
-        // ---- Герой со свитком ----
+        // ---- Мир обесцвечивается на слоу-мо ----
+        if (slow > 0.01f) {
+            savePaint.style = Paint.Style.FILL
+            savePaint.color = 0xFF20232A.toInt()
+            savePaint.alpha = (150f * slow).toInt().coerceIn(0, 255)
+            c.drawRect(0f, 0f, w, h, savePaint)
+        }
+
+        // ---- Герой со свитком (в цвете даже на чёрно-белом кадре) ----
         if (visible) {
-            c.save()
-            c.translate(hx, hy)
-            if (rot != 0f) c.rotate(rot)
+            c.save(); c.translate(hx, hy); if (rot != 0f) c.rotate(rot)
             val stride = 3.4f * d * sin((ph * 13f).toDouble()).toFloat()
             val fig = Path()
             when (pose) {
-                1 -> {                                  // сальто: группировка
+                1 -> {
                     fig.moveTo(0f, -6f * d); fig.lineTo(0f, -2f * d)
                     fig.moveTo(0f, -2f * d); fig.lineTo(-4.4f * d, 1.2f * d)
                     fig.moveTo(0f, -2f * d); fig.lineTo(3.2f * d, 2.6f * d)
                     fig.moveTo(0f, -5f * d); fig.lineTo(-5f * d, -3f * d)
                 }
-                2 -> {                                  // бросок печати вниз
+                2 -> {
                     fig.moveTo(0f, -6.4f * d); fig.lineTo(0f, -2f * d)
                     fig.moveTo(0f, -2f * d); fig.lineTo(-4.6f * d, 0f)
                     fig.moveTo(0f, -2f * d); fig.lineTo(3.4f * d, 0f)
                     fig.moveTo(0f, -5.4f * d); fig.lineTo(-6.6f * d, 0.8f * d)
                 }
-                3 -> {                                  // скольжение, присед
+                3 -> {
                     fig.moveTo(0f, -4.8f * d); fig.lineTo(1.4f * d, -1.6f * d)
                     fig.moveTo(1.4f * d, -1.6f * d); fig.lineTo(-4.8f * d, 0f)
                     fig.moveTo(1.4f * d, -1.6f * d); fig.lineTo(4.6f * d, -0.4f * d)
                     fig.moveTo(0f, -4.2f * d); fig.lineTo(-5.6f * d, -5.6f * d)
                 }
-                4 -> {                                  // прыжок в портал
+                4 -> {
                     fig.moveTo(0f, -6f * d); fig.lineTo(0f, -2f * d)
                     fig.moveTo(0f, -2f * d); fig.lineTo(-4.8f * d, 1.4f * d)
                     fig.moveTo(0f, -2f * d); fig.lineTo(4.2f * d, -1.6f * d)
                     fig.moveTo(0f, -5f * d); fig.lineTo(5.4f * d, -8f * d)
                 }
-                else -> {                               // бег
+                else -> {
                     fig.moveTo(0f, -6f * d); fig.lineTo(0f, -2f * d)
                     fig.moveTo(0f, -2f * d); fig.lineTo(-3f * d - stride, 0f)
                     fig.moveTo(0f, -2f * d); fig.lineTo(3f * d + stride, 0f)
@@ -2582,7 +2625,6 @@ class DoodleSceneView @JvmOverloads constructor(
             c.drawCircle(0f, -8.6f * d, 2.9f * d, savePaint)
             Doodle.ink(c, fig, stroke(amberBr, 2.1f, 245), 0.6f * d)
 
-            // Свиток наперевес: крупный, читаемый - ради него весь побег.
             c.save()
             c.translate(-1.5f * d, -4.2f * d)
             c.rotate(if (pose == 3) -18f else -26f)
@@ -2598,48 +2640,82 @@ class DoodleSceneView @JvmOverloads constructor(
             c.drawCircle(0f, 0f, 2.2f * d, savePaint)
             c.restore()
 
-            // Иней из-под ног на скольжении.
+            // Скольжение: иней из-под ног и скоростные линии.
             if (pose == 3) {
-                for (k in 0 until 5) {
-                    var g = (ph * 1.6f + k * 0.2f) % 1f
+                for (k in 0 until 6) {
+                    var g = (ph * 2.1f + k * 0.17f) % 1f
                     if (g < 0f) g += 1f
                     savePaint.color = blueBr
-                    savePaint.alpha = (200f * (1f - g)).toInt().coerceIn(0, 255)
-                    c.drawCircle(-6f * d - g * 22f * d,
-                        -1f * d - g * 7f * d, (1.6f - g) * d, savePaint)
+                    savePaint.alpha = (210f * (1f - g)).toInt().coerceIn(0, 255)
+                    c.drawCircle(-6f * d - g * 26f * d, -1f * d - g * 8f * d, (1.8f - g) * d, savePaint)
                 }
+                savePaint.style = Paint.Style.STROKE; savePaint.strokeWidth = 1.4f * d
+                savePaint.color = 0xFFFFFFFF.toInt(); savePaint.alpha = 90
+                for (k in 0 until 3) {
+                    val yy = -3f * d - k * 3.2f * d
+                    c.drawLine(-10f * d - k * 4f * d, yy, -24f * d - k * 6f * d, yy, savePaint)
+                }
+                savePaint.style = Paint.Style.FILL
             }
             c.restore()
         }
 
+        // ---- Вспышка входа + глюк-полосы ----
+        if (t in 0.78f..0.88f) {
+            val fl = 1f - (t - 0.78f) / 0.10f
+            savePaint.style = Paint.Style.FILL
+            savePaint.color = 0xFFFFFFFF.toInt(); savePaint.alpha = (215f * fl).toInt().coerceIn(0, 255)
+            c.drawCircle(portalX, ground - h * 0.30f, h * 0.50f * (1f - fl * 0.45f), savePaint)
+            for (k in 0 until 5) {
+                val yy = h * (0.12f + 0.16f * k)
+                val off = (12f * d) * fl * sin((ph * 20f + k * 2.1f).toDouble()).toFloat()
+                savePaint.color = if (k % 2 == 0) violetBr else blueBr
+                savePaint.alpha = (150f * fl).toInt().coerceIn(0, 255)
+                c.drawRect(off, yy, w + off, yy + 3.5f * d, savePaint)
+            }
+        }
+
         // ---- Табличка SAVE ----
-        if (t >= 0.78f) {
-            val fr = (t - 0.78f) / 0.22f
-            val pop = if (fr < 0.18f) fr / 0.18f else 1f
-            val fade = if (fr > 0.80f) (1f - (fr - 0.80f) / 0.20f) else 1f
+        if (t >= 0.86f) {
+            val fr = (t - 0.86f) / 0.14f
+            val pop = if (fr < 0.20f) fr / 0.20f else 1f
+            val fade = if (fr > 0.78f) (1f - (fr - 0.78f) / 0.22f) else 1f
             val a4 = (255f * fade).toInt().coerceIn(0, 255)
             val cxp = w * 0.50f; val cyp = h * 0.42f
-            val pwd = w * 0.20f * (0.7f + 0.3f * pop)
-            val phd = h * 0.26f * (0.7f + 0.3f * pop)
+            val pwd = w * 0.19f * (0.75f + 0.25f * pop)
+            val phd = h * 0.25f * (0.75f + 0.25f * pop)
             savePaint.style = Paint.Style.FILL
-            savePaint.color = green; savePaint.alpha = (40f * fade).toInt().coerceIn(0, 255)
-            c.drawRoundRect(cxp - pwd * 1.25f, cyp - phd * 1.35f,
-                cxp + pwd * 1.25f, cyp + phd * 1.35f, 6f * d, 6f * d, savePaint)
+            savePaint.color = green; savePaint.alpha = (45f * fade).toInt().coerceIn(0, 255)
+            c.drawRoundRect(cxp - pwd * 1.2f, cyp - phd * 1.3f, cxp + pwd * 1.2f, cyp + phd * 1.3f,
+                6f * d, 6f * d, savePaint)
             savePaint.color = 0xFF0B2416.toInt(); savePaint.alpha = a4
             c.drawRoundRect(cxp - pwd, cyp - phd, cxp + pwd, cyp + phd, 5f * d, 5f * d, savePaint)
             savePaint.style = Paint.Style.STROKE; savePaint.strokeWidth = 2f * d
             savePaint.color = green; savePaint.alpha = a4
             c.drawRoundRect(cxp - pwd, cyp - phd, cxp + pwd, cyp + phd, 5f * d, 5f * d, savePaint)
-            // галочка
-            savePaint.strokeWidth = 2.6f * d
-            c.drawLine(cxp - pwd * 0.62f, cyp + phd * 0.02f,
-                cxp - pwd * 0.36f, cyp + phd * 0.42f, savePaint)
-            c.drawLine(cxp - pwd * 0.36f, cyp + phd * 0.42f,
-                cxp - pwd * 0.02f, cyp - phd * 0.40f, savePaint)
+            // Галочка: компактная и жирная, с круглыми концами.
+            savePaint.strokeWidth = 4.2f * d
+            savePaint.strokeCap = Paint.Cap.ROUND
+            savePaint.strokeJoin = Paint.Join.ROUND
+            val gx = cxp - pwd * 0.52f; val gy = cyp
+            val gs = phd * 0.42f
+            val chk = Path()
+            chk.moveTo(gx - gs * 0.75f, gy)
+            chk.lineTo(gx - gs * 0.15f, gy + gs * 0.62f)
+            chk.lineTo(gx + gs * 0.85f, gy - gs * 0.70f)
+            c.drawPath(chk, savePaint)
             savePaint.style = Paint.Style.FILL
-            savePaint.textSize = phd * 1.05f
+            savePaint.textSize = phd * 1.0f
             savePaint.color = green; savePaint.alpha = a4
-            c.drawText("SAVE", cxp + pwd * 0.30f, cyp + phd * 0.38f, savePaint)
+            c.drawText("SAVE", cxp + pwd * 0.34f, cyp + phd * 0.36f, savePaint)
+        }
+
+        // ---- Стартовая вспышка: из неё номер начинается заново ----
+        if (t < 0.06f) {
+            val fl = 1f - t / 0.06f
+            savePaint.style = Paint.Style.FILL
+            savePaint.color = 0xFFFFFFFF.toInt(); savePaint.alpha = (200f * fl).toInt().coerceIn(0, 255)
+            c.drawRect(0f, 0f, w, h, savePaint)
         }
         savePaint.alpha = 255
         c.restore()
