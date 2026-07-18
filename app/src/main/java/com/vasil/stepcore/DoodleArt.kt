@@ -1249,6 +1249,11 @@ class DoodleSceneView @JvmOverloads constructor(
     private val gray = ContextCompat.getColor(context, R.color.axis_dim)
     private val red = ContextCompat.getColor(context, R.color.accent_red)
     private val green = ContextCompat.getColor(context, R.color.accent_green)
+    private val savePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL; textAlign = Paint.Align.CENTER
+        typeface = android.graphics.Typeface.create(
+            android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+    }
     private val beamPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND
     }
@@ -2234,108 +2239,267 @@ class DoodleSceneView @JvmOverloads constructor(
 
     /** История: стопка тетрадей - нейтральный серый, экран архивный. */
     /**
-     * История как свиток. Цикл: разворот -> канатоходец с шестом идёт по
-     * полотну слева направо и уходит за кадр -> свиток сворачивается ->
-     * его запечатывают семь печатей -> заново.
+     * Побег с архивом. Цикл 9 с: герой вбегает слева со свитком, за спиной
+     * рвутся взрывы (кадр трясёт), делает сальто через разлом, бросает
+     * печать в пол - расходится лёд, скользит по нему к порталу, прыгает
+     * внутрь, вспышка, и загорается табличка SAVE. Архив спасён.
      */
     private fun scrollAct(c: Canvas, w: Float, h: Float, r: Wobble) {
-        val t = loop(14f, 0f)
+        val t = loop(9f, 0f)
         val ph = BoilClock.phase
-        val cx = w * 0.50f
-        val yTop = h * 0.54f
-        val thick = h * 0.20f
-        val halfMax = w * 0.40f
+        val ground = h * 0.90f
+        val portalX = w * 0.84f
 
-        val raw = when {
-            t < 0.10f -> t / 0.10f
-            t < 0.74f -> 1f
-            t < 0.86f -> 1f - (t - 0.74f) / 0.12f
+        // Тряска кадра, пока идёт погоня, и затухание после портала.
+        val quake = when {
+            t < 0.64f -> 1f
+            t < 0.78f -> 1f - (t - 0.64f) / 0.14f
             else -> 0f
         }
-        val open = raw * raw * (3f - 2f * raw)
-        val xL = cx - halfMax * open
-        val xR = cx + halfMax * open
+        c.save()
+        if (quake > 0f) {
+            c.translate(
+                2.8f * d * quake * sin((ph * 33f).toDouble()).toFloat(),
+                2f * d * quake * sin((ph * 27f + 1.3f).toDouble()).toFloat())
+        }
 
-        // Полотно с рукописными строками.
-        if (open > 0.03f) {
-            val body = Path()
-            body.addRect(xL, yTop, xR, yTop + thick, Path.Direction.CW)
-            skyFill.color = 0xFFE8DCC0.toInt(); skyFill.alpha = 205
-            c.drawPath(body, skyFill)
-            rayPaint.color = 0xFF8A7B58.toInt(); rayPaint.alpha = 165
-            rayPaint.strokeWidth = 1.2f * d
-            for (k in 1..3) {
-                val ly = yTop + thick * (k / 4f)
-                if (xR - xL > 16f * d) c.drawLine(xL + 7f * d, ly, xR - 7f * d, ly, rayPaint)
+        // ---- Позиция и поза героя ----
+        var hx: Float; var hy = ground; var rot = 0f; var pose = 0
+        var visible = true
+        when {
+            t < 0.16f -> { hx = -w * 0.10f + (w * 0.32f) * (t / 0.16f) }
+            t < 0.29f -> {                       // сальто через разлом
+                val fr = (t - 0.16f) / 0.13f
+                hx = w * 0.22f + w * 0.18f * fr
+                hy = ground - 30f * d * sin((Math.PI * fr).toDouble()).toFloat()
+                rot = -360f * fr; pose = 1
             }
-            skyOutline.color = 0xFF6B5C3C.toInt()
-            Doodle.ink(c, body, skyOutline, 0.6f * d)
+            t < 0.37f -> {                       // бросок печати вниз
+                val fr = (t - 0.29f) / 0.08f
+                hx = w * 0.40f + w * 0.08f * fr
+                pose = 2
+            }
+            t < 0.66f -> {                       // скольжение по льду
+                val fr = (t - 0.37f) / 0.29f
+                hx = w * 0.48f + (portalX - w * 0.06f - w * 0.48f) * fr
+                pose = 3
+            }
+            t < 0.74f -> {                       // прыжок в портал
+                val fr = (t - 0.66f) / 0.08f
+                hx = portalX - w * 0.06f + w * 0.06f * fr
+                hy = ground - 34f * d * sin((Math.PI * fr).toDouble()).toFloat()
+                rot = -80f * fr; pose = 4
+            }
+            else -> { hx = portalX; visible = false }
         }
 
-        // Валики по краям.
-        val rr = thick * 0.66f
-        for (sx in floatArrayOf(xL, xR)) {
-            skyFill.color = 0xFF7A5A32.toInt(); skyFill.alpha = 245
-            c.drawRoundRect(sx - rr * 0.46f, yTop - rr * 0.30f,
-                sx + rr * 0.46f, yTop + thick + rr * 0.30f, rr * 0.4f, rr * 0.4f, skyFill)
-            skyFill.color = 0xFFB08A50.toInt(); skyFill.alpha = 220
-            c.drawRoundRect(sx - rr * 0.22f, yTop - rr * 0.22f,
-                sx + rr * 0.10f, yTop + thick + rr * 0.22f, rr * 0.3f, rr * 0.3f, skyFill)
+        // ---- Взрывы за спиной: волна, ядро, обломки ----
+        val blasts = floatArrayOf(0.05f, 0.22f, 0.44f)
+        for ((bi, b0) in blasts.withIndex()) {
+            val age = (t - b0) / 0.20f
+            if (age < 0f || age > 1f) continue
+            val bx = w * (0.02f + 0.24f * bi)
+            val by = ground - h * 0.10f
+            val rad = h * (0.10f + 0.55f * age)
+            // ударная волна
+            savePaint.style = Paint.Style.STROKE
+            savePaint.strokeWidth = (3.5f - 2.5f * age) * d
+            savePaint.color = amberBr
+            savePaint.alpha = (170f * (1f - age)).toInt().coerceIn(0, 255)
+            c.drawCircle(bx, by, rad, savePaint)
+            savePaint.style = Paint.Style.FILL
+            // ядро
+            savePaint.color = red; savePaint.alpha = (185f * (1f - age)).toInt().coerceIn(0, 255)
+            c.drawCircle(bx, by, rad * 0.55f, savePaint)
+            savePaint.color = amberBr; savePaint.alpha = (225f * (1f - age * 1.3f)).toInt().coerceIn(0, 255)
+            c.drawCircle(bx, by, rad * 0.30f, savePaint)
+            // обломки летят по параболе
+            for (k in 0 until 7) {
+                val a2 = Math.PI * (0.12 + 0.76 * k / 6.0)
+                val sp = (0.6f + 0.4f * ((k * 37) % 10) / 10f) * h * 1.1f
+                val dx = kotlin.math.cos(a2).toFloat() * sp * age
+                val dy = -kotlin.math.sin(a2).toFloat() * sp * age + h * 1.5f * age * age
+                savePaint.color = gray; savePaint.alpha = (215f * (1f - age)).toInt().coerceIn(0, 255)
+                c.drawCircle(bx + dx, by + dy, (1.2f + 1.4f * (1f - age)) * d, savePaint)
+            }
         }
 
-        // Канатоходец: идёт по кромке, балансируя шестом.
-        if (t >= 0.10f && t < 0.74f) {
-            val pp = (t - 0.10f) / 0.64f
-            val fx = xL + (xR - xL + w * 0.16f) * pp
-            val fy = yTop
-            val tilt = 7.5f * kotlin.math.sin((ph * 2.2f).toDouble()).toFloat()
-            val bob = 1.2f * d * kotlin.math.sin((ph * 6.5f).toDouble()).toFloat()
+        // ---- Лёд от печати ----
+        if (t >= 0.33f) {
+            val sp = ((t - 0.33f) / 0.10f).coerceAtMost(1f)
+            val x0 = w * 0.44f
+            val x1 = x0 + (portalX - x0) * sp
+            savePaint.style = Paint.Style.FILL
+            savePaint.color = blueBr; savePaint.alpha = 90
+            c.drawRect(x0, ground - 3f * d, x1, ground + 2f * d, savePaint)
+            savePaint.color = 0xFFFFFFFF.toInt(); savePaint.alpha = 150
+            c.drawRect(x0, ground - 3f * d, x1, ground - 1.6f * d, savePaint)
+            savePaint.style = Paint.Style.STROKE; savePaint.strokeWidth = 1.4f * d
+            savePaint.color = blueBr; savePaint.alpha = 190
+            var ix = x0
+            while (ix < x1) {
+                val hgt = (3f + 4f * ((ix / (7f * d)).toInt() % 3)) * d
+                c.drawLine(ix, ground - 3f * d, ix + 2.5f * d, ground - 3f * d - hgt, savePaint)
+                ix += 11f * d
+            }
+            savePaint.style = Paint.Style.FILL
+        }
+        // печать в момент броска
+        if (t >= 0.31f && t < 0.40f) {
+            val fr = (t - 0.31f) / 0.09f
+            val pxx = w * 0.44f; val pyy = ground - 2f * d
+            savePaint.color = blueBr; savePaint.alpha = (200f * (1f - fr)).toInt().coerceIn(0, 255)
+            c.drawCircle(pxx, pyy, (6f + 22f * fr) * d, savePaint)
+        }
+
+        // ---- Портал ----
+        if (t >= 0.42f) {
+            val op = ((t - 0.42f) / 0.10f).coerceAtMost(1f)
+            val cl = if (t > 0.74f) (1f - (t - 0.74f) / 0.10f).coerceAtLeast(0f) else 1f
+            val k = op * cl
+            if (k > 0.01f) {
+                val py = ground - h * 0.30f
+                val rw = w * 0.055f * k; val rh = h * 0.34f * k
+                savePaint.style = Paint.Style.FILL
+                savePaint.color = violet; savePaint.alpha = (70f * k).toInt().coerceIn(0, 255)
+                c.drawOval(portalX - rw * 1.7f, py - rh * 1.2f,
+                    portalX + rw * 1.7f, py + rh * 1.2f, savePaint)
+                savePaint.style = Paint.Style.STROKE
+                for (i2 in 0 until 3) {
+                    val kk = 1f - i2 * 0.22f
+                    savePaint.strokeWidth = (2.6f - i2 * 0.5f) * d
+                    savePaint.color = if (i2 == 0) 0xFFFFFFFF.toInt() else violetBr
+                    savePaint.alpha = (200f * k).toInt().coerceIn(0, 255)
+                    c.save(); c.rotate(ph * (14f + i2 * 9f), portalX, py)
+                    c.drawOval(portalX - rw * kk, py - rh * kk,
+                        portalX + rw * kk, py + rh * kk, savePaint)
+                    c.restore()
+                }
+                savePaint.style = Paint.Style.FILL
+                // частицы затягивает внутрь
+                for (i2 in 0 until 5) {
+                    var g = (ph * 0.7f + i2 * 0.2f) % 1f
+                    if (g < 0f) g += 1f
+                    val rr = (1f - g) * w * 0.10f
+                    val a3 = Math.toRadians((i2 * 72f + ph * 40f).toDouble())
+                    savePaint.color = violetBr; savePaint.alpha = (200f * g * k).toInt().coerceIn(0, 255)
+                    c.drawCircle(portalX + rr * kotlin.math.cos(a3).toFloat(),
+                        py + rr * 0.7f * kotlin.math.sin(a3).toFloat(), 1.6f * d, savePaint)
+                }
+            }
+            // вспышка на входе
+            if (t in 0.72f..0.80f) {
+                val fl = 1f - (t - 0.72f) / 0.08f
+                savePaint.color = 0xFFFFFFFF.toInt(); savePaint.alpha = (200f * fl).toInt().coerceIn(0, 255)
+                c.drawCircle(portalX, ground - h * 0.30f, h * 0.42f * (1f - fl * 0.5f), savePaint)
+            }
+        }
+
+        // ---- Герой со свитком ----
+        if (visible) {
             c.save()
-            c.translate(fx, fy + bob)
-            c.rotate(tilt)
+            c.translate(hx, hy)
+            if (rot != 0f) c.rotate(rot)
+            val stride = 3.4f * d * sin((ph * 13f).toDouble()).toFloat()
             val fig = Path()
-            fig.moveTo(0f, -13f * d); fig.lineTo(0f, -5.5f * d)
-            val stride = 3.2f * d * kotlin.math.sin((ph * 6.5f).toDouble()).toFloat()
-            fig.moveTo(0f, -5.5f * d); fig.lineTo(-stride, 0f)
-            fig.moveTo(0f, -5.5f * d); fig.lineTo(stride, 0f)
-            skyFill.color = 0xFFEFC06A.toInt(); skyFill.alpha = 245
-            c.drawCircle(0f, -16f * d, 2.8f * d, skyFill)
-            skyOutline.color = 0xFFEFC06A.toInt()
-            Doodle.ink(c, fig, skyOutline, 0.6f * d)
-            // Шест: наклоняется против качания - так и держат равновесие.
-            c.rotate(-tilt * 1.8f)
-            rayPaint.color = 0xFFD9C089.toInt(); rayPaint.alpha = 235
-            rayPaint.strokeWidth = 1.8f * d
-            c.drawLine(-14f * d, -11f * d, 14f * d, -11f * d, rayPaint)
+            when (pose) {
+                1 -> {                                  // сальто: группировка
+                    fig.moveTo(0f, -6f * d); fig.lineTo(0f, -2f * d)
+                    fig.moveTo(0f, -2f * d); fig.lineTo(-4.4f * d, 1.2f * d)
+                    fig.moveTo(0f, -2f * d); fig.lineTo(3.2f * d, 2.6f * d)
+                    fig.moveTo(0f, -5f * d); fig.lineTo(-5f * d, -3f * d)
+                }
+                2 -> {                                  // бросок печати вниз
+                    fig.moveTo(0f, -6.4f * d); fig.lineTo(0f, -2f * d)
+                    fig.moveTo(0f, -2f * d); fig.lineTo(-4.6f * d, 0f)
+                    fig.moveTo(0f, -2f * d); fig.lineTo(3.4f * d, 0f)
+                    fig.moveTo(0f, -5.4f * d); fig.lineTo(-6.6f * d, 0.8f * d)
+                }
+                3 -> {                                  // скольжение, присед
+                    fig.moveTo(0f, -4.8f * d); fig.lineTo(1.4f * d, -1.6f * d)
+                    fig.moveTo(1.4f * d, -1.6f * d); fig.lineTo(-4.8f * d, 0f)
+                    fig.moveTo(1.4f * d, -1.6f * d); fig.lineTo(4.6f * d, -0.4f * d)
+                    fig.moveTo(0f, -4.2f * d); fig.lineTo(-5.6f * d, -5.6f * d)
+                }
+                4 -> {                                  // прыжок в портал
+                    fig.moveTo(0f, -6f * d); fig.lineTo(0f, -2f * d)
+                    fig.moveTo(0f, -2f * d); fig.lineTo(-4.8f * d, 1.4f * d)
+                    fig.moveTo(0f, -2f * d); fig.lineTo(4.2f * d, -1.6f * d)
+                    fig.moveTo(0f, -5f * d); fig.lineTo(5.4f * d, -8f * d)
+                }
+                else -> {                               // бег
+                    fig.moveTo(0f, -6f * d); fig.lineTo(0f, -2f * d)
+                    fig.moveTo(0f, -2f * d); fig.lineTo(-3f * d - stride, 0f)
+                    fig.moveTo(0f, -2f * d); fig.lineTo(3f * d + stride, 0f)
+                    fig.moveTo(0f, -5.2f * d); fig.lineTo(4.6f * d, -7f * d)
+                }
+            }
+            savePaint.style = Paint.Style.FILL
+            savePaint.color = amberBr; savePaint.alpha = 245
+            c.drawCircle(0f, -8.6f * d, 2.9f * d, savePaint)
+            Doodle.ink(c, fig, stroke(amberBr, 2.1f, 245), 0.6f * d)
+
+            // Свиток наперевес: крупный, читаемый - ради него весь побег.
+            c.save()
+            c.translate(-1.5f * d, -4.2f * d)
+            c.rotate(if (pose == 3) -18f else -26f)
+            savePaint.color = 0xFFE8DCC0.toInt(); savePaint.alpha = 250
+            c.drawRoundRect(-13f * d, -3.6f * d, 13f * d, 3.6f * d, 3.6f * d, 3.6f * d, savePaint)
+            savePaint.color = 0xFF7A5A32.toInt()
+            c.drawRoundRect(-15f * d, -4.6f * d, -10.5f * d, 4.6f * d, 2f * d, 2f * d, savePaint)
+            c.drawRoundRect(10.5f * d, -4.6f * d, 15f * d, 4.6f * d, 2f * d, 2f * d, savePaint)
+            savePaint.color = 0xFF8A7B58.toInt(); savePaint.alpha = 200
+            c.drawRect(-8f * d, -1.2f * d, 7f * d, -0.4f * d, savePaint)
+            c.drawRect(-8f * d, 0.8f * d, 4f * d, 1.6f * d, savePaint)
+            savePaint.color = red; savePaint.alpha = 220
+            c.drawCircle(0f, 0f, 2.2f * d, savePaint)
+            c.restore()
+
+            // Иней из-под ног на скольжении.
+            if (pose == 3) {
+                for (k in 0 until 5) {
+                    var g = (ph * 1.6f + k * 0.2f) % 1f
+                    if (g < 0f) g += 1f
+                    savePaint.color = blueBr
+                    savePaint.alpha = (200f * (1f - g)).toInt().coerceIn(0, 255)
+                    c.drawCircle(-6f * d - g * 22f * d,
+                        -1f * d - g * 7f * d, (1.6f - g) * d, savePaint)
+                }
+            }
             c.restore()
         }
 
-        // Семь печатей: вспыхивают по кругу, когда свиток свёрнут.
-        if (t >= 0.86f) {
-            val sp = (t - 0.86f) / 0.14f
-            val ring = h * 0.30f
-            for (k in 0 until 7) {
-                val kt = (sp * 7f) - k
-                if (kt < 0f) continue
-                val pop = if (kt < 0.35f) kt / 0.35f else 1f
-                val fade = (1f - (kt - 1.2f).coerceAtLeast(0f) / 2f).coerceIn(0f, 1f)
-                val a2 = Math.toRadians((-90f + k * (360f / 7f)).toDouble())
-                val sx = cx + ring * kotlin.math.cos(a2).toFloat()
-                val sy = yTop + thick * 0.5f + ring * 0.52f * kotlin.math.sin(a2).toFloat()
-                val rad = (4.5f + 2.5f * pop) * d
-                skyFill.color = 0xFFE23636.toInt()
-                skyFill.alpha = (60f * pop * fade).toInt().coerceIn(0, 255)
-                c.drawCircle(sx, sy, rad * 1.9f, skyFill)
-                skyFill.alpha = (215f * pop * fade).toInt().coerceIn(0, 255)
-                c.drawCircle(sx, sy, rad, skyFill)
-                rayPaint.color = 0xFFFFE9C9.toInt()
-                rayPaint.alpha = (230f * pop * fade).toInt().coerceIn(0, 255)
-                rayPaint.strokeWidth = 1.4f * d
-                c.drawLine(sx - rad * 0.5f, sy - rad * 0.25f, sx + rad * 0.5f, sy - rad * 0.25f, rayPaint)
-                c.drawLine(sx, sy - rad * 0.55f, sx, sy + rad * 0.5f, rayPaint)
-            }
+        // ---- Табличка SAVE ----
+        if (t >= 0.78f) {
+            val fr = (t - 0.78f) / 0.22f
+            val pop = if (fr < 0.18f) fr / 0.18f else 1f
+            val fade = if (fr > 0.80f) (1f - (fr - 0.80f) / 0.20f) else 1f
+            val a4 = (255f * fade).toInt().coerceIn(0, 255)
+            val cxp = w * 0.50f; val cyp = h * 0.42f
+            val pwd = w * 0.20f * (0.7f + 0.3f * pop)
+            val phd = h * 0.26f * (0.7f + 0.3f * pop)
+            savePaint.style = Paint.Style.FILL
+            savePaint.color = green; savePaint.alpha = (40f * fade).toInt().coerceIn(0, 255)
+            c.drawRoundRect(cxp - pwd * 1.25f, cyp - phd * 1.35f,
+                cxp + pwd * 1.25f, cyp + phd * 1.35f, 6f * d, 6f * d, savePaint)
+            savePaint.color = 0xFF0B2416.toInt(); savePaint.alpha = a4
+            c.drawRoundRect(cxp - pwd, cyp - phd, cxp + pwd, cyp + phd, 5f * d, 5f * d, savePaint)
+            savePaint.style = Paint.Style.STROKE; savePaint.strokeWidth = 2f * d
+            savePaint.color = green; savePaint.alpha = a4
+            c.drawRoundRect(cxp - pwd, cyp - phd, cxp + pwd, cyp + phd, 5f * d, 5f * d, savePaint)
+            // галочка
+            savePaint.strokeWidth = 2.6f * d
+            c.drawLine(cxp - pwd * 0.62f, cyp + phd * 0.02f,
+                cxp - pwd * 0.36f, cyp + phd * 0.42f, savePaint)
+            c.drawLine(cxp - pwd * 0.36f, cyp + phd * 0.42f,
+                cxp - pwd * 0.02f, cyp - phd * 0.40f, savePaint)
+            savePaint.style = Paint.Style.FILL
+            savePaint.textSize = phd * 1.05f
+            savePaint.color = green; savePaint.alpha = a4
+            c.drawText("SAVE", cxp + pwd * 0.30f, cyp + phd * 0.38f, savePaint)
         }
-        skyFill.alpha = 255
+        savePaint.alpha = 255
+        c.restore()
     }
 
     private fun drawHistory(c: Canvas, w: Float, h: Float, r: Wobble) {
