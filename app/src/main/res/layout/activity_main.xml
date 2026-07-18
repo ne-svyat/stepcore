@@ -146,34 +146,35 @@
                         android:layout_marginStart="6dp" />
                 </LinearLayout>
 
+                <!-- ОТКАТ_V169: строка сравнения и кнопка вернулись на места -->
                 <TextView
                     android:id="@+id/heroCompareText"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:visibility="gone"
                     android:text=""
                     android:textColor="@color/text_dim"
                     android:textSize="18sp" />
-
-                <TextView
-                    android:id="@+id/statusText"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="СЧЁТ НЕ ИДЁТ"
-                    android:textColor="@color/accent_red_bright"
-                    android:textSize="14sp"
-                    android:layout_marginTop="6dp" />
-
-                <Button
-                    android:id="@+id/toggleButton"
-                    android:layout_width="match_parent"
-                    android:layout_height="62dp"
-                    android:text="Старт"
-                    android:textSize="20sp"
-                    android:textStyle="bold"
-                    android:layout_marginTop="4dp" />
             </LinearLayout>
         </LinearLayout>
+
+        <TextView
+            android:id="@+id/statusText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:text="СЧЁТ НЕ ИДЁТ"
+            android:textColor="@color/accent_red_bright"
+            android:textSize="16sp"
+            android:layout_marginTop="7dp" />
+
+        <Button
+            android:id="@+id/toggleButton"
+            android:layout_width="match_parent"
+            android:layout_height="72dp"
+            android:text="Старт"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:layout_marginTop="8dp" />
 
         <TextView
             android:id="@+id/inclineLabel"
@@ -429,7 +430,73 @@
 
 
 
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp">
+
+            <com.vasil.stepcore.DoodleSceneView
+                android:id="@+id/expeditionScene"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent" />
+
         <LinearLayout
+            android:id="@+id/expeditionCard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:padding="10dp">
+
+            <com.vasil.stepcore.survival.SeasonDiamondView
+                android:id="@+id/expeditionSeasonView"
+                android:layout_width="52dp"
+                android:layout_height="52dp" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_marginStart="14dp">
+
+                <TextView
+                    android:id="@+id/expeditionLabelText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="ЭКСПЕДИЦИЯ (BETA)"
+                    android:textColor="@color/accent_amber_bright"
+                    android:letterSpacing="0.06"
+                    android:textSize="14sp" />
+
+                <TextView
+                    android:id="@+id/expeditionDayText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Нет активной экспедиции"
+                    android:textColor="@color/text_main"
+                    android:textSize="20sp"
+                    android:layout_marginTop="2dp" />
+
+                <TextView
+                    android:id="@+id/expeditionSubText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Начать →"
+                    android:textColor="@color/accent_amber"
+                    android:textSize="18sp"
+                    android:layout_marginTop="2dp" />
+            </LinearLayout>
+        </LinearLayout>
+        </FrameLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="8dp">
+
+            <LinearLayout
                 android:id="@+id/profileButton"
                 android:layout_width="0dp" android:layout_weight="1"
                 android:layout_height="match_parent"
@@ -492,72 +559,6 @@
                 </LinearLayout>
             </LinearLayout>
         </LinearLayout>
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:layout_marginTop="8dp">
-
-            <FrameLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="10dp">
-
-            <com.vasil.stepcore.DoodleSceneView
-                android:id="@+id/expeditionScene"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent" />
-
-        <LinearLayout
-            android:id="@+id/expeditionCard"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:padding="10dp">
-
-            <com.vasil.stepcore.survival.SeasonDiamondView
-                android:id="@+id/expeditionSeasonView"
-                android:layout_width="52dp"
-                android:layout_height="52dp" />
-
-            <LinearLayout
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:layout_marginStart="14dp">
-
-                <TextView
-                    android:id="@+id/expeditionLabelText"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="ЭКСПЕДИЦИЯ (BETA)"
-                    android:textColor="@color/accent_amber_bright"
-                    android:letterSpacing="0.06"
-                    android:textSize="14sp" />
-
-                <TextView
-                    android:id="@+id/expeditionDayText"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Нет активной экспедиции"
-                    android:textColor="@color/text_main"
-                    android:textSize="20sp"
-                    android:layout_marginTop="2dp" />
-
-                <TextView
-                    android:id="@+id/expeditionSubText"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Начать →"
-                    android:textColor="@color/accent_amber"
-                    android:textSize="18sp"
-                    android:layout_marginTop="2dp" />
-            </LinearLayout>
-        </LinearLayout>
-        </FrameLayout>
 
         <LinearLayout
             android:layout_width="match_parent"
