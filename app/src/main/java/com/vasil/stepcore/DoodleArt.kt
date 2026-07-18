@@ -578,6 +578,12 @@ class DoodleBorderDrawable(
         const val MAT_MECH = 5       // сегментированный контур (пунктир)
     }
 
+    private val texFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val texLine = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
+    }
+    private var pw = 0f
+    private var phh = 0f
     private val matPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeJoin = Paint.Join.ROUND; strokeCap = Paint.Cap.ROUND
     }
@@ -693,6 +699,7 @@ class DoodleBorderDrawable(
         rivets[4] = inset + ri; rivets[5] = bounds.height() - inset - ri
         rivets[6] = bounds.width() - inset - ri; rivets[7] = bounds.height() - inset - ri
 
+        pw = bounds.width().toFloat(); phh = bounds.height().toFloat()
         dustH = bounds.height().toFloat()
         val dw = Wobble(seed * 77L + 13L)
         for (i in 0 until DUST_N) {
@@ -771,6 +778,11 @@ class DoodleBorderDrawable(
         canvas.save(); canvas.translate(off, off); canvas.drawPath(p, shPaint); canvas.restore()
         canvas.save(); canvas.translate(-off, -off); canvas.drawPath(p, hiPaint); canvas.restore()
         if (fillColor != Color.TRANSPARENT) canvas.drawPath(p, fillPaint)
+        if (bigEnough) {
+            canvas.save(); canvas.clipPath(p)
+            drawTexture(canvas)
+            canvas.restore()
+        }
         drawContour(canvas, p)
         // Кованые гвозди по углам (только крупные плиты).
         if (bigEnough) {
@@ -818,11 +830,154 @@ class DoodleBorderDrawable(
                 val fade = if (t < 0.15f) t / 0.15f else if (t > 0.8f) (1f - t) / 0.2f else 1f
                 val tw = 0.55f + 0.45f * kotlin.math.sin((ph * 1.7f + i * 2.3f).toDouble()).toFloat()
                 dustPaint.color = lighten(strokeColor, 0.65f)
-                dustPaint.alpha = (215f * fade * tw).toInt().coerceIn(0, 255)
+                dustPaint.alpha = (215f * fade * tw * 0.7f).toInt().coerceIn(0, 255)
                 val sway = 2.5f * d * kotlin.math.sin((ph * 0.9f + i).toDouble()).toFloat()
                 canvas.drawCircle(dustX[i] + sway, y, dustSize[i], dustPaint)
             }
         }
+    }
+
+    /**
+     * Точка на кромке плиты по доле обхода t (0..1) - акценты материала
+     * садятся на край, а не на середину, чтобы не спорить с текстом.
+     * Возвращает x, y и угол касательной в градусах.
+     */
+    private fun perim(t: Float, out: FloatArray) {
+        val ins = 6f * d
+        val ww = pw - 2 * ins; val hh = phh - 2 * ins
+        val per = 2 * (ww + hh)
+        var l = ((t - Math.floor(t.toDouble()).toFloat()) * per)
+        if (l < ww) { out[0] = ins + l; out[1] = ins; out[2] = 0f; return }
+        l -= ww
+        if (l < hh) { out[0] = ins + ww; out[1] = ins + l; out[2] = 90f; return }
+        l -= hh
+        if (l < ww) { out[0] = ins + ww - l; out[1] = ins + hh; out[2] = 180f; return }
+        l -= ww
+        out[0] = ins; out[1] = ins + hh - l; out[2] = 270f
+    }
+
+    /** Фактура материала по площади плиты: лаконично, у кромок и в углах. */
+    private fun drawTexture(canvas: Canvas) {
+        val ph = BoilClock.phase
+        val pt = FloatArray(3)
+        when (material) {
+            MAT_ROPE -> {
+                // Узлы с перевязкой: сидят на кромке и слегка «дышат».
+                val ts = floatArrayOf(0.18f, 0.47f, 0.79f)
+                for ((i, tv) in ts.withIndex()) {
+                    perim(tv, pt)
+                    val br = 1f + 0.06f * kotlin.math.sin((ph * 1.6f + i).toDouble()).toFloat()
+                    canvas.save()
+                    canvas.translate(pt[0], pt[1]); canvas.rotate(pt[2])
+                    texFill.color = darken(strokeColor, 0.30f); texFill.alpha = 235
+                    canvas.drawOval(-5f * d * br, -3.4f * d * br, 5f * d * br, 3.4f * d * br, texFill)
+                    texLine.color = lighten(strokeColor, 0.35f); texLine.alpha = 220
+                    texLine.strokeWidth = 1.3f * d
+                    canvas.drawLine(-2.2f * d, -3.4f * d * br, -2.2f * d, 3.4f * d * br, texLine)
+                    canvas.drawLine(1.6f * d, -3.4f * d * br, 1.6f * d, 3.4f * d * br, texLine)
+                    canvas.restore()
+                }
+            }
+            MAT_FIRE -> {
+                // Огонёк у нижней кромки и поднимающийся дымок.
+                val fx = pw * 0.14f; val fy = phh - 7f * d
+                val fl = 0.6f + 0.4f * kotlin.math.sin((ph * 6.5f).toDouble()).toFloat()
+                val flame = Path()
+                flame.moveTo(fx - 3.2f * d, fy)
+                flame.quadTo(fx - 3.6f * d, fy - 5f * d * fl, fx, fy - 9.5f * d * fl)
+                flame.quadTo(fx + 3.6f * d, fy - 5f * d * fl, fx + 3.2f * d, fy)
+                flame.close()
+                texFill.color = strokeColor; texFill.alpha = 190; canvas.drawPath(flame, texFill)
+                texFill.color = lighten(strokeColor, 0.55f); texFill.alpha = 210
+                canvas.drawCircle(fx, fy - 2.6f * d, 1.7f * d * fl, texFill)
+                for (k in 0 until 4) {
+                    var g = (ph * 0.42f + k * 0.25f) % 1f
+                    if (g < 0f) g += 1f
+                    val sy = fy - 10f * d - g * (phh * 0.42f)
+                    val sx = fx + 6f * d * kotlin.math.sin((g * 3.4f + k).toDouble()).toFloat()
+                    texFill.color = lighten(strokeColor, 0.20f)
+                    texFill.alpha = (70f * (1f - g)).toInt().coerceIn(0, 255)
+                    canvas.drawCircle(sx, sy, (1.4f + 2.2f * g) * d, texFill)
+                }
+            }
+            MAT_ICE -> {
+                // Иней: кристаллы нарастают из углов, тихо мерцают.
+                val cs = arrayOf(floatArrayOf(10f * d, 10f * d), floatArrayOf(pw - 10f * d, phh - 10f * d))
+                for ((i, cc) in cs.withIndex()) {
+                    val tw = 0.55f + 0.45f * kotlin.math.sin((ph * 0.9f + i * 2.0f).toDouble()).toFloat()
+                    texLine.color = lighten(strokeColor, 0.55f)
+                    texLine.alpha = (90f + 90f * tw).toInt().coerceIn(0, 255)
+                    texLine.strokeWidth = 1.2f * d
+                    for (k in 0 until 6) {
+                        val a2 = Math.toRadians((k * 60f + i * 20f).toDouble())
+                        val ex = cc[0] + 7.5f * d * kotlin.math.cos(a2).toFloat()
+                        val ey = cc[1] + 7.5f * d * kotlin.math.sin(a2).toFloat()
+                        canvas.drawLine(cc[0], cc[1], ex, ey, texLine)
+                        canvas.drawLine(ex, ey, ex - 2.4f * d * kotlin.math.cos(a2 + 0.7).toFloat(),
+                            ey - 2.4f * d * kotlin.math.sin(a2 + 0.7).toFloat(), texLine)
+                    }
+                }
+            }
+            MAT_LIGHTNING -> {
+                // Жилы: тонкие разряды идут из угла внутрь, пульсируют.
+                val fl = 0.5f + 0.5f * kotlin.math.sin((ph * 4.2f).toDouble()).toFloat()
+                texLine.color = lighten(strokeColor, 0.45f)
+                texLine.alpha = (60f + 90f * fl).toInt().coerceIn(0, 255)
+                texLine.strokeWidth = 1.3f * d
+                for (i in 0 until 2) {
+                    val vp = Path()
+                    val sx = if (i == 0) 9f * d else pw - 9f * d
+                    val dir = if (i == 0) 1f else -1f
+                    vp.moveTo(sx, 8f * d)
+                    vp.lineTo(sx + dir * 9f * d, 15f * d)
+                    vp.lineTo(sx + dir * 4f * d, 21f * d)
+                    vp.lineTo(sx + dir * 13f * d, 29f * d)
+                    canvas.drawPath(vp, texLine)
+                }
+            }
+            MAT_MECH -> {
+                // Болты по кромке и маленькая шестерня в углу.
+                val ts = floatArrayOf(0.10f, 0.40f, 0.60f, 0.90f)
+                for (tv in ts) {
+                    perim(tv, pt)
+                    texFill.color = darken(strokeColor, 0.35f); texFill.alpha = 230
+                    canvas.drawCircle(pt[0], pt[1], 2.6f * d, texFill)
+                    texLine.color = lighten(strokeColor, 0.30f); texLine.alpha = 230
+                    texLine.strokeWidth = 1f * d
+                    canvas.drawLine(pt[0] - 1.7f * d, pt[1], pt[0] + 1.7f * d, pt[1], texLine)
+                }
+                val gx = pw - 14f * d; val gy = phh - 13f * d; val gr = 6.5f * d
+                texLine.color = lighten(strokeColor, 0.20f); texLine.alpha = 150
+                texLine.strokeWidth = 1.6f * d
+                canvas.drawCircle(gx, gy, gr * 0.55f, texLine)
+                for (k in 0 until 8) {
+                    val a2 = Math.toRadians((k * 45f + ph * 26f).toDouble())
+                    canvas.drawLine(gx + gr * 0.62f * kotlin.math.cos(a2).toFloat(),
+                        gy + gr * 0.62f * kotlin.math.sin(a2).toFloat(),
+                        gx + gr * kotlin.math.cos(a2).toFloat(),
+                        gy + gr * kotlin.math.sin(a2).toFloat(), texLine)
+                }
+            }
+            else -> {
+                // Камень: редкие выбоины и волосяные трещины у нижней кромки.
+                val sw = Wobble(seed * 313L + 11L)
+                texFill.color = darken(strokeColor, 0.55f); texFill.alpha = 90
+                for (k in 0 until 5) {
+                    val x = pw * (0.10f + 0.80f * ((sw.j(1f) + 1f) * 0.5f))
+                    val y = phh * (0.18f + 0.70f * ((sw.j(1f) + 1f) * 0.5f))
+                    canvas.drawCircle(x, y, (0.9f + 1.1f * ((sw.j(1f) + 1f) * 0.5f)) * d, texFill)
+                }
+                texLine.color = darken(strokeColor, 0.50f); texLine.alpha = 85
+                texLine.strokeWidth = 1f * d
+                for (k in 0 until 2) {
+                    val x = pw * (0.20f + 0.55f * k) + sw.j(6f) * d
+                    val y = phh - 8f * d
+                    canvas.drawLine(x, y, x + 7f * d, y - 5f * d, texLine)
+                    canvas.drawLine(x + 7f * d, y - 5f * d, x + 11f * d, y - 3f * d, texLine)
+                }
+            }
+        }
+        texFill.alpha = 255
     }
 
     /** Контур в материале вкладки: камень, молния, канат, огонь, лёд, механика. */
