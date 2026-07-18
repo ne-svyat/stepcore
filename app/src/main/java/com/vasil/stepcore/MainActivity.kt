@@ -159,7 +159,7 @@ class MainActivity : AppCompatActivity() {
         if (prefs.getString(StepService.KEY_DAY, "") == java.time.LocalDate.now().toString()) {
             StepsState.steps.value = prefs.getInt(StepService.KEY_STEPS, 0)
         }
-        goal = prefs.getInt("p_goal", 10000)
+        goal = prefs.getInt("p_goal", 10000).coerceAtLeast(GOAL_MIN)
         refreshCargoChip()
 
         hapticSwitch.isChecked = prefs.getBoolean("haptic", false)
@@ -659,7 +659,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        goal = getSharedPreferences(StepService.PREFS, MODE_PRIVATE).getInt("p_goal", 10000)
+        goal = getSharedPreferences(StepService.PREFS, MODE_PRIVATE).getInt("p_goal", 10000).coerceAtLeast(GOAL_MIN)
         if (::accuracyBadge.isInitialized) refreshAccuracyBadge()
         if (::cargoChip.isInitialized) refreshCargoChip()
         if (::ring.isInitialized) refreshRing(StepsState.steps.value)

@@ -13,6 +13,15 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 
 /** Профиль (вес/рост/возраст/пол/цель) + паспорт статистики карточками. */
+/**
+ * Нижняя граница дневной цели.
+ *
+ * Цель в 1000 шагов позволяла «закрыть пять целей» за 5000 шагов, и вся
+ * шкала достижений на горе теряла смысл. 7000 - это порог, ниже которого
+ * день трудно назвать активным, а ×5 при нём равно 35 000 шагам.
+ */
+const val GOAL_MIN = 7000
+
 class ProfileActivity : AppCompatActivity() {
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
@@ -45,7 +54,7 @@ class ProfileActivity : AppCompatActivity() {
         if (prefs.contains("p_weight")) weightIn.setText(prefs.getFloat("p_weight", 0f).toString())
         if (prefs.contains("p_height")) heightIn.setText(prefs.getInt("p_height", 0).toString())
         if (prefs.contains("p_age")) ageIn.setText(prefs.getInt("p_age", 0).toString())
-        goalIn.setText(prefs.getInt("p_goal", 10000).toString())
+        goalIn.setText(prefs.getInt("p_goal", 10000).coerceAtLeast(GOAL_MIN).toString())
         val savedLoad = prefs.getFloat("p_load", 0f)
         if (savedLoad > 0f) loadIn.setText(savedLoad.toString())
         if (prefs.getString("p_sex", "m") == "f") sexF.isChecked = true else sexM.isChecked = true
@@ -75,7 +84,7 @@ class ProfileActivity : AppCompatActivity() {
                     .putFloat("p_weight", w)
                     .putInt("p_height", h)
                     .putInt("p_age", a ?: 0)
-                    .putInt("p_goal", (g ?: 10000).coerceIn(1000, 100000))
+                    .putInt("p_goal", (g ?: 10000).coerceIn(GOAL_MIN, 100000))
                     .putString("p_sex", if (sexF.isChecked) "f" else "m")
                     .putFloat("p_load", l)
                     .apply()
