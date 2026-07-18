@@ -1625,6 +1625,25 @@ class DoodleSceneView @JvmOverloads constructor(
     }
 
     /** Статистика: острые пики и река - синий оттенок. */
+    /** Кубик-день: передняя грань, светлый верх, тёмный бок - объём. */
+    private fun cubeIso(c: Canvas, cx: Float, byY: Float, sz: Float, tint: Int) {
+        val hf = sz / 2f; val dp2 = sz * 0.30f
+        val front = Path()
+        front.addRect(cx - hf, byY - sz, cx + hf, byY, Path.Direction.CW)
+        skyFill.color = tint; skyFill.alpha = 225; c.drawPath(front, skyFill)
+        val top = Path()
+        top.moveTo(cx - hf, byY - sz); top.lineTo(cx - hf + dp2, byY - sz - dp2)
+        top.lineTo(cx + hf + dp2, byY - sz - dp2); top.lineTo(cx + hf, byY - sz); top.close()
+        skyFill.color = lightenC(tint, 0.35f); skyFill.alpha = 235; c.drawPath(top, skyFill)
+        val side = Path()
+        side.moveTo(cx + hf, byY - sz); side.lineTo(cx + hf + dp2, byY - sz - dp2)
+        side.lineTo(cx + hf + dp2, byY - dp2); side.lineTo(cx + hf, byY); side.close()
+        skyFill.color = darkenC(tint, 0.40f); skyFill.alpha = 235; c.drawPath(side, skyFill)
+        skyOutline.color = darkenC(tint, 0.65f)
+        c.drawPath(front, skyOutline); c.drawPath(top, skyOutline); c.drawPath(side, skyOutline)
+        skyFill.alpha = 255
+    }
+
     private fun drawStats(c: Canvas, w: Float, h: Float, r: Wobble) {
         val base = h * 0.92f
         mountainsRich(c, w * 0.46f, base, w * 0.46f, h * 0.72f, r, blue)
@@ -1634,6 +1653,57 @@ class DoodleSceneView @JvmOverloads constructor(
         firRich(c, w * 0.14f, base, h * 0.36f, r)
         firRich(c, w * 0.90f, base, h * 0.42f, r)
         drifting(c, w, h, r, violet, listOf(Triple(0.16f, 0.10f, 30f)))
+
+
+        // Кубики-дни: фигурка несёт кубик и ставит его на стопку - дни
+        // складываются в статистику. Цикл 9 с.
+        run {
+            val sz = h * 0.15f
+            val stacks = intArrayOf(2, 1, 3, 1)
+            val x0 = w * 0.10f; val step = w * 0.115f
+            for (i in stacks.indices) {
+                val cx = x0 + i * step
+                for (k in 0 until stacks[i]) cubeIso(c, cx, base - k * sz, sz, blue)
+            }
+            val t = loop(9f, 0f)
+            val walk = (t / 0.78f).coerceAtMost(1f)
+            val fx = w * 0.90f - (w * 0.90f - (x0 + 3 * step)) * walk
+            val hold = t < 0.78f
+            val figTop = base
+            if (hold) {
+                val bob = 1.4f * d * sin((BoilClock.phase * 6f).toDouble()).toFloat()
+                cubeIso(c, fx, figTop - sz * 2.05f + bob, sz * 0.72f, blueBr)
+            } else {
+                val fall = ((t - 0.78f) / 0.22f).coerceIn(0f, 1f)
+                val fromY = figTop - sz * 2.05f
+                val toY = base - stacks[3] * sz
+                cubeIso(c, x0 + 3 * step, fromY + (toY - fromY) * (fall * fall), sz * 0.72f, blueBr)
+            }
+            val stepPh = sin((BoilClock.phase * 7f).toDouble()).toFloat()
+            val legSpread = if (hold) 2.8f * d * stepPh else 0.6f * d
+            val fig = Path()
+            fig.moveTo(fx, figTop - sz * 1.55f); fig.lineTo(fx, figTop - sz * 0.72f)
+            fig.moveTo(fx, figTop - sz * 0.72f); fig.lineTo(fx - legSpread, figTop)
+            fig.moveTo(fx, figTop - sz * 0.72f); fig.lineTo(fx + legSpread, figTop)
+            c.drawCircle(fx, figTop - sz * 1.80f, 2.8f * d, fill(amberBr, 240))
+            Doodle.ink(c, fig, stroke(amberBr, 2f, 240), 0.6f * d)
+        }
+
+        stars(c, blueBr, listOf(Triple(0.32f, 0.20f, 0.09f), Triple(0.70f, 0.12f, 0.06f)), w, h, r)
+    }
+
+    /** Timeline: солнце сияет, облака плывут, указатель на распутье. */
+    private fun drawTimeline(c: Canvas, w: Float, h: Float, r: Wobble) {
+        val base = h * 0.92f
+        val k = 0.9f + 0.2f * sin((BoilClock.phase * 1.1f).toDouble()).toFloat()
+        sunRich(c, w * 0.60f, h * 0.26f, h * 0.13f * k, r, amber)
+        drifting(c, w, h, r, violet, listOf(
+            Triple(0.20f, 0.12f, 22f), Triple(0.34f, 0.09f, 31f)))
+        val sp = Path()
+        Doodle.signpost(sp, w * 0.86f, base, h * 0.50f, r)
+        Doodle.ink(c, sp, stroke(amberBr, 2f), 0.8f * d)
+        firRich(c, w * 0.10f, base, h * 0.48f, r)
+        firRich(c, w * 0.20f, base, h * 0.36f, r)
 
         // Ступени-шкалы: столбики растут слева направо, по ним прыжками
         // взбирается фигурка - рост показателей как восхождение.
@@ -1665,21 +1735,6 @@ class DoodleSceneView @JvmOverloads constructor(
             Doodle.ink(c, fig, stroke(amberBr, 2f, 235), 0.6f * d)
         }
 
-        stars(c, blueBr, listOf(Triple(0.32f, 0.20f, 0.09f), Triple(0.70f, 0.12f, 0.06f)), w, h, r)
-    }
-
-    /** Timeline: солнце сияет, облака плывут, указатель на распутье. */
-    private fun drawTimeline(c: Canvas, w: Float, h: Float, r: Wobble) {
-        val base = h * 0.92f
-        val k = 0.9f + 0.2f * sin((BoilClock.phase * 1.1f).toDouble()).toFloat()
-        sunRich(c, w * 0.60f, h * 0.26f, h * 0.13f * k, r, amber)
-        drifting(c, w, h, r, violet, listOf(
-            Triple(0.20f, 0.12f, 22f), Triple(0.34f, 0.09f, 31f)))
-        val sp = Path()
-        Doodle.signpost(sp, w * 0.86f, base, h * 0.50f, r)
-        Doodle.ink(c, sp, stroke(amberBr, 2f), 0.8f * d)
-        firRich(c, w * 0.10f, base, h * 0.48f, r)
-        firRich(c, w * 0.20f, base, h * 0.36f, r)
         firRich(c, w * 0.72f, base, h * 0.40f, r)
         stars(c, amberBr, listOf(Triple(0.44f, 0.14f, 0.07f)), w, h, r)
     }
