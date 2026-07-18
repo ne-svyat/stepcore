@@ -1685,23 +1685,99 @@ class DoodleSceneView @JvmOverloads constructor(
     }
 
     /** Калибровка: точность - это механизм. Шестерни КРУТЯТСЯ, песок сыплется. */
+    /** Литая шестерня: тело с заливкой, ступица, спицы, слабое свечение. */
+    private fun gearRich(c: Canvas, cx: Float, cy: Float, rad: Float, teeth: Int,
+                         rotDeg: Float, w: Wobble, tint: Int) {
+        val body = Path()
+        Doodle.gear(body, cx, cy, rad, teeth, rotDeg, w)
+        skyFill.color = darkenC(tint, 0.55f); skyFill.alpha = 210
+        c.drawPath(body, skyFill)
+        skyFill.color = tint; skyFill.alpha = 40
+        c.drawCircle(cx, cy, rad * 1.15f, skyFill)
+        skyOutline.color = lightenC(tint, 0.20f)
+        Doodle.ink(c, body, skyOutline, 0.6f * d)
+        // Ступица и спицы: колесо читается как деталь, а не как звёздочка.
+        skyFill.color = darkenC(tint, 0.25f); skyFill.alpha = 235
+        c.drawCircle(cx, cy, rad * 0.30f, skyFill)
+        skyFill.color = lightenC(tint, 0.35f); skyFill.alpha = 220
+        c.drawCircle(cx, cy, rad * 0.12f, skyFill)
+        rayPaint.color = lightenC(tint, 0.15f); rayPaint.alpha = 190
+        rayPaint.strokeWidth = 1.8f * d
+        for (k in 0 until 4) {
+            val a2 = Math.toRadians((rotDeg + k * 90f).toDouble())
+            c.drawLine(cx + rad * 0.26f * kotlin.math.cos(a2).toFloat(),
+                cy + rad * 0.26f * kotlin.math.sin(a2).toFloat(),
+                cx + rad * 0.74f * kotlin.math.cos(a2).toFloat(),
+                cy + rad * 0.74f * kotlin.math.sin(a2).toFloat(), rayPaint)
+        }
+        skyFill.alpha = 255
+    }
+
+    /**
+     * Компас: стрелка качается и успокаивается на севере (затухающие
+     * колебания), по ободу румбы, поверх - блик стекла.
+     */
+    private fun compassRich(c: Canvas, cx: Float, cy: Float, rad: Float, tint: Int) {
+        val ph = BoilClock.phase
+        skyFill.color = tint; skyFill.alpha = 34
+        c.drawCircle(cx, cy, rad * 1.5f, skyFill)
+        skyFill.color = darkenC(tint, 0.60f); skyFill.alpha = 225
+        c.drawCircle(cx, cy, rad, skyFill)
+        val ring = Path(); ring.addCircle(cx, cy, rad, Path.Direction.CW)
+        skyOutline.color = lightenC(tint, 0.30f); Doodle.ink(c, ring, skyOutline, 0.6f * d)
+        // Румбы.
+        rayPaint.color = lightenC(tint, 0.20f); rayPaint.alpha = 185
+        rayPaint.strokeWidth = 1.6f * d
+        for (k in 0 until 8) {
+            val a2 = Math.toRadians((k * 45f).toDouble())
+            val inR = if (k % 2 == 0) rad * 0.72f else rad * 0.84f
+            c.drawLine(cx + inR * kotlin.math.cos(a2).toFloat(),
+                cy + inR * kotlin.math.sin(a2).toFloat(),
+                cx + rad * 0.94f * kotlin.math.cos(a2).toFloat(),
+                cy + rad * 0.94f * kotlin.math.sin(a2).toFloat(), rayPaint)
+        }
+        // Стрелка: цикл 9 с - рыскает, затем затухает к северу.
+        val t = loop(9f, 0f)
+        val decay = kotlin.math.exp((-3.0 * t)).toFloat()
+        val ang = -90f + 52f * decay * kotlin.math.sin((t * 26f).toDouble()).toFloat()
+        val ar = Math.toRadians(ang.toDouble())
+        val bx = cx + rad * 0.70f * kotlin.math.cos(ar).toFloat()
+        val by = cy + rad * 0.70f * kotlin.math.sin(ar).toFloat()
+        val sx = cx - rad * 0.62f * kotlin.math.cos(ar).toFloat()
+        val sy = cy - rad * 0.62f * kotlin.math.sin(ar).toFloat()
+        val px = -kotlin.math.sin(ar).toFloat() * rad * 0.16f
+        val py = kotlin.math.cos(ar).toFloat() * rad * 0.16f
+        val nd = Path()
+        nd.moveTo(bx, by); nd.lineTo(cx + px, cy + py); nd.lineTo(cx - px, cy - py); nd.close()
+        skyFill.color = 0xFFE23636.toInt(); skyFill.alpha = 240; c.drawPath(nd, skyFill)
+        val sd = Path()
+        sd.moveTo(sx, sy); sd.lineTo(cx + px, cy + py); sd.lineTo(cx - px, cy - py); sd.close()
+        skyFill.color = 0xFFDCE4F2.toInt(); skyFill.alpha = 225; c.drawPath(sd, skyFill)
+        skyFill.color = lightenC(tint, 0.55f); skyFill.alpha = 240
+        c.drawCircle(cx, cy, rad * 0.10f, skyFill)
+        // Блик стекла.
+        val gl = 0.5f + 0.5f * kotlin.math.sin((ph * 1.2f).toDouble()).toFloat()
+        rayPaint.color = 0xFFFFFFFF.toInt(); rayPaint.alpha = (45f + 70f * gl).toInt().coerceIn(0, 255)
+        rayPaint.strokeWidth = 2.2f * d
+        c.drawLine(cx - rad * 0.55f, cy - rad * 0.52f, cx - rad * 0.05f, cy - rad * 0.80f, rayPaint)
+        skyFill.alpha = 255
+    }
+
     private fun drawCalibration(c: Canvas, w: Float, h: Float, r: Wobble) {
         val ph = BoilClock.phase
-        val g1 = Path()
-        Doodle.gear(g1, w * 0.16f, h * 0.46f, h * 0.30f, 8, ph * 22f, r)
-        Doodle.ink(c, g1, stroke(violet, 2f), 0.8f * d)
+        gearRich(c, w * 0.16f, h * 0.46f, h * 0.30f, 8, ph * 22f, r, violet)
         // Вторая шестерня крутится В ОБРАТНУЮ сторону и быстрее - так и
         // работает зубчатая передача: меньше колесо - выше обороты.
-        val g2 = Path()
-        Doodle.gear(g2, w * 0.34f, h * 0.72f, h * 0.19f, 6, -ph * 33f, r)
-        Doodle.ink(c, g2, stroke(violetBr, 2f), 0.8f * d)
+        gearRich(c, w * 0.34f, h * 0.72f, h * 0.19f, 6, -ph * 33f, r, violetBr)
         // Песок пересыпается за 8 с и переворачивается заново.
         val sandFill = 1f - loop(8f, 0f)
         val frame = Path(); val sand = Path()
         Doodle.hourglass(frame, sand, w * 0.62f, h * 0.50f, h * 0.34f, h * 0.62f, sandFill, r)
-        c.drawPath(sand, fill(amber, 90))
+        c.drawPath(sand, fill(amber, 120))
         Doodle.ink(c, frame, stroke(amberBr, 2f), 0.8f * d)
-        stars(c, blueBr, listOf(Triple(0.86f, 0.24f, 0.11f), Triple(0.94f, 0.66f, 0.07f)), w, h, r)
+        // Компас: прибор поверки направления рядом с механизмом.
+        compassRich(c, w * 0.87f, h * 0.46f, h * 0.30f, blueBr)
+        stars(c, blueBr, listOf(Triple(0.72f, 0.86f, 0.06f)), w, h, r)
         dotPaint.color = violetBr
         c.drawCircle(w * 0.48f, h * 0.20f, 1.8f * d, dotPaint)
     }
