@@ -46,6 +46,7 @@ class MainActivity : AppCompatActivity() {
     }
     private lateinit var backpackView: BackpackView
     private lateinit var lapBadgeText: TextView
+    private lateinit var strideBar: StrideBarView
     private lateinit var walkShareText: TextView
     private lateinit var runShareText: TextView
     private lateinit var heroCompareText: TextView
@@ -104,6 +105,7 @@ class MainActivity : AppCompatActivity() {
         cargoChip.setOnClickListener { showCargoDialog() }
         backpackView.setOnClickListener { showCargoDialog() }
         lapBadgeText = findViewById(R.id.lapBadgeText)
+        strideBar = findViewById(R.id.strideBar)
         walkShareText = findViewById(R.id.walkShareText)
         runShareText = findViewById(R.id.runShareText)
         heroCompareText = findViewById(R.id.heroCompareText)
@@ -438,6 +440,7 @@ class MainActivity : AppCompatActivity() {
         ring.setData(walk, run, goal, yesterdayTotal)
         val pct = steps * 100 / goal
         goalView.text = "$pct% · цель ${"%,d".format(goal).replace(',', ' ')}"
+        strideBar.setData(walk, run, goal)
         walkShareText.text = "${fmtNumM(walk)} ходьба"
         runShareText.text = "${fmtNumM(run)} бег"
 

@@ -69,49 +69,43 @@
                     android:id="@+id/goalText"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_gravity="end"
                     android:text="0% · цель 10 000"
                     android:textColor="@color/text_dim"
                     android:textSize="15sp"
                     android:layout_marginBottom="5dp" />
 
+                <com.vasil.stepcore.StrideBarView
+                    android:id="@+id/strideBar"
+                    android:layout_width="match_parent"
+                    android:layout_height="10dp"
+                    android:layout_marginTop="1dp" />
+
                 <LinearLayout
-                    android:layout_width="wrap_content"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_gravity="end"
                     android:orientation="horizontal"
-                    android:gravity="center_vertical">
-                    <View android:layout_width="8dp" android:layout_height="8dp"
-                        android:background="@color/accent_blue" />
+                    android:layout_marginTop="4dp">
+
                     <TextView
                         android:id="@+id/walkShareText"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="0 ходьба"
-                        android:textColor="@color/text_dim"
-                        android:textSize="15sp"
-                        android:layout_marginStart="6dp" />
-                </LinearLayout>
+                        android:textColor="@color/accent_blue"
+                        android:textSize="13sp"
+                        android:maxLines="1" />
 
-                <LinearLayout
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="end"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:layout_marginTop="2dp"
-                    android:layout_marginBottom="8dp">
-                    <View android:layout_width="8dp" android:layout_height="8dp"
-                        android:background="@color/accent_red" />
                     <TextView
                         android:id="@+id/runShareText"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="0 бег"
-                        android:textColor="@color/text_dim"
-                        android:textSize="15sp"
-                        android:layout_marginStart="6dp" />
+                        android:textColor="@color/accent_red"
+                        android:textSize="13sp"
+                        android:maxLines="1"
+                        android:layout_marginStart="10dp" />
                 </LinearLayout>
+
 
                 <!-- ОТКАТ_V169: строка сравнения и кнопка вернулись на места -->
                 <!-- ШАГ2_КНОПКА: состояние и Старт/Стоп занимают место
@@ -176,8 +170,9 @@
                     android:layout_height="wrap_content"
                     android:text="СЧЁТ НЕ ИДЁТ"
                     android:textColor="@color/accent_red_bright"
-                    android:textSize="14sp"
-                    android:layout_marginTop="3dp" />
+                    android:textSize="13sp"
+                    android:letterSpacing="0.04"
+                    android:layout_marginTop="5dp" />
 
                 <Button
                     android:id="@+id/toggleButton"
