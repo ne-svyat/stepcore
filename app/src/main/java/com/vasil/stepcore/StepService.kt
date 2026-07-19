@@ -749,7 +749,7 @@ class StepService : Service(), SensorEventListener {
                 if (screenOff) return
                 if (calibrating == null) {
                     detector.onGyro(event.values[0], event.values[1], event.values[2], timeMs)
-                    features.onGyro(event.values[0], event.values[1], event.values[2])
+                    features.onGyro(event.values[0], event.values[1], event.values[2], timeMs)
                 }
                 return
             }
@@ -995,7 +995,13 @@ class StepService : Service(), SensorEventListener {
      *              без него обучение приняло бы нули за измерение.
      */
     private fun writeTerrainSample(mode: String, amp: Float, interval: Float, source: Int) {
-        val fx = features.snapshot(detector.gravX, detector.gravY, detector.gravZ)
+        // v186: часы для проверки протухания обязаны совпадать с теми, по
+        // которым коллектор получает отсчёты. Внутрь идёт
+        // event.timestamp / 1e6, то есть время с загрузки, а не
+        // стенные часы: сравнивать с currentTimeMillis нельзя.
+        val fx = features.snapshot(
+            SystemClock.elapsedRealtime(),
+            detector.gravX, detector.gravY, detector.gravZ)
         val chipD = if (hwLastTotal >= 0 && lastSampleChip >= 0)
             (hwLastTotal - lastSampleChip).toInt() else null
         if (hwLastTotal >= 0) lastSampleChip = hwLastTotal

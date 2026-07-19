@@ -66,6 +66,7 @@ class FeatureCollector {
     private var gySq = 0f
     private var gzSq = 0f
     private var gyroSeen = false
+    private var lastGyroMs = 0L
 
     // --- окно регулярности (32 шага) ---
     // 32 шага при измеренном у пользователя интервале ~540 мс это ~17 с
@@ -92,12 +93,14 @@ class FeatureCollector {
     private val accT = LongArray(ACC_WINDOW)
     private var accIdx = 0
     private var accFilled = 0
+    private var lastAccMs = 0L
 
     // --- серия ---
     private var seriesSteps = 0
     private var seriesStartMs = 0L
     private var seriesLastMs = 0L
     private var seriesLive = false
+    private var lastStepMs = 0L
 
     /**
      * Сырой отсчёт акселерометра. Вызывается на КАЖДОМ событии, до и
@@ -111,6 +114,7 @@ class FeatureCollector {
         if (gn < GRAV_MIN) return
         val lx = x - gravX; val ly = y - gravY; val lz = z - gravZ
         val vert = (lx * gravX + ly * gravY + lz * gravZ) / gn
+        lastAccMs = timeMs
         accWin[accIdx] = vert
         accT[accIdx] = timeMs
         accIdx = (accIdx + 1) % ACC_WINDOW
@@ -118,7 +122,8 @@ class FeatureCollector {
     }
 
     /** Гироскоп: сырые оси. Вызывается на каждое событие сенсора. */
-    fun onGyro(x: Float, y: Float, z: Float) {
+    fun onGyro(x: Float, y: Float, z: Float, timeMs: Long) {
+        lastGyroMs = timeMs
         gxSq += GYRO_ALPHA * (x * x - gxSq)
         gySq += GYRO_ALPHA * (y * y - gySq)
         gzSq += GYRO_ALPHA * (z * z - gzSq)
@@ -137,6 +142,7 @@ class FeatureCollector {
             seriesStartMs = timeMs
             asymIdx = 0; asymFilled = 0
         }
+        lastStepMs = timeMs
         val even = seriesSteps % 2 == 0
         seriesSteps++
         seriesLastMs = timeMs
@@ -183,9 +189,28 @@ class FeatureCollector {
      * Мгновенный не годится: он дёргается на каждом шаге и ориентация
      * телефона по нему не читается.
      */
-    fun snapshot(gravX: Float, gravY: Float, gravZ: Float): Snapshot {
+    fun snapshot(nowMs: Long, gravX: Float, gravY: Float, gravZ: Float): Snapshot {
+        // v186: ПРИЗНАКИ ПРОТУХАЮТ ЯВНО.
+        //
+        // При выключенном экране обработчик акселерометра и гироскопа в
+        // StepService выходит сразу, и коллектор перестаёт получать данные.
+        // Ветка записи корпуса по дельтам чипа при этом продолжает
+        // работать - чип считает всегда. Без этой проверки в корпус
+        // уходила бы амплитуда десятисекундной давности с сегодняшней
+        // меткой уклона: не пропуск, а тихая ложь, которая хуже пропуска.
+        //
+        // Два срока, потому что источники живут в разном темпе:
+        //  - сенсорные признаки (наклон, оси гироскопа, амплитуда, каденс)
+        //    обновляются десятки раз в секунду, 15 с - уже вечность;
+        //  - шаговые (асимметрия, регулярность) обновляются раз в шаг и
+        //    обязаны переживать светофор, поэтому им дано 60 с.
+        val sensorFresh = lastAccMs > 0L && nowMs - lastAccMs <= SENSOR_STALE_MS
+        val gyroFresh = gyroSeen && lastGyroMs > 0L && nowMs - lastGyroMs <= SENSOR_STALE_MS
+        val stepFresh = lastStepMs > 0L && nowMs - lastStepMs <= STEP_STALE_MS
         val gn = sqrt(gravX * gravX + gravY * gravY + gravZ * gravZ)
-        val hasGrav = gn > GRAV_MIN
+        // Гравитация обновляется тем же детектором, что и акселерометр:
+        // протухла одна - протухла и она.
+        val hasGrav = gn > GRAV_MIN && sensorFresh
         val pitch = if (hasGrav)
             Math.toDegrees(
                 atan2(-gravY.toDouble(), sqrt((gravX * gravX + gravZ * gravZ).toDouble()))
@@ -200,25 +225,25 @@ class FeatureCollector {
         return Snapshot(
             pitchDeg = pitch,
             rollDeg = roll,
-            gyroX = if (gyroSeen) sqrt(gxSq) else null,
-            gyroY = if (gyroSeen) sqrt(gySq) else null,
-            gyroZ = if (gyroSeen) sqrt(gzSq) else null,
-            ampEvenMed = parityMedian(asymAmp, wantEven = true),
-            ampOddMed = parityMedian(asymAmp, wantEven = false),
-            intervalEvenMed = parityMedian(asymInt, wantEven = true),
-            intervalOddMed = parityMedian(asymInt, wantEven = false),
-            ampMed = if (regOk) median(ampSorted) else null,
-            ampIqr = if (regOk) iqr(ampSorted) else null,
-            intervalMed = if (regOk) median(intSorted) else null,
-            intervalIqr = if (regOk) iqr(intSorted) else null,
-            windowN = if (regOk) winFilled else null,
+            gyroX = if (gyroFresh) sqrt(gxSq) else null,
+            gyroY = if (gyroFresh) sqrt(gySq) else null,
+            gyroZ = if (gyroFresh) sqrt(gzSq) else null,
+            ampEvenMed = if (stepFresh) parityMedian(asymAmp, true) else null,
+            ampOddMed = if (stepFresh) parityMedian(asymAmp, false) else null,
+            intervalEvenMed = if (stepFresh) parityMedian(asymInt, true) else null,
+            intervalOddMed = if (stepFresh) parityMedian(asymInt, false) else null,
+            ampMed = if (regOk && stepFresh) median(ampSorted) else null,
+            ampIqr = if (regOk && stepFresh) iqr(ampSorted) else null,
+            intervalMed = if (regOk && stepFresh) median(intSorted) else null,
+            intervalIqr = if (regOk && stepFresh) iqr(intSorted) else null,
+            windowN = if (regOk && stepFresh) winFilled else null,
             seriesSteps = if (seriesLive) seriesSteps else null,
             seriesMs = if (seriesLive) seriesLastMs - seriesStartMs else null,
-            accRms = accStat(0),
-            accP90 = accStat(1),
-            accMax = accStat(2),
-            zcrCadence = accCadence(),
-            sampleHz = accHz(),
+            accRms = if (sensorFresh) accStat(0) else null,
+            accP90 = if (sensorFresh) accStat(1) else null,
+            accMax = if (sensorFresh) accStat(2) else null,
+            zcrCadence = if (sensorFresh) accCadence() else null,
+            sampleHz = if (sensorFresh) accHz() else null,
         )
     }
 
@@ -241,9 +266,24 @@ class FeatureCollector {
     }
 
     /**
-     * Каденс по пересечениям нуля. Два пересечения = один период
-     * колебания = один шаг. Метод грубый, но работает там, где детектор
-     * молчит, и не требует ни порогов, ни подтверждений.
+     * Каденс. Триггер Шмитта с гистерезисом от RMS.
+     *
+     * ПОЧЕМУ НЕ ПРОСТОЕ ПЕРЕСЕЧЕНИЕ СРЕДНЕГО (метод v185, ошибочный).
+     * На синтетической синусоиде оно давало верный ответ, и я на этом
+     * успокоился. Реальный вертикальный сигнал ходьбы синусоидой не
+     * является: в одном цикле шага есть удар пятки и толчок, то есть
+     * сильная вторая гармоника, и она добавляет лишние пересечения.
+     * Замер на устройстве 19.07: записано 3.74 ш/с при истинных 1.85 -
+     * ровно вдвое.
+     *
+     * Гистерезис требует уйти выше +thr, а потом ниже -thr: колебания
+     * около среднего перестают считаться. Проверено на сигналах с долей
+     * второй гармоники 0 / 0.5 / 1.0 и шумом до 0.4 - ответ 1.80 везде,
+     * бег 2.85 при истинных 2.90.
+     *
+     * Пол по RMS обязателен: на чистом шуме гистерезис не спасает, потому
+     * что порог масштабируется от самого шума (проверено: 17.25 ш/с).
+     * Измеренная ходьба дала RMS 1.47, пол 0.2 даёт семикратный запас.
      */
     private fun accCadence(): Float? {
         if (accFilled < ACC_MIN) return null
@@ -252,14 +292,26 @@ class FeatureCollector {
         var mean = 0.0
         for (i in 0 until accFilled) mean += accWin[i]
         mean /= accFilled
-        var crossings = 0
-        var prev = accWin[0] - mean
-        for (i in 1 until accFilled) {
-            val cur = accWin[i] - mean
-            if ((prev < 0 && cur >= 0) || (prev >= 0 && cur < 0)) crossings++
-            prev = cur
+        var sq = 0.0
+        for (i in 0 until accFilled) {
+            val d = accWin[i] - mean; sq += d * d
         }
-        return (crossings / 2f) / (span / 1000f)
+        val rms = sqrt(sq / accFilled)
+        if (rms < CAD_MIN_RMS) return null
+        val thr = CAD_HYST_K * rms
+        var full = 0
+        var state = 0
+        for (i in 0 until accFilled) {
+            val d = accWin[i] - mean
+            if (state <= 0 && d > thr) {
+                if (state == -1) full++
+                state = 1
+            } else if (state >= 0 && d < -thr) {
+                if (state == 1) full++
+                state = -1
+            }
+        }
+        return (full / 2f) / (span / 1000f)
     }
 
     /** Фактическая частота сенсора: MIUI её режет, и это надо видеть. */
@@ -322,7 +374,9 @@ class FeatureCollector {
     }
 
     companion object {
-        const val FEATURE_VERSION = 2
+        // 3: каденс считается с гистерезисом (в версии 2 он был завышен
+        // вдвое) и все признаки помечаются null при протухании.
+        const val FEATURE_VERSION = 3
         private const val REG_WINDOW = 32
         private const val REG_MIN = 6
         private const val ASYM_WINDOW = 8
@@ -336,6 +390,16 @@ class FeatureCollector {
         private const val ACC_WINDOW = 512
         /** Ниже двух секунд материала статистика бессмысленна. */
         private const val ACC_MIN = 100
+        /** Доля RMS для гистерезиса. 0.5 проверено на сигналах с долей
+         *  второй гармоники 0...1.0 и шумом до 0.4. */
+        private const val CAD_HYST_K = 0.5f
+        /** Ниже этого RMS движения нет и каденс не определён.
+         *  Измеренная ходьба дала 1.47 - запас семикратный. */
+        private const val CAD_MIN_RMS = 0.2f
+        /** Сенсорные признаки живут десятки раз в секунду. */
+        private const val SENSOR_STALE_MS = 15_000L
+        /** Шаговые обновляются раз в шаг и обязаны пережить светофор. */
+        private const val STEP_STALE_MS = 60_000L
     }
 }
 

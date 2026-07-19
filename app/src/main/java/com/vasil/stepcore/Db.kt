@@ -376,8 +376,23 @@ val MIGRATION_8_9 = object : Migration(8, 9) {
     }
 }
 
+/**
+ * v186: удаление строк корпуса, записанных при выключенном экране по
+ * каналу чипа. У них признаки взяты из момента ДО блокировки экрана,
+ * а метка уклона - текущая. Схема не меняется, только чистка.
+ *
+ * Условие узкое намеренно: sampleSource = 1 И screenOn = 0. Строки
+ * детектора и строки чипа при включённом экране честны и остаются.
+ */
+val MIGRATION_9_10 = object : Migration(9, 10) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "DELETE FROM terrain_samples WHERE sampleSource = 1 AND screenOn = 0")
+    }
+}
+
 @Database(entities = [DayRecord::class, EventRecord::class, HourRecord::class, ProfileSnapshotRecord::class, TerrainSample::class],
-    version = 9, exportSchema = false)
+    version = 10, exportSchema = false)
 abstract class AppDb : RoomDatabase() {
     abstract fun dao(): StepDao
 
@@ -387,7 +402,7 @@ abstract class AppDb : RoomDatabase() {
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
                     context.applicationContext, AppDb::class.java, "stepcore.db"
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9).build().also { instance = it }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10).build().also { instance = it }
             }
     }
 }
