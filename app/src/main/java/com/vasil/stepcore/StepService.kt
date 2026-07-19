@@ -125,6 +125,17 @@ class StepService : Service(), SensorEventListener {
     private var sampleCountSession = 0
     // Прореживание корпуса уклона: 1 образец на N подтверждённых шагов.
     private val terrainSampleEvery = 20
+    private var chipSinceSample = 0
+
+    /**
+     * Шаг прореживания корпуса по каналу чипа. При включённой подробной
+     * диагностике пишем вдвое плотнее: это режим исследования, его
+     * включают осознанно и ненадолго, и цена (строка ~200 байт на
+     * 10 шагов) заведомо меньше цены непонятой прогулки.
+     */
+    private fun chipSampleEvery(): Int =
+        if (StepsState.detailLog.value) 10 else terrainSampleEvery
+
     // почасовой аккумулятор (батчится в БД вместе с persistDb)
     private var pendKey = ""
     private var pendW = 0
@@ -711,6 +722,18 @@ class StepService : Service(), SensorEventListener {
                 if (asRun) { runSteps += delta; bumpHour(0, delta) }
                 else { walkSteps += delta; bumpHour(delta, 0) }
                 if (screenOff) hwSessionAdded += delta
+                // v185: корпус в кармане. Детектор здесь молчит (вето по
+                // гироскопу), но метка уклона, оси гироскопа, наклон
+                // телефона и амплитуда из сырого канала существуют и без
+                // него. Без этой ветки они были бы потеряны.
+                if (detector.mode != StepDetector.Mode.WALK &&
+                    detector.mode != StepDetector.Mode.RUN) {
+                    chipSinceSample += delta
+                    if (chipSinceSample >= chipSampleEvery()) {
+                        chipSinceSample = 0
+                        writeTerrainSample(detector.mode.name, 0f, 0f, source = 1)
+                    }
+                }
                 StepsState.steps.value = walkSteps + runSteps
                 persistPrefs()
                 stepsSinceDbWrite += delta
@@ -734,6 +757,15 @@ class StepService : Service(), SensorEventListener {
                 if (screenOff) return
                 val added = detector.onAccel(
                     event.values[0], event.values[1], event.values[2], timeMs
+                )
+                // v185: сырой канал. Вызывается ВСЕГДА, независимо от
+                // вето по тряске, режима и карантина детектора - именно
+                // поэтому он работает в кармане, где детектор молчит.
+                // Гравитация берётся у детектора: второго источника истины
+                // для одного и того же числа быть не должно.
+                features.onAccel(
+                    event.values[0], event.values[1], event.values[2],
+                    detector.gravX, detector.gravY, detector.gravZ, timeMs
                 )
                 updateModeWithHysteresis()
                 // L1: границу серии задаёт детектор своим уходом в IDLE -
@@ -759,54 +791,9 @@ class StepService : Service(), SensorEventListener {
                         samplesSinceStep = 0
                         val sm = detector.mode
                         if (sm == StepDetector.Mode.WALK || sm == StepDetector.Mode.RUN) {
-                            val fx = features.snapshot(
-                                detector.gravX, detector.gravY, detector.gravZ)
-                            val chipD = if (hwLastTotal >= 0 && lastSampleChip >= 0)
-                                (hwLastTotal - lastSampleChip).toInt() else null
-                            if (hwLastTotal >= 0) lastSampleChip = hwLastTotal
-                            val sample = TerrainSample(
-                                timeMs = System.currentTimeMillis(),
-                                label = TerrainState.incline.value.name,
-                                mode = sm.name,
-                                amp = detector.smoothedAmp,
-                                intervalMs = detector.lastIntervalMs,
-                                gyro = detector.gyroRms,
-                                featureVersion = FeatureCollector.FEATURE_VERSION,
-                                pitchDeg = fx.pitchDeg,
-                                rollDeg = fx.rollDeg,
-                                gyroX = fx.gyroX,
-                                gyroY = fx.gyroY,
-                                gyroZ = fx.gyroZ,
-                                ampEvenMed = fx.ampEvenMed,
-                                ampOddMed = fx.ampOddMed,
-                                intervalEvenMed = fx.intervalEvenMed,
-                                intervalOddMed = fx.intervalOddMed,
-                                ampMed = fx.ampMed,
-                                ampIqr = fx.ampIqr,
-                                intervalMed = fx.intervalMed,
-                                intervalIqr = fx.intervalIqr,
-                                windowN = fx.windowN,
-                                seriesSteps = fx.seriesSteps,
-                                seriesMs = fx.seriesMs,
-                                screenOn = !screenOff,
-                                chipDelta = chipD,
-                            )
-                            if (!l1Logged) {
-                                l1Logged = true
-                                logEvent(
-                                    "[диаг] L1 живой: накл " +
-                                    "${fx.pitchDeg?.toInt() ?: -999}/${fx.rollDeg?.toInt() ?: -999}, " +
-                                    "гиро " +
-                                    "${"%.2f".format(fx.gyroX ?: 0f)}/" +
-                                    "${"%.2f".format(fx.gyroY ?: 0f)}/" +
-                                    "${"%.2f".format(fx.gyroZ ?: 0f)}, " +
-                                    "окно ${fx.windowN ?: 0}, серия ${fx.seriesSteps ?: 0}"
-                                )
-                            }
-                            sampleCountSession++
-                            scope.launch {
-                                AppDb.get(this@StepService).dao().insertSample(sample)
-                            }
+                            writeTerrainSample(
+                                sm.name, detector.smoothedAmp,
+                                detector.lastIntervalMs, source = 0)
                         }
                     }
                     // V11.8: калибровка темпа ВОЗВРАЩЕНА на детектор-акселерометр.
@@ -995,6 +982,68 @@ class StepService : Service(), SensorEventListener {
     private fun hourKeyNow(): String {
         val n = java.time.LocalDateTime.now()
         return "%04d-%02d-%02d %02d".format(n.year, n.monthValue, n.dayOfMonth, n.hour)
+    }
+
+    /**
+     * Единственное место, где рождается строка корпуса (v185).
+     *
+     * source = 0 - шаги подтвердил детектор: amp и intervalMs измерены.
+     * source = 1 - детектор молчал (карман, вето по гироскопу), счёт вёл
+     *              чип. amp/intervalMs НЕ измерялись и пишутся нулями;
+     *              честную амплитуду и каденс несут accRms/accP90/
+     *              zcrCadence из независимого канала. Флаг обязателен:
+     *              без него обучение приняло бы нули за измерение.
+     */
+    private fun writeTerrainSample(mode: String, amp: Float, interval: Float, source: Int) {
+        val fx = features.snapshot(detector.gravX, detector.gravY, detector.gravZ)
+        val chipD = if (hwLastTotal >= 0 && lastSampleChip >= 0)
+            (hwLastTotal - lastSampleChip).toInt() else null
+        if (hwLastTotal >= 0) lastSampleChip = hwLastTotal
+        val sample = TerrainSample(
+            timeMs = System.currentTimeMillis(),
+            label = TerrainState.incline.value.name,
+            mode = mode,
+            amp = amp,
+            intervalMs = interval,
+            gyro = detector.gyroRms,
+            featureVersion = FeatureCollector.FEATURE_VERSION,
+            pitchDeg = fx.pitchDeg,
+            rollDeg = fx.rollDeg,
+            gyroX = fx.gyroX,
+            gyroY = fx.gyroY,
+            gyroZ = fx.gyroZ,
+            ampEvenMed = fx.ampEvenMed,
+            ampOddMed = fx.ampOddMed,
+            intervalEvenMed = fx.intervalEvenMed,
+            intervalOddMed = fx.intervalOddMed,
+            ampMed = fx.ampMed,
+            ampIqr = fx.ampIqr,
+            intervalMed = fx.intervalMed,
+            intervalIqr = fx.intervalIqr,
+            windowN = fx.windowN,
+            seriesSteps = fx.seriesSteps,
+            seriesMs = fx.seriesMs,
+            screenOn = !screenOff,
+            chipDelta = chipD,
+            accRms = fx.accRms,
+            accP90 = fx.accP90,
+            accMax = fx.accMax,
+            zcrCadence = fx.zcrCadence,
+            sampleHz = fx.sampleHz,
+            sampleSource = source,
+        )
+        if (!l1Logged) {
+            l1Logged = true
+            logEvent(
+                "[диаг] корпус живой: накл " +
+                "${fx.pitchDeg?.toInt() ?: -999}/${fx.rollDeg?.toInt() ?: -999}, " +
+                "ампл ${"%.2f".format(fx.accRms ?: 0f)}, " +
+                "кад ${"%.2f".format(fx.zcrCadence ?: 0f)}, " +
+                "Гц ${(fx.sampleHz ?: 0f).toInt()}, ист $source"
+            )
+        }
+        sampleCountSession++
+        scope.launch { AppDb.get(this@StepService).dao().insertSample(sample) }
     }
 
     private fun bumpHour(w: Int, r: Int) {

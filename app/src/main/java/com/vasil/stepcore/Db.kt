@@ -101,6 +101,21 @@ data class TerrainSample(
     val screenOn: Boolean? = null,
     // Сколько шагов насчитал чип с прошлого образца - честность даром
     val chipDelta: Int? = null,
+
+    // --- v185: независимый канал акселерометра ---
+    // Считается из сырого сигнала, БЕЗ вето детектора по гироскопу.
+    // В кармане детектор молчит, и это единственный источник амплитуды
+    // и каденса - то есть главных признаков уклона.
+    val accRms: Float? = null,      // средняя энергия шага
+    val accP90: Float? = null,      // типичный пик без выбросов
+    val accMax: Float? = null,      // самый сильный удар (у спуска выше)
+    val zcrCadence: Float? = null,  // каденс по пересечениям нуля, шаг/с
+    val sampleHz: Float? = null,    // фактическая частота сенсора
+    // 0 = строка от детектора (amp/intervalMs измерены),
+    // 1 = строка от чипа: детектор молчал, amp/intervalMs НЕ измерялись
+    //     и записаны нулями. Амплитуду и каденс для таких строк брать
+    //     из accRms/accP90/zcrCadence.
+    val sampleSource: Int = 0,
 )
 
 /**
@@ -347,8 +362,22 @@ val MIGRATION_7_8 = object : Migration(7, 8) {
     }
 }
 
+/**
+ * v185: независимый канал акселерометра в корпусе. Только ADD COLUMN.
+ */
+val MIGRATION_8_9 = object : Migration(8, 9) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE terrain_samples ADD COLUMN accRms REAL")
+        db.execSQL("ALTER TABLE terrain_samples ADD COLUMN accP90 REAL")
+        db.execSQL("ALTER TABLE terrain_samples ADD COLUMN accMax REAL")
+        db.execSQL("ALTER TABLE terrain_samples ADD COLUMN zcrCadence REAL")
+        db.execSQL("ALTER TABLE terrain_samples ADD COLUMN sampleHz REAL")
+        db.execSQL("ALTER TABLE terrain_samples ADD COLUMN sampleSource INTEGER NOT NULL DEFAULT 0")
+    }
+}
+
 @Database(entities = [DayRecord::class, EventRecord::class, HourRecord::class, ProfileSnapshotRecord::class, TerrainSample::class],
-    version = 8, exportSchema = false)
+    version = 9, exportSchema = false)
 abstract class AppDb : RoomDatabase() {
     abstract fun dao(): StepDao
 
@@ -358,7 +387,7 @@ abstract class AppDb : RoomDatabase() {
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
                     context.applicationContext, AppDb::class.java, "stepcore.db"
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8).build().also { instance = it }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9).build().also { instance = it }
             }
     }
 }

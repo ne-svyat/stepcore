@@ -47,6 +47,15 @@ class FeatureCollector {
         val windowN: Int?,
         val seriesSteps: Int?,
         val seriesMs: Long?,
+        // Независимый канал (v185): считается из сырого акселерометра,
+        // БЕЗ участия детектора и его вето по гироскопу. В кармане
+        // детектор постоянно в IDLE и не даёт ни амплитуды, ни каденса -
+        // а это главные признаки уклона. Эти поля их дают.
+        val accRms: Float?,
+        val accP90: Float?,
+        val accMax: Float?,
+        val zcrCadence: Float?,   // каденс по пересечениям нуля, шаг/с
+        val sampleHz: Float?,     // фактическая частота сенсора
     )
 
     // --- гироскоп по осям ---
@@ -76,11 +85,37 @@ class FeatureCollector {
     private var asymIdx = 0
     private var asymFilled = 0
 
+    // --- независимый канал вертикального ускорения (v185) ---
+    // Кольцо на ACC_WINDOW отсчётов. При SENSOR_DELAY_GAME (~50 Гц)
+    // это около 10 с - столько же, сколько окно правила ShakeHold.
+    private val accWin = FloatArray(ACC_WINDOW)
+    private val accT = LongArray(ACC_WINDOW)
+    private var accIdx = 0
+    private var accFilled = 0
+
     // --- серия ---
     private var seriesSteps = 0
     private var seriesStartMs = 0L
     private var seriesLastMs = 0L
     private var seriesLive = false
+
+    /**
+     * Сырой отсчёт акселерометра. Вызывается на КАЖДОМ событии, до и
+     * независимо от любых решений детектора: вето по тряске, режим,
+     * карантин - ничто из этого сюда не доходит. Гравитация приходит
+     * снаружи от детектора, чтобы не заводить второй источник истины.
+     */
+    fun onAccel(x: Float, y: Float, z: Float,
+                gravX: Float, gravY: Float, gravZ: Float, timeMs: Long) {
+        val gn = sqrt(gravX * gravX + gravY * gravY + gravZ * gravZ)
+        if (gn < GRAV_MIN) return
+        val lx = x - gravX; val ly = y - gravY; val lz = z - gravZ
+        val vert = (lx * gravX + ly * gravY + lz * gravZ) / gn
+        accWin[accIdx] = vert
+        accT[accIdx] = timeMs
+        accIdx = (accIdx + 1) % ACC_WINDOW
+        if (accFilled < ACC_WINDOW) accFilled++
+    }
 
     /** Гироскоп: сырые оси. Вызывается на каждое событие сенсора. */
     fun onGyro(x: Float, y: Float, z: Float) {
@@ -134,6 +169,7 @@ class FeatureCollector {
         gxSq = 0f; gySq = 0f; gzSq = 0f; gyroSeen = false
         winIdx = 0; winFilled = 0
         asymIdx = 0; asymFilled = 0
+        accIdx = 0; accFilled = 0
         seriesLive = false; seriesSteps = 0
         seriesStartMs = 0L; seriesLastMs = 0L
     }
@@ -178,7 +214,71 @@ class FeatureCollector {
             windowN = if (regOk) winFilled else null,
             seriesSteps = if (seriesLive) seriesSteps else null,
             seriesMs = if (seriesLive) seriesLastMs - seriesStartMs else null,
+            accRms = accStat(0),
+            accP90 = accStat(1),
+            accMax = accStat(2),
+            zcrCadence = accCadence(),
+            sampleHz = accHz(),
         )
+    }
+
+    /**
+     * 0 = RMS, 1 = 90-й процентиль |vert|, 2 = максимум |vert|.
+     * RMS даёт среднюю энергию шага, p90 - типичный пик без выбросов,
+     * max - самый сильный удар (у спуска он выше, чем у подъёма).
+     */
+    private fun accStat(kind: Int): Float? {
+        if (accFilled < ACC_MIN) return null
+        if (kind == 0) {
+            var s = 0.0
+            for (i in 0 until accFilled) s += accWin[i].toDouble() * accWin[i]
+            return sqrt(s / accFilled).toFloat()
+        }
+        val a = FloatArray(accFilled)
+        for (i in 0 until accFilled) a[i] = kotlin.math.abs(accWin[i])
+        a.sort()
+        return if (kind == 2) a[accFilled - 1] else a[(accFilled * 9) / 10]
+    }
+
+    /**
+     * Каденс по пересечениям нуля. Два пересечения = один период
+     * колебания = один шаг. Метод грубый, но работает там, где детектор
+     * молчит, и не требует ни порогов, ни подтверждений.
+     */
+    private fun accCadence(): Float? {
+        if (accFilled < ACC_MIN) return null
+        val span = accSpanMs() ?: return null
+        if (span <= 0L) return null
+        var mean = 0.0
+        for (i in 0 until accFilled) mean += accWin[i]
+        mean /= accFilled
+        var crossings = 0
+        var prev = accWin[0] - mean
+        for (i in 1 until accFilled) {
+            val cur = accWin[i] - mean
+            if ((prev < 0 && cur >= 0) || (prev >= 0 && cur < 0)) crossings++
+            prev = cur
+        }
+        return (crossings / 2f) / (span / 1000f)
+    }
+
+    /** Фактическая частота сенсора: MIUI её режет, и это надо видеть. */
+    private fun accHz(): Float? {
+        if (accFilled < ACC_MIN) return null
+        val span = accSpanMs() ?: return null
+        if (span <= 0L) return null
+        return (accFilled - 1) * 1000f / span
+    }
+
+    private fun accSpanMs(): Long? {
+        if (accFilled < 2) return null
+        var lo = Long.MAX_VALUE; var hi = Long.MIN_VALUE
+        for (i in 0 until accFilled) {
+            val t = accT[i]
+            if (t < lo) lo = t
+            if (t > hi) hi = t
+        }
+        return hi - lo
     }
 
     private fun sortedCopy(src: FloatArray, n: Int): FloatArray {
@@ -231,6 +331,11 @@ class FeatureCollector {
         // Ниже этой нормы вектор гравитации не сформирован (старт сервиса,
         // свободное падение) и угол из него бессмыслен. 1 м/с2 при норме 9.81.
         private const val GRAV_MIN = 1f
+        /** ~10 с при SENSOR_DELAY_GAME (~50 Гц) - столько же, сколько
+         *  окно правила ShakeHold, чтобы признаки были сопоставимы. */
+        private const val ACC_WINDOW = 512
+        /** Ниже двух секунд материала статистика бессмысленна. */
+        private const val ACC_MIN = 100
     }
 }
 
