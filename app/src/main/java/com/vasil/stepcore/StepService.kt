@@ -34,6 +34,7 @@ class StepService : Service(), SensorEventListener {
     private lateinit var vibrator: Vibrator
     private val detector = StepDetector()
     private val features = FeatureCollector()
+    private val shakeHold = ShakeHold()
     private var lastSampleChip = -1L
     private var l1Logged = false
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -668,14 +669,31 @@ class StepService : Service(), SensorEventListener {
                 // Известная цена: чип придерживает первые ~10 шагов серии и
                 // отдаёт пачкой; короткие проходки могут не засчитаться
                 // (конституция: лучше недосчитать один, чем добавить десять).
-                val delta = (hwTotal - hwBaseline).toInt()
+                var delta = (hwTotal - hwBaseline).toInt()
                 hwBaseline = hwTotal
                 persistHwBase()
                 if (delta <= 0) return
-                if (!screenOff && SystemClock.elapsedRealtime() < shakeGuardUntilElapsed) {
-                    // Guard 1: тряска - дельта чипа отбрасывается навсегда
-                    logEvent("Тряска: отброшено $delta шагов чипа")
-                    return
+                val nowElapsed = SystemClock.elapsedRealtime()
+                if (!screenOff && nowElapsed < shakeGuardUntilElapsed) {
+                    // Guard 1 (v184): КАРАНТИН ВМЕСТО РАССТРЕЛА.
+                    // Раньше дельта отбрасывалась навсегда, и телефон в
+                    // кармане при включённом экране терял всё: 728 шагов
+                    // за 6 минут (журнал 19.07). Порогом гироскопа это не
+                    // лечится - карман 2.1-4.7 перекрывается с тряской
+                    // 3.6-8.0. Разделяет ровность темпа чипа; решение
+                    // вынесено в ShakeHold, где пороги измерены.
+                    val v = shakeHold.onShakenDelta(nowElapsed, delta)
+                    v.reason?.let { logEvent("Тряска: " + it) }
+                    if (v.discarded > 0) {
+                        logEvent("Тряска: отброшено ${v.discarded} шагов чипа")
+                    }
+                    if (v.release <= 0) return
+                    delta = v.release
+                } else if (shakeHold.heldSteps > 0) {
+                    // Тряска кончилась, ритм так и не подтвердился -
+                    // отбрасываем, ровно как до v184.
+                    val lost = shakeHold.onShakeEnded()
+                    logEvent("Тряска кончилась: отброшено $lost шагов чипа")
                 }
                 if (!screenOff && detector.mode == StepDetector.Mode.TRANSPORT) {
                     // Guard 2: чип идёт под меткой транспорта = человек идёт
