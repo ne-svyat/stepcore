@@ -33,6 +33,9 @@ class StepService : Service(), SensorEventListener {
     private lateinit var sensorManager: SensorManager
     private lateinit var vibrator: Vibrator
     private val detector = StepDetector()
+    private val features = FeatureCollector()
+    private var lastSampleChip = -1L
+    private var l1Logged = false
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var lastNotifiedSteps = -1
     private var wakeLock: PowerManager.WakeLock? = null
@@ -104,6 +107,7 @@ class StepService : Service(), SensorEventListener {
                     }
                     hwSessionAdded = 0
                     detector.resetTransient()
+                    features.reset()
                     lastLoggedMode = "IDLE"
                     StepsState.mode.value = "IDLE"
                 }
@@ -680,6 +684,7 @@ class StepService : Service(), SensorEventListener {
                         logEvent("Метка транспорта снята: чип насчитал " +
                                 "$transportChipAccum шагов - человек идёт")
                         detector.resetTransient()
+                        features.reset()
                         transportChipAccum = 0
                     }
                 } else transportChipAccum = 0
@@ -703,6 +708,7 @@ class StepService : Service(), SensorEventListener {
                 if (screenOff) return
                 if (calibrating == null) {
                     detector.onGyro(event.values[0], event.values[1], event.values[2], timeMs)
+                    features.onGyro(event.values[0], event.values[1], event.values[2])
                 }
                 return
             }
@@ -712,6 +718,10 @@ class StepService : Service(), SensorEventListener {
                     event.values[0], event.values[1], event.values[2], timeMs
                 )
                 updateModeWithHysteresis()
+                // L1: границу серии задаёт детектор своим уходом в IDLE -
+                // у него для этого уже есть выверенный таймаут. Своего
+                // порога тишины коллектор не заводит. Вызов идемпотентен.
+                if (detector.mode == StepDetector.Mode.IDLE) features.breakSeries()
                 if (detector.isShakeBlocked(timeMs)) {
                     // тряска активна: вето на дельты чипа + 4 c на лаг пачек
                     shakeGuardUntilElapsed =
@@ -719,12 +729,23 @@ class StepService : Service(), SensorEventListener {
                 }
                 if (added > 0) {
                     trackDivergence(added)
+                    // L1: один вызов на событие, а не на каждый из added.
+                    // Пачка >1 приходит только при выходе из карантина, то
+                    // есть в начале серии: чётность может стартовать со
+                    // сдвигом, но асимметрия сравнивает корзины между собой,
+                    // и обмен корзин местами её величину не меняет.
+                    features.onStep(detector.smoothedAmp, detector.lastIntervalMs, timeMs)
                     // Сегмент 3: прореженный сбор помеченного корпуса уклона.
                     samplesSinceStep += added
                     if (samplesSinceStep >= terrainSampleEvery) {
                         samplesSinceStep = 0
                         val sm = detector.mode
                         if (sm == StepDetector.Mode.WALK || sm == StepDetector.Mode.RUN) {
+                            val fx = features.snapshot(
+                                detector.gravX, detector.gravY, detector.gravZ)
+                            val chipD = if (hwLastTotal >= 0 && lastSampleChip >= 0)
+                                (hwLastTotal - lastSampleChip).toInt() else null
+                            if (hwLastTotal >= 0) lastSampleChip = hwLastTotal
                             val sample = TerrainSample(
                                 timeMs = System.currentTimeMillis(),
                                 label = TerrainState.incline.value.name,
@@ -732,7 +753,38 @@ class StepService : Service(), SensorEventListener {
                                 amp = detector.smoothedAmp,
                                 intervalMs = detector.lastIntervalMs,
                                 gyro = detector.gyroRms,
+                                featureVersion = FeatureCollector.FEATURE_VERSION,
+                                pitchDeg = fx.pitchDeg,
+                                rollDeg = fx.rollDeg,
+                                gyroX = fx.gyroX,
+                                gyroY = fx.gyroY,
+                                gyroZ = fx.gyroZ,
+                                ampEvenMed = fx.ampEvenMed,
+                                ampOddMed = fx.ampOddMed,
+                                intervalEvenMed = fx.intervalEvenMed,
+                                intervalOddMed = fx.intervalOddMed,
+                                ampMed = fx.ampMed,
+                                ampIqr = fx.ampIqr,
+                                intervalMed = fx.intervalMed,
+                                intervalIqr = fx.intervalIqr,
+                                windowN = fx.windowN,
+                                seriesSteps = fx.seriesSteps,
+                                seriesMs = fx.seriesMs,
+                                screenOn = !screenOff,
+                                chipDelta = chipD,
                             )
+                            if (!l1Logged) {
+                                l1Logged = true
+                                logEvent(
+                                    "[диаг] L1 живой: накл " +
+                                    "${fx.pitchDeg?.toInt() ?: -999}/${fx.rollDeg?.toInt() ?: -999}, " +
+                                    "гиро " +
+                                    "${"%.2f".format(fx.gyroX ?: 0f)}/" +
+                                    "${"%.2f".format(fx.gyroY ?: 0f)}/" +
+                                    "${"%.2f".format(fx.gyroZ ?: 0f)}, " +
+                                    "окно ${fx.windowN ?: 0}, серия ${fx.seriesSteps ?: 0}"
+                                )
+                            }
                             sampleCountSession++
                             scope.launch {
                                 AppDb.get(this@StepService).dao().insertSample(sample)

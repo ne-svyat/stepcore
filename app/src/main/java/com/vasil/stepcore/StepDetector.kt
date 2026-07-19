@@ -87,6 +87,15 @@ class StepDetector {
         private set
     val gyroRms: Float get() = sqrt(gyroRmsSq)
 
+    /**
+     * L1: сглаженный вектор гравитации, только чтение.
+     * Нужен FeatureCollector'у для ориентации телефона (pitch/roll).
+     * Ядро эти геттеры не читает; логика детектора не изменена.
+     */
+    val gravX: Float get() = gx
+    val gravY: Float get() = gy
+    val gravZ: Float get() = gz
+
     /** Амплитуда последнего подтверждённого шага (вертикаль, м/с2). Только
      *  для диагностики V11.12 - ядро её не читает. */
     var lastStepAmp = 0f

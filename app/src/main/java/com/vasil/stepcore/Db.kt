@@ -66,6 +66,41 @@ data class TerrainSample(
     val amp: Float,         // сглаженная вертикальная амплитуда
     val intervalMs: Float,  // сглаженный интервал шага, мс
     val gyro: Float,        // RMS гироскопа
+
+    // --- L1 (featureVersion = 2). Все поля nullable: null означает
+    // "не измеряли", а не "измерили ноль". Старые строки остаются с
+    // featureVersion = 1 и null во всех новых колонках.
+    // Правило: пишем только то, что НЕЛЬЗЯ восстановить из уже
+    // записанного. Профиль момента берётся по timeMs через
+    // profileAt(); час и день недели - через strftime.
+    val featureVersion: Int = 1,
+    // Ориентация телефона из сглаженного вектора гравитации
+    val pitchDeg: Float? = null,
+    val rollDeg: Float? = null,
+    // Гироскоп по осям (RMS). Ось наибольшей вариации - производная,
+    // считается при обучении, здесь не хранится.
+    val gyroX: Float? = null,
+    val gyroY: Float? = null,
+    val gyroZ: Float? = null,
+    // Асимметрия чётных/нечётных шагов серии, окно 8
+    val ampEvenMed: Float? = null,
+    val ampOddMed: Float? = null,
+    val intervalEvenMed: Float? = null,
+    val intervalOddMed: Float? = null,
+    // Регулярность ритма, окно 32
+    val ampMed: Float? = null,
+    val ampIqr: Float? = null,
+    val intervalMed: Float? = null,
+    val intervalIqr: Float? = null,
+    val windowN: Int? = null,   // сколько шагов реально было в окне
+    // Непрерывная серия движения
+    val seriesSteps: Int? = null,
+    val seriesMs: Long? = null,
+    // Контекст. screenOn до релиза L1.1 всегда true: обработчик
+    // акселерометра при выключенном экране выходит сразу.
+    val screenOn: Boolean? = null,
+    // Сколько шагов насчитал чип с прошлого образца - честность даром
+    val chipDelta: Int? = null,
 )
 
 /**
@@ -206,6 +241,10 @@ interface StepDao {
 
     @Query("SELECT COUNT(*) FROM terrain_samples")
     suspend fun countSamples(): Int
+
+    /** L1: сколько образцов уже собрано в расширенной схеме. */
+    @Query("SELECT COUNT(*) FROM terrain_samples WHERE featureVersion >= 2")
+    suspend fun countSamplesV2(): Int
 }
 
 val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -279,8 +318,37 @@ val MIGRATION_6_7 = object : Migration(6, 7) {
     }
 }
 
+/**
+ * L1: расширение корпуса походки. Только ADD COLUMN - ни одна
+ * существующая строка не переписывается. Старые образцы остаются
+ * с featureVersion = 1 и NULL в новых полях.
+ */
+val MIGRATION_7_8 = object : Migration(7, 8) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE terrain_samples ADD COLUMN featureVersion INTEGER NOT NULL DEFAULT 1")
+        db.execSQL("ALTER TABLE terrain_samples ADD COLUMN pitchDeg REAL")
+        db.execSQL("ALTER TABLE terrain_samples ADD COLUMN rollDeg REAL")
+        db.execSQL("ALTER TABLE terrain_samples ADD COLUMN gyroX REAL")
+        db.execSQL("ALTER TABLE terrain_samples ADD COLUMN gyroY REAL")
+        db.execSQL("ALTER TABLE terrain_samples ADD COLUMN gyroZ REAL")
+        db.execSQL("ALTER TABLE terrain_samples ADD COLUMN ampEvenMed REAL")
+        db.execSQL("ALTER TABLE terrain_samples ADD COLUMN ampOddMed REAL")
+        db.execSQL("ALTER TABLE terrain_samples ADD COLUMN intervalEvenMed REAL")
+        db.execSQL("ALTER TABLE terrain_samples ADD COLUMN intervalOddMed REAL")
+        db.execSQL("ALTER TABLE terrain_samples ADD COLUMN ampMed REAL")
+        db.execSQL("ALTER TABLE terrain_samples ADD COLUMN ampIqr REAL")
+        db.execSQL("ALTER TABLE terrain_samples ADD COLUMN intervalMed REAL")
+        db.execSQL("ALTER TABLE terrain_samples ADD COLUMN intervalIqr REAL")
+        db.execSQL("ALTER TABLE terrain_samples ADD COLUMN windowN INTEGER")
+        db.execSQL("ALTER TABLE terrain_samples ADD COLUMN seriesSteps INTEGER")
+        db.execSQL("ALTER TABLE terrain_samples ADD COLUMN seriesMs INTEGER")
+        db.execSQL("ALTER TABLE terrain_samples ADD COLUMN screenOn INTEGER")
+        db.execSQL("ALTER TABLE terrain_samples ADD COLUMN chipDelta INTEGER")
+    }
+}
+
 @Database(entities = [DayRecord::class, EventRecord::class, HourRecord::class, ProfileSnapshotRecord::class, TerrainSample::class],
-    version = 7, exportSchema = false)
+    version = 8, exportSchema = false)
 abstract class AppDb : RoomDatabase() {
     abstract fun dao(): StepDao
 
@@ -290,7 +358,7 @@ abstract class AppDb : RoomDatabase() {
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
                     context.applicationContext, AppDb::class.java, "stepcore.db"
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7).build().also { instance = it }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8).build().also { instance = it }
             }
     }
 }
