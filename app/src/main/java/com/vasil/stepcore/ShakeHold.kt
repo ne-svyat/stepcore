@@ -69,10 +69,16 @@ class ShakeHold {
         deltas.add(delta)
         dropOlderThan(nowMs - MAX_HOLD_MS)
 
-        val ok = locomotionRuleHolds(nowMs)
+        val ok = locomotionRuleHolds(nowMs, MIN_WINDOWS)
 
         if (confirmed) {
-            if (ok) {
+            // Пока материала меньше MIN_JUDGE_WINDOWS, судить не о чем:
+            // это либо начало эпизода после carryOver, либо первые окна
+            // обычного подтверждения. Обрывать счёт на нехватке истории
+            // нельзя - иначе доверие, выданное детектором, гасло бы на
+            // первой же дельте.
+            val judged = windowsAvailable(nowMs)
+            if (judged < MIN_JUDGE_WINDOWS || locomotionRuleHolds(nowMs, judged)) {
                 // Локомоция продолжается: дельта идёт в счёт сразу.
                 // Задержка есть только на входе в эпизод.
                 val out = heldSteps
@@ -118,6 +124,26 @@ class ShakeHold {
         return lost
     }
 
+    /**
+     * v187: локомоция УЖЕ доказана детектором.
+     *
+     * Перед каждым из семи карантинов 19.07 детектор подтверждал ходьбу
+     * за считанные секунды до начала тряски - и карантин заставлял
+     * доказывать её заново по сорок секунд. Суммарно 474 шага из 594.
+     *
+     * Вызывается только на входе в эпизод, когда в карантине ещё пусто.
+     * Правило ровности после этого продолжает работать и оборвёт счёт,
+     * как только появится чем судить (см. MIN_JUDGE_WINDOWS).
+     *
+     * Возвращает true, если счёт действительно открыт этим вызовом.
+     */
+    fun carryOver(): Boolean {
+        if (confirmed) return false
+        if (deltas.size > settledIdx) return false
+        confirmed = true
+        return true
+    }
+
     fun reset() { clear(); confirmed = false }
 
     private fun clear() { timesMs.clear(); deltas.clear(); settledIdx = 0 }
@@ -137,15 +163,24 @@ class ShakeHold {
      * покрытие: буфер обязан начинаться не позже начала самого раннего
      * окна, иначе неполное окно дало бы заниженный темп.
      */
-    private fun locomotionRuleHolds(nowMs: Long): Boolean {
-        if (timesMs.isEmpty()) return false
-        val spanStart = nowMs - MIN_WINDOWS * WINDOW_MS
+    /** Сколько полных окон покрыто буфером, не больше MIN_WINDOWS. */
+    private fun windowsAvailable(nowMs: Long): Int {
+        if (timesMs.isEmpty()) return 0
+        val spanMs = nowMs - timesMs[0]
+        if (spanMs < WINDOW_MS) return 0
+        val n = (spanMs / WINDOW_MS).toInt()
+        return if (n > MIN_WINDOWS) MIN_WINDOWS else n
+    }
+
+    private fun locomotionRuleHolds(nowMs: Long, windows: Int): Boolean {
+        if (timesMs.isEmpty() || windows <= 0) return false
+        val spanStart = nowMs - windows * WINDOW_MS
         if (timesMs[0] > spanStart) return false
 
-        val counts = IntArray(MIN_WINDOWS)
+        val counts = IntArray(windows)
         for (i in timesMs.indices) {
             val age = nowMs - timesMs[i]
-            if (age < 0 || age >= MIN_WINDOWS * WINDOW_MS) continue
+            if (age < 0 || age >= windows * WINDOW_MS) continue
             val w = (age / WINDOW_MS).toInt()
             counts[w] += deltas[i]
         }
@@ -158,11 +193,11 @@ class ShakeHold {
 
         var s = 0.0
         for (c in counts) s += c
-        val mean = s / MIN_WINDOWS
+        val mean = s / windows
         if (mean <= 0.0) return false
         var v = 0.0
         for (c in counts) { val d = c - mean; v += d * d }
-        val cv = sqrt(v / MIN_WINDOWS) / mean
+        val cv = sqrt(v / windows) / mean
         return cv < CV_MAX
     }
 
@@ -174,6 +209,15 @@ class ShakeHold {
         /** Сколько окон подряд должны выполнить правило. Самый длинный
          *  измеренный эпизод тряски занял 2 окна; 4 - двойной запас. */
         const val MIN_WINDOWS = 4
+
+        /**
+         * Минимум окон, по которым уже можно судить (v187). Три, а не два:
+         * измеренная сильная тряска дала 11/17/21 шагов за окно, и первые
+         * два (1.7 и 2.1 ш/с) попадают в диапазон ходьбы. Третье окно с
+         * 1.1 ш/с ломает и диапазон, и разброс. На двух окнах тряска
+         * прошла бы.
+         */
+        const val MIN_JUDGE_WINDOWS = 3
 
         /** Границы темпа локомоции, шагов в секунду.
          *  Измерено: ходьба в кармане 1.80-2.30; бег при интервале
