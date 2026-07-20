@@ -758,20 +758,22 @@ class MainActivity : AppCompatActivity() {
      */
     private fun setIncline(v: TerrainState.Incline) {
         if (TerrainState.incline.value == v) return
-        TerrainState.incline.value = v
-        val text = when (v) {
-            TerrainState.Incline.UP -> "Уклон: в гору"
-            TerrainState.Incline.DOWN -> "Уклон: с горы"
-            else -> "Уклон: ровно"
-        }
-        lifecycleScope.launch {
-            AppDb.get(this@MainActivity).dao().addEvent(
-                EventRecord(
-                    timeMs = System.currentTimeMillis(),
-                    date = java.time.LocalDate.now().toString(),
-                    text = text,
+        // v190: авторитет по метке - сервис. Он ставит состояние, пишет
+        // журнал, обновляет шторку и открывает окно сбора признаков.
+        // Экран лишь просит: два источника одной истины разъехались бы.
+        if (StepsState.serviceRunning.value) {
+            startForegroundService(
+                Intent(this, StepService::class.java).setAction(
+                    when (v) {
+                        TerrainState.Incline.UP -> StepService.ACTION_INCLINE_UP
+                        TerrainState.Incline.DOWN -> StepService.ACTION_INCLINE_DOWN
+                        else -> StepService.ACTION_INCLINE_FLAT
+                    }
                 )
             )
+        } else {
+            // Счёт не идёт - размечать нечего, журнал не трогаем.
+            TerrainState.incline.value = v
         }
     }
 

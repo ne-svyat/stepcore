@@ -15,6 +15,7 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.IBinder
 import android.os.PowerManager
+import android.graphics.drawable.Icon
 import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
@@ -126,6 +127,8 @@ class StepService : Service(), SensorEventListener {
     // Прореживание корпуса уклона: 1 образец на N подтверждённых шагов.
     private val terrainSampleEvery = 20
     private var chipSinceSample = 0
+    /** До какого момента собирать признаки из-за свежей метки (v190). */
+    private var labelWindowUntilElapsed = 0L
 
     /**
      * L1.1: окно фоновой обработки.
@@ -143,8 +146,22 @@ class StepService : Service(), SensorEventListener {
      * корпуса: она пишется раз в 10-20 шагов, то есть раз в 5-10 секунд
      * ходьбы, и одного окна в минуту заведомо достаточно.
      */
-    private fun inBgWindow(): Boolean =
-        SystemClock.elapsedRealtime() % BG_PERIOD_MS < BG_WINDOW_MS
+    /**
+     * Окно сбора признаков при выключенном экране.
+     *
+     * Два независимых основания:
+     *  - окно метки: человек только что нажал уклон, значит следующие
+     *    минуты размечены его рукой и стоят дороже всего. Работает
+     *    ВСЕГДА, даже если фоновый сбор выключен - иначе кнопки в шторке
+     *    давали бы калории, но не корпус;
+     *  - duty-цикл: BG_WINDOW_MS из каждых BG_PERIOD_MS, и только при
+     *    включённом флаге, цена которого по батарее ещё не измерена.
+     */
+    private fun inBgWindow(): Boolean {
+        val now = SystemClock.elapsedRealtime()
+        if (now < labelWindowUntilElapsed) return true
+        return StepsState.bgAccel.value && now % BG_PERIOD_MS < BG_WINDOW_MS
+    }
 
 
     /**
@@ -406,6 +423,9 @@ class StepService : Service(), SensorEventListener {
             }
             ACTION_DIAG_STOP -> finishDiag()
             ACTION_RECONCILE -> logHwComparison("сейчас")
+            ACTION_INCLINE_UP -> applyIncline(TerrainState.Incline.UP, true)
+            ACTION_INCLINE_FLAT -> applyIncline(TerrainState.Incline.FLAT, true)
+            ACTION_INCLINE_DOWN -> applyIncline(TerrainState.Incline.DOWN, true)
         }
         return START_STICKY
     }
@@ -800,7 +820,7 @@ class StepService : Service(), SensorEventListener {
                 if (screenOff) {
                     // L1.1: в фоне оси гироскопа нужны корпусу - именно они
                     // отличают карман от руки. Детектор не трогаем.
-                    if (StepsState.bgAccel.value && inBgWindow() && calibrating == null) {
+                    if (inBgWindow() && calibrating == null) {
                         features.onGyro(
                             event.values[0], event.values[1], event.values[2], timeMs
                         )
@@ -819,7 +839,7 @@ class StepService : Service(), SensorEventListener {
                     // должен - он заморожен, а его поведение проверено
                     // только при живом экране. Кормим один сборщик
                     // признаков, и то окнами (см. inBgWindow).
-                    if (StepsState.bgAccel.value && inBgWindow()) {
+                    if (inBgWindow()) {
                         features.onAccel(
                             event.values[0], event.values[1], event.values[2], timeMs
                         )
@@ -1229,18 +1249,86 @@ class StepService : Service(), SensorEventListener {
         getSystemService(NotificationManager::class.java).createNotificationChannel(ch)
     }
 
+    /**
+     * Единственное место, где меняется метка уклона (v190).
+     *
+     * Раньше состояние и запись в журнал делал экран. С появлением кнопок
+     * в шторке источников стало бы два, и они разъехались бы на первой же
+     * правке. Теперь авторитет один - сервис.
+     */
+    private fun applyIncline(v: TerrainState.Incline, fromShade: Boolean) {
+        // Нажатие той же метки - не событие, но окно сбора продлеваем:
+        // человек подтверждает, что участок тот же.
+        labelWindowUntilElapsed = SystemClock.elapsedRealtime() + LABEL_WINDOW_MS
+        if (TerrainState.incline.value == v) return
+        TerrainState.incline.value = v
+        val name = when (v) {
+            TerrainState.Incline.UP -> "в гору"
+            TerrainState.Incline.DOWN -> "с горы"
+            else -> "ровно"
+        }
+        logEvent("Уклон: " + name + (if (fromShade) " (шторка)" else ""))
+        getSystemService(NotificationManager::class.java)
+            .notify(NOTIF_ID, buildNotification(walkSteps + runSteps))
+    }
+
     private fun buildNotification(steps: Int): Notification {
         val pi = PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE
         )
+        val inc = TerrainState.incline.value
+        val incName = when (inc) {
+            TerrainState.Incline.UP -> "в гору"
+            TerrainState.Incline.DOWN -> "с горы"
+            else -> "ровно"
+        }
         return Notification.Builder(this, CHANNEL_ID)
             .setContentTitle("StepCore работает")
-            .setContentText("Шагов: $steps")
+            // Текущая метка видна прямо в шторке: иначе, нажимая кнопки
+            // не глядя на экран, невозможно понять, что сейчас стоит.
+            .setContentText("Шагов: " + steps + " · уклон: " + incName)
             .setSmallIcon(android.R.drawable.ic_menu_directions)
             .setContentIntent(pi)
             .setOngoing(true)
+            .addAction(inclineAction(TerrainState.Incline.UP, "В гору", 11))
+            .addAction(inclineAction(TerrainState.Incline.FLAT, "Ровно", 12))
+            .addAction(inclineAction(TerrainState.Incline.DOWN, "С горы", 13))
             .build()
+    }
+
+    /**
+     * Кнопка метки в уведомлении.
+     *
+     * requestCode у каждой свой: одинаковый код с одинаковыми флагами
+     * отдал бы один и тот же PendingIntent на все три кнопки - дефект,
+     * на котором горят регулярно. Action тоже различается, так что
+     * защита двойная.
+     *
+     * getForegroundService, а не getService: уведомление живёт только
+     * при работающем переднем сервисе, и это честное объявление намерения.
+     *
+     * Активная метка отмечена точкой - при узкой шторке текст обрезается,
+     * а точка видна всегда.
+     */
+    private fun inclineAction(
+        v: TerrainState.Incline, title: String, req: Int
+    ): Notification.Action {
+        val act = when (v) {
+            TerrainState.Incline.UP -> ACTION_INCLINE_UP
+            TerrainState.Incline.DOWN -> ACTION_INCLINE_DOWN
+            else -> ACTION_INCLINE_FLAT
+        }
+        val pi = PendingIntent.getForegroundService(
+            this, req,
+            Intent(this, StepService::class.java).setAction(act),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val mark = if (TerrainState.incline.value == v) "• " else ""
+        return Notification.Action.Builder(
+            Icon.createWithResource(this, android.R.drawable.ic_menu_directions),
+            mark + title, pi
+        ).build()
     }
 
     companion object {
@@ -1273,6 +1361,19 @@ class StepService : Service(), SensorEventListener {
         const val ACTION_DIAG_STOP = "diag_stop"
         /** v188: печать сверки с чипом по требованию, без остановки счёта. */
         const val ACTION_RECONCILE = "reconcile"
+        /** v190: метка уклона со шторки. Три отдельных действия, а не
+         *  одно с параметром: PendingIntent различаются по action, и
+         *  так исключён классический дефект «все кнопки делают одно». */
+        const val ACTION_INCLINE_UP = "incline_up"
+        const val ACTION_INCLINE_FLAT = "incline_flat"
+        const val ACTION_INCLINE_DOWN = "incline_down"
+        /** Сколько собирать признаки после нажатия метки. Две минуты:
+         *  строка корпуса пишется раз в 10-20 шагов, то есть раз в
+         *  5-10 секунд ходьбы - за окно набирается около двух десятков
+         *  строк именно этого участка. Больше не нужно, меньше - мало
+         *  для медиан и разбросов.
+         */
+        const val LABEL_WINDOW_MS = 120_000L
         /** L1.1: период и длительность окна фоновой обработки. */
         const val BG_PERIOD_MS = 60_000L
         const val BG_WINDOW_MS = 12_000L
