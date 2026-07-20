@@ -1302,10 +1302,22 @@ class StepService : Service(), SensorEventListener {
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun createChannel() {
+        val nm = getSystemService(NotificationManager::class.java)
+        // Настройки канала неизменяемы после создания: менять видимость у
+        // существующего бесполезно, система проигнорирует. Поэтому старый
+        // канал удаляется, а уведомление переезжает в новый.
+        runCatching { nm.deleteNotificationChannel(CHANNEL_ID_OLD) }
         val ch = NotificationChannel(
             CHANNEL_ID, "Подсчёт шагов", NotificationManager.IMPORTANCE_LOW
-        )
-        getSystemService(NotificationManager::class.java).createNotificationChannel(ch)
+        ).apply {
+            // Без этого система прячет уведомление с экрана блокировки -
+            // а метку уклона надо ставить, НЕ разблокируя телефон.
+            lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+            setShowBadge(false)
+            enableVibration(false)
+            setSound(null, null)
+        }
+        nm.createNotificationChannel(ch)
     }
 
     /**
@@ -1358,9 +1370,24 @@ class StepService : Service(), SensorEventListener {
             .setSmallIcon(android.R.drawable.ic_menu_directions)
             .setContentIntent(pi)
             .setOngoing(true)
-            .addAction(inclineAction(TerrainState.Incline.UP, "В гору", 11))
-            .addAction(inclineAction(TerrainState.Incline.FLAT, "Ровно", 12))
-            .addAction(inclineAction(TerrainState.Incline.DOWN, "С горы", 13))
+            .setVisibility(Notification.VISIBILITY_PUBLIC)
+            // Цвет всей полосы уведомления по текущей метке: покрасить
+            // кнопки по отдельности Android не позволяет, такого API нет.
+            // setColorized действует только у уведомлений переднего
+            // сервиса - у нас как раз оно.
+            .setColorized(true)
+            .setColor(
+                getColor(
+                    when (inc) {
+                        TerrainState.Incline.UP -> R.color.accent_amber
+                        TerrainState.Incline.DOWN -> R.color.accent_green
+                        else -> R.color.surface2
+                    }
+                )
+            )
+            .addAction(inclineAction(TerrainState.Incline.UP, "▲ В гору", 11))
+            .addAction(inclineAction(TerrainState.Incline.FLAT, "━ Ровно", 12))
+            .addAction(inclineAction(TerrainState.Incline.DOWN, "▼ С горы", 13))
             .build()
     }
 
@@ -1399,7 +1426,12 @@ class StepService : Service(), SensorEventListener {
     }
 
     companion object {
-        const val CHANNEL_ID = "stepcore_tracking"
+        const val CHANNEL_ID = "stepcore_tracking_v2"
+        /** Канал до v192: создавался без lockscreenVisibility и
+         *  прятался с экрана блокировки. Настройки канала после
+         *  создания неизменяемы, поэтому заведён новый, а этот
+         *  удаляется. */
+        const val CHANNEL_ID_OLD = "stepcore_tracking"
         const val NOTIF_ID = 1
         const val PREFS = "stepcore"
         const val KEY_DAY = "day"
