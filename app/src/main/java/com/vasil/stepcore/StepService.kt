@@ -42,6 +42,14 @@ class StepService : Service(), SensorEventListener {
     private var lastNotifiedSteps = -1
     private var wakeLock: PowerManager.WakeLock? = null
 
+    // v191: датчики движения держим в полях - их приходится
+    // подписывать и отписывать по ходу жизни, а не один раз при старте.
+    private var accelSensor: Sensor? = null
+    private var gyroSensor: Sensor? = null
+    private var hwDetSensor: Sensor? = null
+    private var motionRegistered = false
+
+
     // Диагностика "почему не считает при выключенном экране":
     // тикер раз в 30 с. Задержка тикера = CPU спал (wakelock игнорируется).
     // Тикер жив, а событий сенсора нет = система усыпила сенсор.
@@ -99,6 +107,7 @@ class StepService : Service(), SensorEventListener {
             when (intent?.action) {
                 Intent.ACTION_SCREEN_OFF -> {
                     screenOff = true
+                    updateMotionSensors()
                     hwSessionAdded = 0
                     divWindowStartMs = 0L   // окно расхождения только при экране вкл
                 }
@@ -112,6 +121,7 @@ class StepService : Service(), SensorEventListener {
                     features.reset()
                     lastLoggedMode = "IDLE"
                     StepsState.mode.value = "IDLE"
+                    updateMotionSensors()
                 }
             }
         }
@@ -157,6 +167,55 @@ class StepService : Service(), SensorEventListener {
      *  - duty-цикл: BG_WINDOW_MS из каждых BG_PERIOD_MS, и только при
      *    включённом флаге, цена которого по батарее ещё не измерена.
      */
+    /**
+     * v191: нужны ли сейчас датчики движения и бодрый процессор.
+     *
+     * Три основания, любого достаточно:
+     *  - экран включён: человек смотрит, детектор обязан работать;
+     *  - включён фоновый сбор: это его объявленная цена, флаг для того и
+     *    сделан, чтобы её можно было измерить;
+     *  - открыто окно свежей метки уклона: человек только что сказал
+     *    «здесь склон», две минуты процессора того стоят.
+     *
+     * Во всех остальных случаях телефон спит, а шаги считает чип.
+     */
+    private fun motionNeeded(): Boolean =
+        !screenOff || StepsState.bgAccel.value ||
+            SystemClock.elapsedRealtime() < labelWindowUntilElapsed
+
+    /**
+     * Приводит подписку на датчики и wakelock к нужному состоянию.
+     * Идемпотентно: повторный вызов в том же состоянии ничего не делает.
+     *
+     * Чип (TYPE_STEP_COUNTER) здесь НЕ упоминается намеренно - он
+     * подписан всегда и остаётся единственным счётчиком.
+     */
+    private fun updateMotionSensors() {
+        val need = motionNeeded()
+        if (need == motionRegistered) return
+        if (need) {
+            accelSensor?.let {
+                sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
+            }
+            gyroSensor?.let {
+                sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
+            }
+            // STEP_DETECTOR нужен только как диагностика при калибровке, а
+            // она идёт при включённом экране. В фоне он висел на FASTEST
+            // и будил процессор впустую.
+            hwDetSensor?.let {
+                sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_FASTEST)
+            }
+            if (wakeLock?.isHeld != true) wakeLock?.acquire()
+        } else {
+            accelSensor?.let { sensorManager.unregisterListener(this, it) }
+            gyroSensor?.let { sensorManager.unregisterListener(this, it) }
+            hwDetSensor?.let { sensorManager.unregisterListener(this, it) }
+            if (wakeLock?.isHeld == true) wakeLock?.release()
+        }
+        motionRegistered = need
+    }
+
     private fun inBgWindow(): Boolean {
         val now = SystemClock.elapsedRealtime()
         if (now < labelWindowUntilElapsed) return true
@@ -244,22 +303,20 @@ class StepService : Service(), SensorEventListener {
         createChannel()
         startForeground(NOTIF_ID, buildNotification(walkSteps + runSteps))
 
-        // CPU не должен засыпать при выключенном экране, иначе
-        // non-wakeup сенсоры перестают доставлять события и счёт стоит.
+        // v191: wakelock больше не берётся навсегда. Им управляет
+        // updateMotionSensors: он нужен только тогда, когда мы реально
+        // обрабатываем движение. Счёт шагов от него не зависит - его
+        // ведёт чип, который считает и при спящем процессоре.
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "stepcore:steps")
-            .apply { acquire() }
 
-        // wakeup-вариант сенсора (true) как подстраховка; если его нет - обычный
-        val accel = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER, true)
-            ?: sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
-        sensorManager.registerListener(this, accel, SensorManager.SENSOR_DELAY_GAME)
-        val gyro = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE, true)
-            ?: sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
-        detector.hasGyro = gyro != null
-        if (gyro != null) {
-            sensorManager.registerListener(this, gyro, SensorManager.SENSOR_DELAY_GAME)
-        }
+        // v191: ОБЫЧНЫЕ, не wakeup-версии. Раньше здесь стоял
+        // getDefaultSensor(type, true) - wakeup-сенсор будит процессор на
+        // каждой порции данных, и при 50 Гц телефон не спал никогда.
+        // Измерено: 20% батареи в час на лежащем телефоне.
+        accelSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        gyroSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
+        detector.hasGyro = gyroSensor != null
         hwBaseline = prefs.getLong(KEY_HW_BASE, -1L)
         hwDayAnchor =
             if (prefs.getString(KEY_HW_ANCHOR_DAY, "") == currentDay)
@@ -313,10 +370,12 @@ class StepService : Service(), SensorEventListener {
         // кармане и выдаёт бег пачками - отсюда "карман 50%, бег не калибруется".
         // Вне калибровки события игнорируются (см. onSensorChanged), счёт
         // по-прежнему только на STEP_COUNTER.
-        val hwDetector = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR)
-        if (hwDetector != null) {
-            sensorManager.registerListener(this, hwDetector, SensorManager.SENSOR_DELAY_FASTEST)
-        } else {
+        hwDetSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR)
+        // v191: подписка отдана updateMotionSensors. В фоне этот сенсор
+        // не нужен: он лишь диагностика при калибровке, а она идёт при
+        // включённом экране. На SENSOR_DELAY_FASTEST он будил процессор.
+        updateMotionSensors()
+        if (hwDetSensor == null) {
             logEvent("⚠ Аппаратного детектора шагов нет - калибровка темпа по акселерометру")
         }
         registerReceiver(screenReceiver, IntentFilter().apply {
@@ -1260,6 +1319,14 @@ class StepService : Service(), SensorEventListener {
         // Нажатие той же метки - не событие, но окно сбора продлеваем:
         // человек подтверждает, что участок тот же.
         labelWindowUntilElapsed = SystemClock.elapsedRealtime() + LABEL_WINDOW_MS
+        // Окно открылось - датчики нужны прямо сейчас, даже если экран
+        // погашен. И нужен таймер, который погасит их обратно: без него
+        // wakelock остался бы висеть до включения экрана.
+        updateMotionSensors()
+        scope.launch {
+            kotlinx.coroutines.delay(LABEL_WINDOW_MS + 1_000L)
+            updateMotionSensors()
+        }
         if (TerrainState.incline.value == v) return
         TerrainState.incline.value = v
         val name = when (v) {
