@@ -251,6 +251,13 @@ class MainActivity : AppCompatActivity() {
 
         val diagBtn = findViewById<Button>(R.id.diagButton)
         val reconcileBtn = findViewById<Button>(R.id.reconcileButton)
+        val bgAccelSwitch = findViewById<SwitchCompat>(R.id.bgAccelSwitch)
+        bgAccelSwitch.isChecked = prefs.getBoolean("bg_accel", false)
+        StepsState.bgAccel.value = bgAccelSwitch.isChecked
+        bgAccelSwitch.setOnCheckedChangeListener { _, checked ->
+            StepsState.bgAccel.value = checked
+            prefs.edit().putBoolean("bg_accel", checked).apply()
+        }
         detailLogSwitch.isChecked = prefs.getBoolean("detail_log", false)
         StepsState.detailLog.value = detailLogSwitch.isChecked
         detailLogSwitch.setOnCheckedChangeListener { _, checked ->

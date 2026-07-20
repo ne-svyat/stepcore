@@ -668,6 +668,24 @@
                 android:layout_marginTop="2dp"
                 android:layout_marginBottom="6dp" />
 
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/bgAccelSwitch"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Сбор при выключенном экране"
+                android:textColor="@color/text_main"
+                android:textSize="18sp"
+                android:layout_marginTop="4dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Признаки походки собираются и с заблокированным экраном, окнами по 12 секунд раз в минуту. Счёт шагов не меняется. Цена по батарее пока не измерена - для замера и нужен этот переключатель."
+                android:textColor="@color/text_dim"
+                android:textSize="13sp"
+                android:layout_marginTop="2dp"
+                android:layout_marginBottom="6dp" />
+
             <Button
                 android:id="@+id/diagButton"
                 android:layout_width="match_parent"

@@ -128,6 +128,26 @@ class StepService : Service(), SensorEventListener {
     private var chipSinceSample = 0
 
     /**
+     * L1.1: окно фоновой обработки.
+     *
+     * BG_WINDOW_MS из каждых BG_PERIOD_MS. Фаза считается от часов
+     * загрузки, состояния не требует и переживает любые перезапуски.
+     *
+     * Откуда числа. Снизу окно ограничено тем, сколько нужно, чтобы
+     * статистика имела смысл: коллектор требует 100 отсчётов (около 2 с)
+     * и меряет каденс по окну; 12 с дают около 600 отсчётов и полтора
+     * десятка шагов - этого хватает и на амплитуду, и на ритм. Сверху -
+     * долей времени: 12 из 60 это пятая часть, то есть плата
+     * процессором впятеро меньше непрерывной обработки.
+     * Период в минуту согласован с тем, как часто вообще нужна строка
+     * корпуса: она пишется раз в 10-20 шагов, то есть раз в 5-10 секунд
+     * ходьбы, и одного окна в минуту заведомо достаточно.
+     */
+    private fun inBgWindow(): Boolean =
+        SystemClock.elapsedRealtime() % BG_PERIOD_MS < BG_WINDOW_MS
+
+
+    /**
      * v187: когда детектор в последний раз подтвердил шаг (часы с
      * загрузки - те же, что у сенсорных меток времени).
      */
@@ -199,6 +219,7 @@ class StepService : Service(), SensorEventListener {
             detector.restoreCount(walkSteps + runSteps)
         }
         StepsState.hapticEnabled.value = prefs.getBoolean("haptic", false)
+        StepsState.bgAccel.value = prefs.getBoolean("bg_accel", false)
         StepsState.detailLog.value = prefs.getBoolean("detail_log", false)
         loadProfile()
         StepsState.steps.value = walkSteps + runSteps
@@ -776,7 +797,16 @@ class StepService : Service(), SensorEventListener {
                 return
             }
             Sensor.TYPE_GYROSCOPE -> {
-                if (screenOff) return
+                if (screenOff) {
+                    // L1.1: в фоне оси гироскопа нужны корпусу - именно они
+                    // отличают карман от руки. Детектор не трогаем.
+                    if (StepsState.bgAccel.value && inBgWindow() && calibrating == null) {
+                        features.onGyro(
+                            event.values[0], event.values[1], event.values[2], timeMs
+                        )
+                    }
+                    return
+                }
                 if (calibrating == null) {
                     detector.onGyro(event.values[0], event.values[1], event.values[2], timeMs)
                     features.onGyro(event.values[0], event.values[1], event.values[2], timeMs)
@@ -784,18 +814,27 @@ class StepService : Service(), SensorEventListener {
                 return
             }
             Sensor.TYPE_ACCELEROMETER -> {
-                if (screenOff) return
+                if (screenOff) {
+                    // L1.1: детектор в фоне НЕ работает и работать не
+                    // должен - он заморожен, а его поведение проверено
+                    // только при живом экране. Кормим один сборщик
+                    // признаков, и то окнами (см. inBgWindow).
+                    if (StepsState.bgAccel.value && inBgWindow()) {
+                        features.onAccel(
+                            event.values[0], event.values[1], event.values[2], timeMs
+                        )
+                    }
+                    return
+                }
                 val added = detector.onAccel(
                     event.values[0], event.values[1], event.values[2], timeMs
                 )
-                // v185: сырой канал. Вызывается ВСЕГДА, независимо от
-                // вето по тряске, режима и карантина детектора - именно
-                // поэтому он работает в кармане, где детектор молчит.
-                // Гравитация берётся у детектора: второго источника истины
-                // для одного и того же числа быть не должно.
+                // Сырой канал: не зависит ни от вето по тряске, ни от
+                // режима, ни от карантина детектора - поэтому работает и
+                // в кармане, где детектор молчит. Гравитацию коллектор
+                // с v189 считает сам: в фоне детекторная была бы протухшей.
                 features.onAccel(
-                    event.values[0], event.values[1], event.values[2],
-                    detector.gravX, detector.gravY, detector.gravZ, timeMs
+                    event.values[0], event.values[1], event.values[2], timeMs
                 )
                 updateModeWithHysteresis()
                 // L1: границу серии задаёт детектор своим уходом в IDLE -
@@ -1038,9 +1077,7 @@ class StepService : Service(), SensorEventListener {
         // которым коллектор получает отсчёты. Внутрь идёт
         // event.timestamp / 1e6, то есть время с загрузки, а не
         // стенные часы: сравнивать с currentTimeMillis нельзя.
-        val fx = features.snapshot(
-            SystemClock.elapsedRealtime(),
-            detector.gravX, detector.gravY, detector.gravZ)
+        val fx = features.snapshot(SystemClock.elapsedRealtime())
         // v188: строка без признаков бесполезна и вводит в заблуждение.
         // Так выглядели первые образцы после старта сервиса: метка есть,
         // буфер акселерометра ещё не набрал двух секунд, все сенсорные
@@ -1236,6 +1273,9 @@ class StepService : Service(), SensorEventListener {
         const val ACTION_DIAG_STOP = "diag_stop"
         /** v188: печать сверки с чипом по требованию, без остановки счёта. */
         const val ACTION_RECONCILE = "reconcile"
+        /** L1.1: период и длительность окна фоновой обработки. */
+        const val BG_PERIOD_MS = 60_000L
+        const val BG_WINDOW_MS = 12_000L
         // Калибровка темпа. MIN_CAL_INTERVALS оставлен прежним, 10: менять
         // порог выборки надо по собранным данным, а не по ощущению.
         private const val MIN_CAL_INTERVALS = 10

@@ -95,6 +95,17 @@ class FeatureCollector {
     private var accFilled = 0
     private var lastAccMs = 0L
 
+    // --- собственная оценка гравитации (v189) ---
+    // Раньше вектор приходил снаружи, от детектора. При выключенном
+    // экране детектор не работает вовсе (и работать не должен - он
+    // заморожен), а коллектор работает окнами. Значит источник
+    // гравитации обязан быть свой, иначе в фоне он был бы протухшим.
+    // Фильтр тот же, что у детектора, на том же входе - оценки сходятся.
+    private var grX = 0f
+    private var grY = 0f
+    private var grZ = 9.81f
+    private var gravSeeded = false
+
     // --- серия ---
     private var seriesSteps = 0
     private var seriesStartMs = 0L
@@ -108,12 +119,26 @@ class FeatureCollector {
      * карантин - ничто из этого сюда не доходит. Гравитация приходит
      * снаружи от детектора, чтобы не заводить второй источник истины.
      */
-    fun onAccel(x: Float, y: Float, z: Float,
-                gravX: Float, gravY: Float, gravZ: Float, timeMs: Long) {
-        val gn = sqrt(gravX * gravX + gravY * gravY + gravZ * gravZ)
+    fun onAccel(x: Float, y: Float, z: Float, timeMs: Long) {
+        // Разрыв потока: при выключенном экране обработка идёт окнами, и
+        // между ними проходят десятки секунд. Старое содержимое буфера
+        // растянуло бы окно измерения на весь перерыв - частота и каденс
+        // вышли бы заниженными в разы. Поэтому разрыв обнуляет окно, а
+        // гравитация пересевается по первому отсчёту: за перерыв телефон
+        // мог сменить положение, и доводить оценку фильтром уже поздно.
+        if (!gravSeeded || (lastAccMs > 0L && timeMs - lastAccMs > ACC_GAP_MS)) {
+            accIdx = 0; accFilled = 0
+            grX = x; grY = y; grZ = z
+            gravSeeded = true
+        } else {
+            grX += GRAV_ALPHA * (x - grX)
+            grY += GRAV_ALPHA * (y - grY)
+            grZ += GRAV_ALPHA * (z - grZ)
+        }
+        val gn = sqrt(grX * grX + grY * grY + grZ * grZ)
         if (gn < GRAV_MIN) return
-        val lx = x - gravX; val ly = y - gravY; val lz = z - gravZ
-        val vert = (lx * gravX + ly * gravY + lz * gravZ) / gn
+        val lx = x - grX; val ly = y - grY; val lz = z - grZ
+        val vert = (lx * grX + ly * grY + lz * grZ) / gn
         lastAccMs = timeMs
         accWin[accIdx] = vert
         accT[accIdx] = timeMs
@@ -176,6 +201,7 @@ class FeatureCollector {
         winIdx = 0; winFilled = 0
         asymIdx = 0; asymFilled = 0
         accIdx = 0; accFilled = 0
+        grX = 0f; grY = 0f; grZ = 9.81f; gravSeeded = false
         seriesLive = false; seriesSteps = 0
         seriesStartMs = 0L; seriesLastMs = 0L
     }
@@ -189,7 +215,7 @@ class FeatureCollector {
      * Мгновенный не годится: он дёргается на каждом шаге и ориентация
      * телефона по нему не читается.
      */
-    fun snapshot(nowMs: Long, gravX: Float, gravY: Float, gravZ: Float): Snapshot {
+    fun snapshot(nowMs: Long): Snapshot {
         // v186: ПРИЗНАКИ ПРОТУХАЮТ ЯВНО.
         //
         // При выключенном экране обработчик акселерометра и гироскопа в
@@ -207,16 +233,16 @@ class FeatureCollector {
         val sensorFresh = lastAccMs > 0L && nowMs - lastAccMs <= SENSOR_STALE_MS
         val gyroFresh = gyroSeen && lastGyroMs > 0L && nowMs - lastGyroMs <= SENSOR_STALE_MS
         val stepFresh = lastStepMs > 0L && nowMs - lastStepMs <= STEP_STALE_MS
-        val gn = sqrt(gravX * gravX + gravY * gravY + gravZ * gravZ)
-        // Гравитация обновляется тем же детектором, что и акселерометр:
-        // протухла одна - протухла и она.
-        val hasGrav = gn > GRAV_MIN && sensorFresh
+        val gn = sqrt(grX * grX + grY * grY + grZ * grZ)
+        // Гравитация теперь своя и живёт тем же потоком, что амплитуда:
+        // свежа ровно тогда, когда свежи отсчёты.
+        val hasGrav = gn > GRAV_MIN && sensorFresh && gravSeeded
         val pitch = if (hasGrav)
             Math.toDegrees(
-                atan2(-gravY.toDouble(), sqrt((gravX * gravX + gravZ * gravZ).toDouble()))
+                atan2(-grY.toDouble(), sqrt((grX * grX + grZ * grZ).toDouble()))
             ).toFloat() else null
         val roll = if (hasGrav)
-            Math.toDegrees(atan2(gravX.toDouble(), gravZ.toDouble())).toFloat() else null
+            Math.toDegrees(atan2(grX.toDouble(), grZ.toDouble())).toFloat() else null
 
         val ampSorted = sortedCopy(ampWin, winFilled)
         val intSorted = sortedCopy(intWin, winFilled)
@@ -390,6 +416,12 @@ class FeatureCollector {
         private const val ACC_WINDOW = 512
         /** Ниже двух секунд материала статистика бессмысленна. */
         private const val ACC_MIN = 100
+        /** Постоянная фильтра гравитации. Та же, что у детектора. */
+        private const val GRAV_ALPHA = 0.02f
+        /** Разрыв потока длиннее этого обнуляет окно измерения.
+         *  Две секунды: заведомо больше любого пропуска внутри окна и
+         *  заведомо меньше паузы duty-цикла (48 с). */
+        private const val ACC_GAP_MS = 2_000L
         /** Доля RMS для гистерезиса. 0.5 проверено на сигналах с долей
          *  второй гармоники 0...1.0 и шумом до 0.4. */
         private const val CAD_HYST_K = 0.5f
