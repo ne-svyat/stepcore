@@ -10,4 +10,7 @@ object StepsState {
     val calibrationState = MutableStateFlow("")
     val diag = MutableStateFlow("")
     val detailLog = MutableStateFlow(false)
+    /** v188: идёт ли замер детектора. Раньше жило в переменной
+     *  экрана и врало после сворачивания приложения. */
+    val diagRecording = MutableStateFlow(false)
 }

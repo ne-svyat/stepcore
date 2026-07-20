@@ -258,6 +258,16 @@ interface StepDao {
     suspend fun countSamples(): Int
 
     /** L1: сколько образцов уже собрано в расширенной схеме. */
+    /** v188: срез корпуса для экрана. Схема не меняется - только чтение. */
+    @Query("SELECT COUNT(*) FROM terrain_samples WHERE featureVersion >= 3")
+    suspend fun countSamplesV3(): Int
+
+    @Query("SELECT COUNT(*) FROM terrain_samples WHERE featureVersion >= 3 AND sampleSource = 1")
+    suspend fun countSamplesChip(): Int
+
+    @Query("SELECT COUNT(*) FROM terrain_samples WHERE featureVersion >= 3 AND label = :label")
+    suspend fun countSamplesLabel(label: String): Int
+
     @Query("SELECT COUNT(*) FROM terrain_samples WHERE featureVersion >= 2")
     suspend fun countSamplesV2(): Int
 }

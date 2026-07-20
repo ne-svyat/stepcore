@@ -380,9 +380,11 @@ class StepService : Service(), SensorEventListener {
             ACTION_CAL_DIST_STOP -> finishDistCal()
             ACTION_DIAG_START -> {
                 detector.diagRecording = true
+                StepsState.diagRecording.value = true
                 StepsState.calibrationState.value = "Диагностика пишется — делай тест"
             }
             ACTION_DIAG_STOP -> finishDiag()
+            ACTION_RECONCILE -> logHwComparison("сейчас")
         }
         return START_STICKY
     }
@@ -390,6 +392,7 @@ class StepService : Service(), SensorEventListener {
     private fun finishDiag() {
         val samples = ArrayList(detector.diagSamples)
         detector.diagRecording = false
+        StepsState.diagRecording.value = false
         if (samples.isEmpty()) {
             StepsState.calibrationState.value = "Диагностика: пиков не было"
             logEvent("Диагностика: пиков не было")
@@ -1022,6 +1025,14 @@ class StepService : Service(), SensorEventListener {
      *              zcrCadence из независимого канала. Флаг обязателен:
      *              без него обучение приняло бы нули за измерение.
      */
+    /**
+     * v188: в журнале "-" вместо нуля, когда признака нет. Ноль обязан
+     * означать измеренный ноль, а не отсутствие измерения - это правило
+     * корпуса, и в журнале оно должно соблюдаться тоже.
+     */
+    private fun one(v: Float?): String = if (v == null) "-" else v.toInt().toString()
+    private fun two(v: Float?): String = if (v == null) "-" else "%.2f".format(v)
+
     private fun writeTerrainSample(mode: String, amp: Float, interval: Float, source: Int) {
         // v186: часы для проверки протухания обязаны совпадать с теми, по
         // которым коллектор получает отсчёты. Внутрь идёт
@@ -1030,6 +1041,11 @@ class StepService : Service(), SensorEventListener {
         val fx = features.snapshot(
             SystemClock.elapsedRealtime(),
             detector.gravX, detector.gravY, detector.gravZ)
+        // v188: строка без признаков бесполезна и вводит в заблуждение.
+        // Так выглядели первые образцы после старта сервиса: метка есть,
+        // буфер акселерометра ещё не набрал двух секунд, все сенсорные
+        // поля null. Канал чипа без признаков не пишем вовсе.
+        if (source == 1 && fx.accRms == null) return
         val chipD = if (hwLastTotal >= 0 && lastSampleChip >= 0)
             (hwLastTotal - lastSampleChip).toInt() else null
         if (hwLastTotal >= 0) lastSampleChip = hwLastTotal
@@ -1070,10 +1086,11 @@ class StepService : Service(), SensorEventListener {
             l1Logged = true
             logEvent(
                 "[диаг] корпус живой: накл " +
-                "${fx.pitchDeg?.toInt() ?: -999}/${fx.rollDeg?.toInt() ?: -999}, " +
-                "ампл ${"%.2f".format(fx.accRms ?: 0f)}, " +
-                "кад ${"%.2f".format(fx.zcrCadence ?: 0f)}, " +
-                "Гц ${(fx.sampleHz ?: 0f).toInt()}, ист $source"
+                one(fx.pitchDeg) + "/" + one(fx.rollDeg) +
+                ", ампл " + two(fx.accRms) +
+                ", кад " + two(fx.zcrCadence) +
+                ", Гц " + one(fx.sampleHz) +
+                ", ист " + source
             )
         }
         sampleCountSession++
@@ -1217,6 +1234,8 @@ class StepService : Service(), SensorEventListener {
         const val EXTRA_METRES = "metres"
         const val ACTION_DIAG_START = "diag_start"
         const val ACTION_DIAG_STOP = "diag_stop"
+        /** v188: печать сверки с чипом по требованию, без остановки счёта. */
+        const val ACTION_RECONCILE = "reconcile"
         // Калибровка темпа. MIN_CAL_INTERVALS оставлен прежним, 10: менять
         // порог выборки надо по собранным данным, а не по ощущению.
         private const val MIN_CAL_INTERVALS = 10

@@ -219,6 +219,11 @@ class MainActivity : AppCompatActivity() {
             val open = toolsContainer.visibility == View.VISIBLE
             toolsContainer.visibility = if (open) View.GONE else View.VISIBLE
             toolsToggle.text = if (open) "⚙  Инструменты  ▾" else "⚙  Инструменты  ▴"
+            // v188: срез корпуса читается только при открытии панели.
+            // Фонового опроса нет - батарея не тратится.
+            if (!open) lifecycleScope.launch {
+                refreshCorpus(findViewById(R.id.corpusText))
+            }
         }
 
         // Метки местности (Сегмент 1): ручной уклон -> журнал + TerrainState.
@@ -245,7 +250,7 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch { refreshExpeditionCard() }
 
         val diagBtn = findViewById<Button>(R.id.diagButton)
-        var diagOn = false
+        val reconcileBtn = findViewById<Button>(R.id.reconcileButton)
         detailLogSwitch.isChecked = prefs.getBoolean("detail_log", false)
         StepsState.detailLog.value = detailLogSwitch.isChecked
         detailLogSwitch.setOnCheckedChangeListener { _, checked ->
@@ -258,11 +263,23 @@ class MainActivity : AppCompatActivity() {
                 StepsState.calibrationState.value = "Сначала нажми Старт"
                 return@setOnClickListener
             }
-            diagOn = !diagOn
-            diagBtn.text = if (diagOn) "Диагностика: СТОП" else "Диагностика: старт"
+            // v188: состояние спрашиваем у сервиса. Раньше оно жило в
+            // переменной экрана и после сворачивания приложения показывало
+            // "старт", хотя запись шла.
+            val on = !StepsState.diagRecording.value
             startForegroundService(Intent(this, StepService::class.java)
-                .setAction(if (diagOn) StepService.ACTION_DIAG_START
+                .setAction(if (on) StepService.ACTION_DIAG_START
                     else StepService.ACTION_DIAG_STOP))
+        }
+
+        reconcileBtn.setOnClickListener {
+            if (!StepsState.serviceRunning.value) {
+                StepsState.calibrationState.value = "Сначала нажми Старт"
+                return@setOnClickListener
+            }
+            startForegroundService(Intent(this, StepService::class.java)
+                .setAction(StepService.ACTION_RECONCILE))
+            StepsState.calibrationState.value = "Сверка записана в журнал"
         }
 
         lifecycleScope.launch {
@@ -305,6 +322,12 @@ class MainActivity : AppCompatActivity() {
                 }
                 launch { StepsState.diag.collect { findViewById<TextView>(R.id.diagText).text = it } }
                 launch {
+                    StepsState.diagRecording.collect { on ->
+                        diagBtn.text =
+                            if (on) "Замер детектора: СТОП" else "Замер детектора: старт"
+                    }
+                }
+                launch {
                     TerrainState.incline.collect { v ->
                         inclineLabel.text = when (v) {
                             TerrainState.Incline.UP -> "Уклон: в гору"
@@ -333,6 +356,28 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** Бейдж режима: Покой серый, Ходьба синий, Бег красный. */
+    /**
+     * v188: сколько образцов походки уже собрано. Раньше это можно было
+     * узнать только по одной строке в журнале при старте сервиса.
+     * Считается по featureVersion >= 3: строки старых версий несут
+     * завышенный вдвое каденс и в обучение не пойдут.
+     */
+    private suspend fun refreshCorpus(view: TextView) {
+        val dao = AppDb.get(this).dao()
+        val total = dao.countSamplesV3()
+        if (total == 0) {
+            view.text = "Корпус: пока пусто"
+            return
+        }
+        val flat = dao.countSamplesLabel("FLAT")
+        val up = dao.countSamplesLabel("UP")
+        val down = dao.countSamplesLabel("DOWN")
+        val chip = dao.countSamplesChip()
+        view.text = "Корпус: " + total + " образцов" +
+            "\n  ровно " + flat + " · в гору " + up + " · с горы " + down +
+            "\n  от детектора " + (total - chip) + " · от чипа " + chip
+    }
+
     private fun applyModeBadge(view: TextView, m: String) {
         val (label, colorRes) = when (m) {
             "WALK" -> "ХОДЬБА" to R.color.accent_blue
