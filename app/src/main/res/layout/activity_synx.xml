@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:background="@color/bg">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="vertical" android:gravity="center_horizontal" android:padding="20dp">
+        <com.vasil.stepcore.SynxOrbView android:id="@+id/synxHeroOrb"
+            android:layout_width="220dp" android:layout_height="220dp" android:layout_marginTop="24dp" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="SYNX" android:textColor="@color/text_main" android:textSize="42sp"
+            android:textStyle="bold" android:letterSpacing="0.15" android:layout_marginTop="16dp" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="Synaptic Nexus" android:textColor="@color/accent_teal"
+            android:textSize="16sp" android:layout_marginTop="2dp" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="Модуль обучения. Здесь StepCore учится понимать именно тебя: как ты ходишь, в гору или с горы, устал или бодр. Чем больше данных ты дашь, тем точнее он станет.\n\nСфера показывает состояние: спокойная вода означает, что данных достаточно; электричество, что есть что улучшить; огонь, что нужна калибровка или профиль."
+            android:textColor="@color/text_dim" android:textSize="15sp"
+            android:lineSpacingExtra="4dp" android:layout_marginTop="24dp" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="Скоро: сессии походки, архивы примеров, вопросы на прогулке. Пока идёт сбор данных."
+            android:textColor="@color/axis_dim" android:textSize="13sp" android:layout_marginTop="20dp" />
+    </LinearLayout>
+</ScrollView>

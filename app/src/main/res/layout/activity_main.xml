@@ -74,6 +74,14 @@
                     android:textSize="15sp"
                     android:layout_marginBottom="5dp" />
 
+                <com.vasil.stepcore.SynxOrbView
+                    android:id="@+id/synxOrb"
+                    android:layout_width="64dp"
+                    android:layout_height="64dp"
+                    android:layout_gravity="end"
+                    android:layout_marginBottom="2dp"
+                    android:contentDescription="SYNX" />
+
                 <com.vasil.stepcore.StrideBarView
                     android:id="@+id/strideBar"
                     android:layout_width="match_parent"

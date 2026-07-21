@@ -215,6 +215,13 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(this, TimelineActivity::class.java))
         }
 
+        // v193: вход в SYNX по нажатию на сферу.
+        findViewById<SynxOrbView>(R.id.synxOrb).apply {
+            setElement(SynxOrbView.Element.WATER, 0.35f)
+            setOnClickListener {
+                startActivity(android.content.Intent(this@MainActivity, SynxActivity::class.java))
+            }
+        }
         toolsToggle.setOnClickListener {
             val open = toolsContainer.visibility == View.VISIBLE
             toolsContainer.visibility = if (open) View.GONE else View.VISIBLE
