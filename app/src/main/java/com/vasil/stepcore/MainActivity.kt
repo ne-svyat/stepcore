@@ -217,7 +217,7 @@ class MainActivity : AppCompatActivity() {
 
         // v193: вход в SYNX по нажатию на сферу.
         findViewById<SynxOrbView>(R.id.synxOrb).apply {
-            setElement(SynxOrbView.Element.WATER, 0.35f)
+            setHero()
             setOnClickListener {
                 startActivity(android.content.Intent(this@MainActivity, SynxActivity::class.java))
             }
