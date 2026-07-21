@@ -17,6 +17,16 @@
             android:text="…" android:textColor="@color/accent_teal"
             android:textSize="15sp" android:gravity="center"
             android:lineSpacingExtra="3dp" android:layout_marginTop="18dp" />
+        <androidx.appcompat.widget.SwitchCompat android:id="@+id/learnSwitch"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="Обучение: спрашивать при открытии"
+            android:textColor="@color/text_main" android:textSize="15sp"
+            android:layout_marginTop="24dp" />
+        <TextView android:id="@+id/learnCost"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="Когда включено, StepCore иногда спросит про одну прогулку. Отвечай честно: неверная метка отравляет корпус, и потом нужно много правильных, чтобы выправить. Промолчать лучше, чем ответить наугад."
+            android:textColor="@color/text_dim" android:textSize="13sp"
+            android:lineSpacingExtra="3dp" android:layout_marginTop="6dp" />
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
             android:text="Модуль обучения. Здесь StepCore учится понимать именно тебя: как ты ходишь, в гору или с горы, устал или бодр. Чем больше данных ты дашь, тем точнее он станет.\n\nСфера показывает состояние: спокойная вода означает, что данных достаточно; электричество, что есть что улучшить; огонь, что нужна калибровка или профиль."
             android:textColor="@color/text_dim" android:textSize="15sp"

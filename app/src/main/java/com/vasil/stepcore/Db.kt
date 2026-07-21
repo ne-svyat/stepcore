@@ -293,6 +293,15 @@ interface StepDao {
     @Query("SELECT COUNT(*) FROM sessions WHERE label != 'FLAT' AND reliable = 1")
     suspend fun countSessionsInclineReliable(): Int
 
+    // L3.0: самая свежая надёжная уклонная сессия, про которую ещё не спрашивали.
+    @Query("SELECT * FROM sessions WHERE reliable = 1 AND confirmState = 0 " +
+        "AND label != 'FLAT' ORDER BY endMs DESC LIMIT 1")
+    suspend fun latestUnaskedIncline(): SessionRecord?
+
+    // L3.0: записать исход вопроса в три архива (1=подтв, 2=дефект, 3=серая зона).
+    @Query("UPDATE sessions SET confirmState = :state WHERE id = :id")
+    suspend fun setSessionConfirm(id: Long, state: Int)
+
     @Query("SELECT COUNT(*) FROM terrain_samples WHERE featureVersion >= 2")
     suspend fun countSamplesV2(): Int
 }
