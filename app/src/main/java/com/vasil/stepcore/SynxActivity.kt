@@ -78,8 +78,9 @@ class SynxActivity : AppCompatActivity() {
 
     private fun askGate(s: SessionRecord) {
         val longWalk = s.durationMs >= 20 * 60_000L
-        val q = if (longWalk) "Долгая прогулка вышла — устал?"
-                else "Ты тут? Уделишь пару коротких вопросов?"
+        val head = "Твоя прогулка:\n" + anchor(s) + "\n\n"
+        val q = if (longWalk) head + "Долгая вышла — устал? Уделишь пару вопросов про неё?"
+                else head + "Уделишь пару коротких вопросов про неё?"
         AlertDialog.Builder(this)
             .setTitle("SYNX учится")
             .setMessage(q)
@@ -94,7 +95,7 @@ class SynxActivity : AppCompatActivity() {
     private fun askMode(s: SessionRecord) {
         val modes = arrayOf("Ходьба", "Бег", "Машина", "Покой")
         AlertDialog.Builder(this)
-            .setTitle("Тогда — что это было?")
+            .setTitle("Прогулка " + shortAnchor(s) + " — что это было?")
             .setItems(modes) { _, which ->
                 journal("SYNX режим: " + modes[which] + " (" + anchor(s) + ")")
                 askIncline(s)
@@ -105,7 +106,7 @@ class SynxActivity : AppCompatActivity() {
     private fun askIncline(s: SessionRecord) {
         AlertDialog.Builder(this)
             .setTitle("Уклон")
-            .setMessage("Прогулка " + anchor(s) + " помечена «" + labelRu(s.label) +
+            .setMessage("Прогулка " + shortAnchor(s) + " помечена «" + labelRu(s.label) +
                 "» — верно?")
             .setPositiveButton("Да") { _, _ -> recordAnswer(s, 1, "подтверждено") }
             .setNegativeButton("Нет") { _, _ -> recordAnswer(s, 2, "дефект") }
@@ -133,12 +134,33 @@ class SynxActivity : AppCompatActivity() {
         }
     }
 
+    /** Полный якорь для памяти: дата (день недели, число, месяц, год),
+     *  интервал начало-конец, минуты, ~шаги и как нёс телефон (из доли чипа).
+     *  Дистанции/маршрута в строке сессии нет - не выдумываем. */
     private fun anchor(s: SessionRecord): String {
-        val time = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
-            .format(java.util.Date(s.startMs))
+        val ru = java.util.Locale("ru")
+        val dfDate = java.text.SimpleDateFormat("EEE, d MMMM yyyy", ru)
+        val dfTime = java.text.SimpleDateFormat("HH:mm", ru)
+        val date = dfDate.format(java.util.Date(s.startMs))
+        val from = dfTime.format(java.util.Date(s.startMs))
+        val to = dfTime.format(java.util.Date(s.endMs))
         val mins = (s.durationMs / 60_000L).toInt()
         val steps = s.nSamples * 20
-        return "около " + time + ", ~" + mins + " мин, ~" + steps + " шаг."
+        // chipShare - доля образцов от чипа (карман). Пороги описательные,
+        // не решают счёт: это зацепка памяти, а не измерение.
+        val carry = when {
+            s.chipShare >= 0.6f -> "телефон в основном в кармане"
+            s.chipShare <= 0.4f -> "телефон в основном в руке"
+            else -> "телефон то в руке, то в кармане"
+        }
+        return date + ", " + from + "–" + to +
+            " (~" + mins + " мин, ~" + steps + " шаг., " + carry + ")"
+    }
+
+    private fun shortAnchor(s: SessionRecord): String {
+        val dfTime = java.text.SimpleDateFormat("HH:mm", java.util.Locale("ru"))
+        return dfTime.format(java.util.Date(s.startMs)) + "–" +
+            dfTime.format(java.util.Date(s.endMs))
     }
 
     private fun labelRu(l: String) = when (l) {
