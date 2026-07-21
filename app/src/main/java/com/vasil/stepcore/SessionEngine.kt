@@ -54,18 +54,36 @@ data class SessionOut(
 
 object SessionEngine {
 
-    // Границы сессии
-    const val TIME_GAP_MS = 60_000L      // разрыв во времени
+    // Границы сессии.
+    // v197: паузы (светофор, отдышаться на склоне) больше НЕ рвут сессию -
+    // прогулка целиком одна сессия. Разрыв рвёт только когда прогулка реально
+    // окончена (ушёл домой, ночь). Урок трекеров бега: резать по паузе -
+    // ошибка, бесившая пользователей; конец ставится по устойчивой смене
+    // состояния, а не по тишине.
+    // SESSION_END_GAP_MS - провизорно 5 мин (долина между короткой паузой и
+    // отдельным выходом). Уточняется по гистограмме разрывов из кнопки
+    // "Пересобрать сессии" на реальном корпусе.
+    const val SESSION_END_GAP_MS = 300_000L
+    // Смена метки уклона рвёт сессию, только если новая метка держится
+    // >= LABEL_CONFIRM образцов подряд. Одиночный чужой образец (мис-тап, шум)
+    // поглощается. Конституция: не решать по одному измерению.
+    const val LABEL_CONFIRM = 2
     const val MIN_SAMPLES = 10           // короче -> reliable=false
     const val MIN_DURATION_MS = 30_000L
     // короткое мелькание транспорта НЕ рвёт; долгое рвёт
     const val TRANSPORT_BREAK_MS = 15_000L
 
-    fun build(samples: List<SampleIn>): List<SessionOut> {
+    fun build(
+        samples: List<SampleIn>,
+        sessionEndGapMs: Long = SESSION_END_GAP_MS
+    ): List<SessionOut> {
         if (samples.isEmpty()) return emptyList()
         val sorted = samples.sortedBy { it.timeMs }
         val out = ArrayList<SessionOut>()
         var cur = ArrayList<SampleIn>()
+        var curLabel = ""            // установленная метка текущей сессии
+        var labelCand = ""           // кандидат на новую метку
+        var labelCandRun = 0         // сколько образцов подряд держится кандидат
         var transportSince = -1L
 
         fun flush() {
@@ -73,21 +91,54 @@ object SessionEngine {
         }
 
         for (s in sorted) {
-            if (cur.isEmpty()) { cur.add(s); transportSince = -1L; continue }
-            val prev = cur.last()
-            val gap = s.timeMs - prev.timeMs
+            if (cur.isEmpty()) {
+                cur.add(s); curLabel = s.label
+                labelCand = ""; labelCandRun = 0; transportSince = -1L
+                continue
+            }
+            val gap = s.timeMs - cur.last().timeMs
 
-            // 1. разрыв во времени
-            if (gap > TIME_GAP_MS) { flush(); cur.add(s); transportSince = -1L; continue }
-            // 2. смена метки уклона
-            if (s.label != prev.label) { flush(); cur.add(s); transportSince = -1L; continue }
-            // 3. долгий транспорт
+            // 1. прогулка окончена: длинный разрыв
+            if (gap > sessionEndGapMs) {
+                flush()
+                cur.add(s); curLabel = s.label
+                labelCand = ""; labelCandRun = 0; transportSince = -1L
+                continue
+            }
+
+            // 2. устойчивая смена метки уклона (с подтверждением)
+            if (s.label != curLabel) {
+                if (s.label == labelCand) labelCandRun++
+                else { labelCand = s.label; labelCandRun = 1 }
+                if (labelCandRun >= LABEL_CONFIRM) {
+                    // ретро-разрез: последние (LABEL_CONFIRM-1) образцов уже
+                    // относятся к новой метке -> переносим их в новую сессию.
+                    val tail = ArrayList<SampleIn>()
+                    repeat(LABEL_CONFIRM - 1) {
+                        if (cur.isNotEmpty()) tail.add(0, cur.removeAt(cur.size - 1))
+                    }
+                    flush()                       // старая сессия без хвоста
+                    cur.addAll(tail)
+                    cur.add(s); curLabel = s.label
+                    labelCand = ""; labelCandRun = 0; transportSince = -1L
+                } else {
+                    cur.add(s)                    // одиночный чужой образец поглощён
+                }
+                continue
+            } else {
+                labelCand = ""; labelCandRun = 0
+            }
+
+            // 3. долгий транспорт рвёт (короткое мелькание - нет)
             if (s.mode == "TRANSPORT") {
                 if (transportSince < 0) transportSince = s.timeMs
                 if (s.timeMs - transportSince > TRANSPORT_BREAK_MS) {
                     // выкидываем накопленный транспортный хвост из сессии
                     while (cur.isNotEmpty() && cur.last().mode == "TRANSPORT") cur.removeAt(cur.size - 1)
-                    flush(); cur.add(s); transportSince = s.timeMs; continue
+                    flush()
+                    cur.add(s); curLabel = s.label
+                    labelCand = ""; labelCandRun = 0; transportSince = s.timeMs
+                    continue
                 }
             } else transportSince = -1L
 

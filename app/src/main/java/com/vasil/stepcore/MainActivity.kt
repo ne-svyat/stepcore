@@ -243,6 +243,10 @@ class MainActivity : AppCompatActivity() {
         inclineFlatBtn.setOnClickListener { setIncline(TerrainState.Incline.FLAT) }
         inclineDownBtn.setOnClickListener { setIncline(TerrainState.Incline.DOWN) }
 
+        findViewById<TextView>(R.id.rebuildSessionsButton).setOnClickListener {
+            lifecycleScope.launch { rebuildSessions(findViewById(R.id.sessionText)) }
+        }
+
         lifecycleScope.launch {
             val y = java.time.LocalDate.now().minusDays(1).toString()
             val d = AppDb.get(this@MainActivity).dao().day(y)
@@ -413,6 +417,66 @@ class MainActivity : AppCompatActivity() {
         val inc = dao.countSessionsIncline()
         view.text = if (total == 0) "Сессии: пока пусто - походи и построй"
             else "Сессии: " + total + " · уклон " + inc + " · надёжных " + rel
+    }
+
+    /** Полная пересборка сессий с нуля + диагностика в буфер обмена.
+     *  Чистит таблицу sessions (курсор MAX(builtFromMaxTimeMs) сам обнуляется),
+     *  строит одним проходом - это чинит и дробление на границах инкремента.
+     *  Корпус terrain_samples НЕ трогается. Диагностика: гистограмма разрывов
+     *  между образцами + как счёт сессий отзывается на порог конца прогулки. */
+    private suspend fun rebuildSessions(view: TextView) {
+        val dao = AppDb.get(this).dao()
+        view.text = "Пересборка..."
+        dao.deleteAllSessions()
+        buildSessions(view)                 // курсор = 0 -> строит весь корпус
+
+        val raw = dao.samplesAfter(0L)
+        val input = raw.map { t ->
+            val amp = if (t.sampleSource == 1) t.accRms else t.amp
+            val cad = if (t.sampleSource == 1) t.zcrCadence
+                      else if (t.intervalMs > 0f) 1000f / t.intervalMs else null
+            SampleIn(
+                timeMs = t.timeMs, label = t.label, mode = t.mode,
+                featureVersion = t.featureVersion, sampleSource = t.sampleSource,
+                amp = amp, cadence = cad, pitchDeg = t.pitchDeg, gyro = t.gyro
+            )
+        }.sortedBy { it.timeMs }
+
+        val diag = buildString {
+            appendLine("StepCore - диагностика сессий")
+            appendLine("образцов: " + input.size)
+            appendLine()
+            appendLine("Гистограмма разрывов между образцами (сек):")
+            val edges = longArrayOf(15, 30, 60, 120, 300, 600, 1800)
+            val names = arrayOf("<15", "15-30", "30-60", "60-120",
+                "120-300", "300-600", "600-1800", ">1800")
+            val hist = IntArray(names.size)
+            for (i in 1 until input.size) {
+                val g = (input[i].timeMs - input[i - 1].timeMs) / 1000
+                var b = edges.size
+                for (j in edges.indices) if (g < edges[j]) { b = j; break }
+                hist[b]++
+            }
+            for (j in names.indices) appendLine("  " + names[j] + "с : " + hist[j])
+            appendLine()
+            appendLine("Сессии при разном пороге конца прогулки:")
+            for (mins in intArrayOf(2, 5, 10, 15, 30)) {
+                val ss = SessionEngine.build(input, mins * 60_000L)
+                val rel = ss.count { it.reliable }
+                val inc = ss.count { it.label != "FLAT" }
+                val incRel = ss.count { it.label != "FLAT" && it.reliable }
+                appendLine("  " + mins + " мин: сессий " + ss.size +
+                    " · надёжных " + rel + " · уклонных " + inc +
+                    " (надёжных " + incRel + ")")
+            }
+        }
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE)
+            as android.content.ClipboardManager
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("StepCore", diag))
+        android.widget.Toast.makeText(
+            this, "Сессии пересобраны, диагностика в буфере",
+            android.widget.Toast.LENGTH_SHORT
+        ).show()
     }
 
     private suspend fun refreshCorpus(view: TextView) {
@@ -723,6 +787,7 @@ class MainActivity : AppCompatActivity() {
         frame(findViewById(R.id.inclineUpButton), R.color.accent_amber, R.color.surface_amber, 201L)
         frame(findViewById(R.id.inclineFlatButton), R.color.axis_dim, R.color.surface, 202L)
         frame(findViewById(R.id.inclineDownButton), R.color.accent_green, R.color.surface_green, 203L)
+        frame(findViewById(R.id.rebuildSessionsButton), R.color.accent_teal, R.color.surface, 204L)
 
         findViewById<DoodleSceneView>(R.id.headerScene).setScene(DoodleSceneView.HEADER)
         findViewById<DoodleSceneView>(R.id.nightScene).setScene(DoodleSceneView.NIGHT)

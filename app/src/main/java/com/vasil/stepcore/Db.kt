@@ -275,6 +275,9 @@ interface StepDao {
     @Query("SELECT COALESCE(MAX(builtFromMaxTimeMs), 0) FROM sessions")
     suspend fun lastBuiltTimeMs(): Long
 
+    @Query("DELETE FROM sessions")
+    suspend fun deleteAllSessions()
+
     @Query("SELECT * FROM terrain_samples WHERE featureVersion >= 3 AND timeMs > :afterMs ORDER BY timeMs ASC")
     suspend fun samplesAfter(afterMs: Long): List<TerrainSample>
 
