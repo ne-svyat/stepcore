@@ -302,6 +302,10 @@ interface StepDao {
     @Query("UPDATE sessions SET confirmState = :state WHERE id = :id")
     suspend fun setSessionConfirm(id: Long, state: Int)
 
+    // Экспорт для разбора: все надёжные сессии с признаками.
+    @Query("SELECT * FROM sessions WHERE reliable = 1 ORDER BY endMs DESC")
+    suspend fun reliableSessions(): List<SessionRecord>
+
     @Query("SELECT COUNT(*) FROM terrain_samples WHERE featureVersion >= 2")
     suspend fun countSamplesV2(): Int
 }

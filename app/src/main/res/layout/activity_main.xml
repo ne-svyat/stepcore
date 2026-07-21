@@ -863,6 +863,18 @@
                             android:layout_marginTop="10dp" />
 
                         <TextView
+                            android:id="@+id/exportSessionsButton"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:gravity="center"
+                            android:text="⬇ Экспорт сессий (CSV)"
+                            android:textColor="@color/accent_blue"
+                            android:textSize="14sp"
+                            android:paddingTop="10dp"
+                            android:paddingBottom="10dp"
+                            android:layout_marginTop="10dp" />
+
+                        <TextView
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:text="Образцы, свёрнутые в непрерывные куски ходьбы. Основа обучения: сессия знает медиану, разброс, тренд усталости и метку уклона. Строятся при открытии этой панели."

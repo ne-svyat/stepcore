@@ -246,6 +246,9 @@ class MainActivity : AppCompatActivity() {
         findViewById<TextView>(R.id.rebuildSessionsButton).setOnClickListener {
             lifecycleScope.launch { rebuildSessions(findViewById(R.id.sessionText)) }
         }
+        findViewById<TextView>(R.id.exportSessionsButton).setOnClickListener {
+            lifecycleScope.launch { exportSessions() }
+        }
 
         lifecycleScope.launch {
             val y = java.time.LocalDate.now().minusDays(1).toString()
@@ -424,6 +427,48 @@ class MainActivity : AppCompatActivity() {
      *  строит одним проходом - это чинит и дробление на границах инкремента.
      *  Корпус terrain_samples НЕ трогается. Диагностика: гистограмма разрывов
      *  между образцами + как счёт сессий отзывается на порог конца прогулки. */
+    /** Экспорт всех надёжных сессий с признаками в буфер (CSV).
+     *  Нужен, чтобы в песочнице проверить, разделяются ли направления уклона,
+     *  ПЕРЕД постройкой предсказателя. Данные не уходят с устройства сами -
+     *  только по этому явному действию. */
+    private suspend fun exportSessions() {
+        val dao = AppDb.get(this).dao()
+        val list = dao.reliableSessions()
+        fun f(x: Float?): String =
+            if (x == null) "" else String.format(java.util.Locale.US, "%.3f", x)
+        val sb = StringBuilder()
+        sb.append("startMs,label,confirm,nSamples,durMs,walkShare,runShare,")
+        sb.append("chipShare,ampMed,ampIqr,cadMed,cadIqr,pitchMed,gyroMed,")
+        sb.append("ampTrend,cadTrend,rhythmStab,pitchRange\n")
+        for (x in list) {
+            sb.append(x.startMs).append(",")
+                .append(x.label).append(",")
+                .append(x.confirmState).append(",")
+                .append(x.nSamples).append(",")
+                .append(x.durationMs).append(",")
+                .append(f(x.walkShare)).append(",")
+                .append(f(x.runShare)).append(",")
+                .append(f(x.chipShare)).append(",")
+                .append(f(x.ampMed)).append(",")
+                .append(f(x.ampIqr)).append(",")
+                .append(f(x.cadenceMed)).append(",")
+                .append(f(x.cadenceIqr)).append(",")
+                .append(f(x.pitchMed)).append(",")
+                .append(f(x.gyroMed)).append(",")
+                .append(f(x.ampTrend)).append(",")
+                .append(f(x.cadenceTrend)).append(",")
+                .append(f(x.rhythmStab)).append(",")
+                .append(f(x.pitchRange)).append("\n")
+        }
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE)
+            as android.content.ClipboardManager
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("StepCore sessions", sb.toString()))
+        android.widget.Toast.makeText(
+            this, "Сессии (" + list.size + ") в буфере",
+            android.widget.Toast.LENGTH_SHORT
+        ).show()
+    }
+
     private suspend fun rebuildSessions(view: TextView) {
         val dao = AppDb.get(this).dao()
         view.text = "Пересборка..."
@@ -788,6 +833,7 @@ class MainActivity : AppCompatActivity() {
         frame(findViewById(R.id.inclineFlatButton), R.color.axis_dim, R.color.surface, 202L)
         frame(findViewById(R.id.inclineDownButton), R.color.accent_green, R.color.surface_green, 203L)
         frame(findViewById(R.id.rebuildSessionsButton), R.color.accent_teal, R.color.surface, 204L)
+        frame(findViewById(R.id.exportSessionsButton), R.color.accent_blue, R.color.surface, 205L)
 
         findViewById<DoodleSceneView>(R.id.headerScene).setScene(DoodleSceneView.HEADER)
         findViewById<DoodleSceneView>(R.id.nightScene).setScene(DoodleSceneView.NIGHT)
