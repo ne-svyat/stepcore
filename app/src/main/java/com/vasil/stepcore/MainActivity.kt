@@ -230,6 +230,7 @@ class MainActivity : AppCompatActivity() {
             // Фонового опроса нет - батарея не тратится.
             if (!open) lifecycleScope.launch {
                 refreshCorpus(findViewById(R.id.corpusText))
+                buildSessions(findViewById(R.id.sessionText))
             }
         }
 
@@ -376,6 +377,44 @@ class MainActivity : AppCompatActivity() {
      * Считается по featureVersion >= 3: строки старых версий несут
      * завышенный вдвое каденс и в обучение не пойдут.
      */
+    private suspend fun buildSessions(view: android.widget.TextView) {
+        val dao = AppDb.get(this).dao()
+        val after = dao.lastBuiltTimeMs()
+        val raw = dao.samplesAfter(after)
+        if (raw.isNotEmpty()) {
+            val maxT = raw.maxOf { it.timeMs }
+            val input = raw.map { t ->
+                val amp = if (t.sampleSource == 1) t.accRms else t.amp
+                val cad = if (t.sampleSource == 1) t.zcrCadence
+                          else if (t.intervalMs > 0f) 1000f / t.intervalMs else null
+                SampleIn(
+                    timeMs = t.timeMs, label = t.label, mode = t.mode,
+                    featureVersion = t.featureVersion, sampleSource = t.sampleSource,
+                    amp = amp, cadence = cad, pitchDeg = t.pitchDeg, gyro = t.gyro
+                )
+            }
+            for (o in SessionEngine.build(input)) {
+                dao.insertSession(SessionRecord(
+                    startMs = o.startMs, endMs = o.endMs, durationMs = o.durationMs,
+                    label = o.label, nSamples = o.nSamples, reliable = o.reliable,
+                    walkShare = o.modeShare["WALK"] ?: 0f, runShare = o.modeShare["RUN"] ?: 0f,
+                    ampMed = o.ampMed, ampIqr = o.ampIqr,
+                    cadenceMed = o.cadenceMed, cadenceIqr = o.cadenceIqr,
+                    pitchMed = o.pitchMed, gyroMed = o.gyroMed, chipShare = o.chipShare,
+                    featureVersion = o.featureVersion, ampTrend = o.ampTrend,
+                    cadenceTrend = o.cadenceTrend, rhythmStab = o.rhythmStab,
+                    pitchRange = o.pitchRange, confirmState = o.confirmState,
+                    builtFromMaxTimeMs = maxT
+                ))
+            }
+        }
+        val total = dao.countSessions()
+        val rel = dao.countSessionsReliable()
+        val inc = dao.countSessionsIncline()
+        view.text = if (total == 0) "Сессии: пока пусто - походи и построй"
+            else "Сессии: " + total + " · уклон " + inc + " · надёжных " + rel
+    }
+
     private suspend fun refreshCorpus(view: TextView) {
         val dao = AppDb.get(this).dao()
         val total = dao.countSamplesV3()

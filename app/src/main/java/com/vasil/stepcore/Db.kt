@@ -268,6 +268,25 @@ interface StepDao {
     @Query("SELECT COUNT(*) FROM terrain_samples WHERE featureVersion >= 3 AND label = :label")
     suspend fun countSamplesLabel(label: String): Int
 
+    // --- L2: сессии (v196) ---
+    @Insert
+    suspend fun insertSession(s: SessionRecord)
+
+    @Query("SELECT COALESCE(MAX(builtFromMaxTimeMs), 0) FROM sessions")
+    suspend fun lastBuiltTimeMs(): Long
+
+    @Query("SELECT * FROM terrain_samples WHERE featureVersion >= 3 AND timeMs > :afterMs ORDER BY timeMs ASC")
+    suspend fun samplesAfter(afterMs: Long): List<TerrainSample>
+
+    @Query("SELECT COUNT(*) FROM sessions")
+    suspend fun countSessions(): Int
+
+    @Query("SELECT COUNT(*) FROM sessions WHERE reliable = 1")
+    suspend fun countSessionsReliable(): Int
+
+    @Query("SELECT COUNT(*) FROM sessions WHERE label != 'FLAT'")
+    suspend fun countSessionsIncline(): Int
+
     @Query("SELECT COUNT(*) FROM terrain_samples WHERE featureVersion >= 2")
     suspend fun countSamplesV2(): Int
 }
@@ -394,6 +413,23 @@ val MIGRATION_8_9 = object : Migration(8, 9) {
  * Условие узкое намеренно: sampleSource = 1 И screenOn = 0. Строки
  * детектора и строки чипа при включённом экране честны и остаются.
  */
+val MIGRATION_10_11 = object : Migration(10, 11) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS sessions (" +
+            "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+            "startMs INTEGER NOT NULL, endMs INTEGER NOT NULL, " +
+            "durationMs INTEGER NOT NULL, label TEXT NOT NULL, " +
+            "nSamples INTEGER NOT NULL, reliable INTEGER NOT NULL, " +
+            "walkShare REAL NOT NULL, runShare REAL NOT NULL, " +
+            "ampMed REAL, ampIqr REAL, cadenceMed REAL, cadenceIqr REAL, " +
+            "pitchMed REAL, gyroMed REAL, chipShare REAL NOT NULL, " +
+            "featureVersion INTEGER NOT NULL, ampTrend REAL, cadenceTrend REAL, " +
+            "rhythmStab REAL, pitchRange REAL, confirmState INTEGER NOT NULL, " +
+            "builtFromMaxTimeMs INTEGER NOT NULL)")
+    }
+}
+
 val MIGRATION_9_10 = object : Migration(9, 10) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL(
@@ -401,8 +437,48 @@ val MIGRATION_9_10 = object : Migration(9, 10) {
     }
 }
 
-@Database(entities = [DayRecord::class, EventRecord::class, HourRecord::class, ProfileSnapshotRecord::class, TerrainSample::class],
-    version = 10, exportSchema = false)
+// ==================== L2: сессии (v196) ====================
+// Витрина сессий: образцы корпуса сворачиваются в непрерывные куски
+// движения. Обучение работает по сессиям, а не по одиночным образцам.
+// Три слоя: что было / как выглядело / неочевидный задел. Плюс
+// confirmState - пустой задел под три архива L3 (подтверждено/дефект/
+// не подтверждено). Медиана и IQR, не среднее: выброс не искажает.
+@Entity(tableName = "sessions")
+data class SessionRecord(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    // --- слой 1: что это было ---
+    val startMs: Long,
+    val endMs: Long,
+    val durationMs: Long,
+    val label: String,            // UP / FLAT / DOWN
+    val nSamples: Int,
+    val reliable: Boolean,        // false для коротких - не выбрасываем
+    val walkShare: Float,         // доля WALK
+    val runShare: Float,          // доля RUN
+    // --- слой 2: как выглядело движение ---
+    val ampMed: Float? = null,
+    val ampIqr: Float? = null,
+    val cadenceMed: Float? = null,
+    val cadenceIqr: Float? = null,
+    val pitchMed: Float? = null,
+    val gyroMed: Float? = null,
+    val chipShare: Float = 0f,    // доля строк от чипа (карман)
+    val featureVersion: Int = 3,
+    // --- слой 3: неочевидный задел на будущее ---
+    val ampTrend: Float? = null,      // наклон амплитуды (устал в гору?)
+    val cadenceTrend: Float? = null,
+    val rhythmStab: Float? = null,    // IQR каденса / медиана (ровность)
+    val pitchRange: Float? = null,    // размах наклона (менял хват?)
+    // --- задел под L3 ---
+    // 0 = не спрошено, 1 = подтверждено, 2 = дефект, 3 = не подтверждено.
+    // Наполнится активным обучением. Сейчас всегда 0.
+    val confirmState: Int = 0,
+    // прослеживаемость: по краям можно поднять исходные образцы
+    val builtFromMaxTimeMs: Long = 0  // до какого образца корпус уже свёрнут
+)
+
+@Database(entities = [DayRecord::class, EventRecord::class, HourRecord::class, ProfileSnapshotRecord::class, TerrainSample::class, SessionRecord::class],
+    version = 11, exportSchema = false)
 abstract class AppDb : RoomDatabase() {
     abstract fun dao(): StepDao
 
@@ -412,7 +488,7 @@ abstract class AppDb : RoomDatabase() {
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
                     context.applicationContext, AppDb::class.java, "stepcore.db"
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10).build().also { instance = it }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11).build().also { instance = it }
             }
     }
 }

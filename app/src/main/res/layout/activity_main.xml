@@ -841,6 +841,24 @@
                             android:fontFamily="monospace"
                             android:textSize="14sp" />
                         <TextView
+                            android:id="@+id/sessionText"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="Сессии: —"
+                            android:textColor="@color/accent_teal"
+                            android:fontFamily="monospace"
+                            android:textSize="14sp"
+                            android:layout_marginTop="10dp" />
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="Образцы, свёрнутые в непрерывные куски ходьбы. Основа обучения: сессия знает медиану, разброс, тренд усталости и метку уклона. Строятся при открытии этой панели."
+                            android:textColor="@color/text_dim"
+                            android:textSize="13sp"
+                            android:layout_marginTop="2dp" />
+
+                        <TextView
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:text="Размеченные образцы походки. Копятся сами, пока идёт счёт. Метки «в гору» и «с горы» появляются только от твоего нажатия — из шторки или с кнопок выше."
