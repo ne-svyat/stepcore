@@ -12,6 +12,11 @@
         <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
             android:text="Synaptic Nexus" android:textColor="@color/accent_teal"
             android:textSize="16sp" android:layout_marginTop="2dp" />
+        <TextView android:id="@+id/synxStatus"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="…" android:textColor="@color/accent_teal"
+            android:textSize="15sp" android:gravity="center"
+            android:lineSpacingExtra="3dp" android:layout_marginTop="18dp" />
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
             android:text="Модуль обучения. Здесь StepCore учится понимать именно тебя: как ты ходишь, в гору или с горы, устал или бодр. Чем больше данных ты дашь, тем точнее он станет.\n\nСфера показывает состояние: спокойная вода означает, что данных достаточно; электричество, что есть что улучшить; огонь, что нужна калибровка или профиль."
             android:textColor="@color/text_dim" android:textSize="15sp"

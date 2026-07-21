@@ -290,6 +290,9 @@ interface StepDao {
     @Query("SELECT COUNT(*) FROM sessions WHERE label != 'FLAT'")
     suspend fun countSessionsIncline(): Int
 
+    @Query("SELECT COUNT(*) FROM sessions WHERE label != 'FLAT' AND reliable = 1")
+    suspend fun countSessionsInclineReliable(): Int
+
     @Query("SELECT COUNT(*) FROM terrain_samples WHERE featureVersion >= 2")
     suspend fun countSamplesV2(): Int
 }
