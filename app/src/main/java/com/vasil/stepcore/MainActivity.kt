@@ -472,8 +472,26 @@ class MainActivity : AppCompatActivity() {
     private suspend fun rebuildSessions(view: TextView) {
         val dao = AppDb.get(this).dao()
         view.text = "Пересборка..."
+        // v202. Ответы человека (confirmState) - ИСХОДНЫЕ данные: их нет больше
+        // нигде. Признаки пересчитываются из корпуса, ответы - нет. Поэтому
+        // снимаем их до удаления и возвращаем после, по совпадению времени.
+        // Урок: как только в вычисляемую таблицу попадают исходные данные,
+        // любой путь "пересобрать из источника" становится потерей данных.
+        val saved = dao.answeredSessions().map {
+            Triple(it.startMs + it.durationMs / 2, it.label, it.confirmState)
+        }
         dao.deleteAllSessions()
         buildSessions(view)                 // курсор = 0 -> строит весь корпус
+        var back = 0
+        for ((mid, label, state) in saved) {
+            back += dao.restoreConfirmAt(mid, label, state)
+        }
+        if (saved.isNotEmpty()) {
+            android.widget.Toast.makeText(
+                this, "Ответы сохранены: " + back + " из " + saved.size,
+                android.widget.Toast.LENGTH_SHORT
+            ).show()
+        }
 
         val raw = dao.samplesAfter(0L)
         val input = raw.map { t ->

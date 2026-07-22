@@ -68,8 +68,17 @@ class SynxActivity : AppCompatActivity() {
             // L3.0: если обучение включено и есть свежая надёжная неспрошенная
             // уклонная сессия - запускаем лесенку. Одна сессия за раз.
             if (prefs.getBoolean(KEY_LEARN, false)) {
-                val s = dao.latestUnaskedIncline()
-                if (s != null) askGate(s)
+                // Уклон в дефиците -> приоритет ему. Но каждый 3-й вопрос про
+                // ПЛОСКУЮ сессию: иначе "ровно" навсегда останется меткой по
+                // умолчанию ("не нажимал"), а не подтверждённым классом.
+                val n = prefs.getInt(KEY_ASK_N, 0)
+                val flatTurn = (n % 3) == 2
+                val s = if (flatTurn) dao.latestUnaskedFlat() ?: dao.latestUnaskedIncline()
+                        else dao.latestUnaskedIncline() ?: dao.latestUnaskedFlat()
+                if (s != null) {
+                    prefs.edit().putInt(KEY_ASK_N, n + 1).apply()
+                    askGate(s)
+                }
             }
         }
     }
@@ -104,10 +113,15 @@ class SynxActivity : AppCompatActivity() {
     }
 
     private fun askIncline(s: SessionRecord) {
+        // Честно: FLAT - это метка ПО УМОЛЧАНИЮ ("не нажимал"), а не измерение.
+        // Поэтому про плоские спрашиваем иначе, не выдавая догадку за твой выбор.
+        val msg = if (s.label == "FLAT")
+            "На прогулке " + shortAnchor(s) + " ты не отмечал уклон. Она была ровной?"
+        else
+            "Прогулка " + shortAnchor(s) + " помечена «" + labelRu(s.label) + "» — верно?"
         AlertDialog.Builder(this)
             .setTitle("Уклон")
-            .setMessage("Прогулка " + shortAnchor(s) + " помечена «" + labelRu(s.label) +
-                "» — верно?")
+            .setMessage(msg)
             .setPositiveButton("Да") { _, _ -> recordAnswer(s, 1, "подтверждено") }
             .setNegativeButton("Нет") { _, _ -> recordAnswer(s, 2, "дефект") }
             .setNeutralButton("Не помню") { _, _ -> recordAnswer(s, 3, "не подтверждено") }
@@ -169,5 +183,6 @@ class SynxActivity : AppCompatActivity() {
 
     companion object {
         private const val KEY_LEARN = "learn_enabled"
+        private const val KEY_ASK_N = "learn_ask_n"
     }
 }
