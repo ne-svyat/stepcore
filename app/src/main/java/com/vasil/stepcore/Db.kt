@@ -305,7 +305,7 @@ interface StepDao {
     // L3.0: свежая надёжная ПЛОСКАЯ сессия, про которую ещё не спрашивали.
     // Нужна, чтобы "ровно" стало подтверждённым классом, а не меткой по умолчанию.
     @Query("SELECT * FROM sessions WHERE reliable = 1 AND confirmState = 0 " +
-        "AND label = 'FLAT' ORDER BY endMs DESC LIMIT 1")
+        "AND label NOT IN ('UP','DOWN') ORDER BY endMs DESC LIMIT 1")
     suspend fun latestUnaskedFlat(): SessionRecord?
 
     // L3.1: соседние сессии - база прогулки для относительного порога агента.

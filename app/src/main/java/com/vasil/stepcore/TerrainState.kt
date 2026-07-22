@@ -18,6 +18,15 @@ import kotlinx.coroutines.flow.MutableStateFlow
  * Сегмент 1 только фиксирует метку в журнал. Влияние на ккал — Сегмент 2.
  */
 object TerrainState {
-    enum class Incline { UP, FLAT, DOWN }
-    val incline = MutableStateFlow(Incline.FLAT)
+    /**
+     * v204: NONE отделён от FLAT.
+     * Раньше дефолт был FLAT, и "человек нажал Ровно" было неотличимо от
+     * "человек ничего не нажимал". Осознанное "ровно" - ценная метка
+     * (негативный пример для агента уклона), умолчание - пустота.
+     * Смешивать их значит отравлять корпус.
+     * NONE = не отмечено (дефолт), FLAT = человек сказал "ровно".
+     * Обе дают нулевую поправку к калориям - счёт не меняется.
+     */
+    enum class Incline { UP, FLAT, DOWN, NONE }
+    val incline = MutableStateFlow(Incline.NONE)
 }

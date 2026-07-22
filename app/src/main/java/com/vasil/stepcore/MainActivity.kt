@@ -238,10 +238,12 @@ class MainActivity : AppCompatActivity() {
         val inclineUpBtn = findViewById<TextView>(R.id.inclineUpButton)
         val inclineFlatBtn = findViewById<TextView>(R.id.inclineFlatButton)
         val inclineDownBtn = findViewById<TextView>(R.id.inclineDownButton)
+        val inclineNoneBtn = findViewById<TextView>(R.id.inclineNoneButton)
         val inclineLabel = findViewById<TextView>(R.id.inclineLabel)
         inclineUpBtn.setOnClickListener { setIncline(TerrainState.Incline.UP) }
         inclineFlatBtn.setOnClickListener { setIncline(TerrainState.Incline.FLAT) }
         inclineDownBtn.setOnClickListener { setIncline(TerrainState.Incline.DOWN) }
+        inclineNoneBtn.setOnClickListener { setIncline(TerrainState.Incline.NONE) }
 
         findViewById<TextView>(R.id.rebuildSessionsButton).setOnClickListener {
             lifecycleScope.launch { rebuildSessions(findViewById(R.id.sessionText)) }
@@ -354,6 +356,7 @@ class MainActivity : AppCompatActivity() {
                         inclineLabel.text = when (v) {
                             TerrainState.Incline.UP -> "Уклон: в гору"
                             TerrainState.Incline.DOWN -> "Уклон: с горы"
+                            TerrainState.Incline.NONE -> "Уклон: не отмечено"
                             else -> "Уклон: ровно"
                         }
                         styleIncline(inclineUpBtn, v == TerrainState.Incline.UP,
@@ -362,6 +365,8 @@ class MainActivity : AppCompatActivity() {
                             R.color.accent_green, 202L)
                         styleIncline(inclineDownBtn, v == TerrainState.Incline.DOWN,
                             R.color.accent_blue, 203L)
+                        styleIncline(inclineNoneBtn, v == TerrainState.Incline.NONE,
+                            R.color.text_dim, 206L)
                     }
                 }
                 // Дорого (почасовой расчёт, БД) - по таймеру, не на каждый шаг.
@@ -850,6 +855,7 @@ class MainActivity : AppCompatActivity() {
         frame(findViewById(R.id.inclineUpButton), R.color.accent_amber, R.color.surface_amber, 201L)
         frame(findViewById(R.id.inclineFlatButton), R.color.axis_dim, R.color.surface, 202L)
         frame(findViewById(R.id.inclineDownButton), R.color.accent_green, R.color.surface_green, 203L)
+        frame(findViewById(R.id.inclineNoneButton), R.color.text_dim, R.color.surface, 206L)
         frame(findViewById(R.id.rebuildSessionsButton), R.color.accent_teal, R.color.surface, 204L)
         frame(findViewById(R.id.exportSessionsButton), R.color.accent_blue, R.color.surface, 205L)
 
@@ -942,6 +948,7 @@ class MainActivity : AppCompatActivity() {
                     when (v) {
                         TerrainState.Incline.UP -> StepService.ACTION_INCLINE_UP
                         TerrainState.Incline.DOWN -> StepService.ACTION_INCLINE_DOWN
+                        TerrainState.Incline.NONE -> StepService.ACTION_INCLINE_NONE
                         else -> StepService.ACTION_INCLINE_FLAT
                     }
                 )

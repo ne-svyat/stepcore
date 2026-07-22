@@ -235,6 +235,19 @@
                 android:layout_marginEnd="4dp" />
 
             <TextView
+                android:id="@+id/inclineNoneButton"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:text="○ Снять"
+                android:textColor="@color/text_dim"
+                android:textSize="13sp"
+                android:paddingTop="10dp"
+                android:paddingBottom="10dp"
+                android:layout_marginEnd="3dp" />
+
+            <TextView
                 android:id="@+id/inclineFlatButton"
                 android:layout_width="0dp"
                 android:layout_weight="1"

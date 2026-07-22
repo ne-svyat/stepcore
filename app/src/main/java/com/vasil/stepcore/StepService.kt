@@ -485,6 +485,7 @@ class StepService : Service(), SensorEventListener {
             ACTION_INCLINE_UP -> applyIncline(TerrainState.Incline.UP, true)
             ACTION_INCLINE_FLAT -> applyIncline(TerrainState.Incline.FLAT, true)
             ACTION_INCLINE_DOWN -> applyIncline(TerrainState.Incline.DOWN, true)
+            ACTION_INCLINE_NONE -> applyIncline(TerrainState.Incline.NONE, false)
         }
         return START_STICKY
     }
@@ -1344,6 +1345,7 @@ class StepService : Service(), SensorEventListener {
         val name = when (v) {
             TerrainState.Incline.UP -> "в гору"
             TerrainState.Incline.DOWN -> "с горы"
+            TerrainState.Incline.NONE -> "не отмечено"
             else -> "ровно"
         }
         logEvent("Уклон: " + name + (if (fromShade) " (шторка)" else ""))
@@ -1360,6 +1362,7 @@ class StepService : Service(), SensorEventListener {
         val incName = when (inc) {
             TerrainState.Incline.UP -> "в гору"
             TerrainState.Incline.DOWN -> "с горы"
+            TerrainState.Incline.NONE -> "не отмечено"
             else -> "ровно"
         }
         return Notification.Builder(this, CHANNEL_ID)
@@ -1466,6 +1469,7 @@ class StepService : Service(), SensorEventListener {
         const val ACTION_INCLINE_UP = "incline_up"
         const val ACTION_INCLINE_FLAT = "incline_flat"
         const val ACTION_INCLINE_DOWN = "incline_down"
+        const val ACTION_INCLINE_NONE = "incline_none"
         /** Сколько собирать признаки после нажатия метки. Две минуты:
          *  строка корпуса пишется раз в 10-20 шагов, то есть раз в
          *  5-10 секунд ходьбы - за окно набирается около двух десятков

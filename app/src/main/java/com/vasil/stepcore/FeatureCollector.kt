@@ -402,7 +402,10 @@ class FeatureCollector {
     companion object {
         // 3: каденс считается с гистерезисом (в версии 2 он был завышен
         // вдвое) и все признаки помечаются null при протухании.
-        const val FEATURE_VERSION = 3
+        // v204: 4 = метка FLAT стала осознанной (появился NONE).
+        // Старые строки (<=3) хранят неоднозначный FLAT - при обучении
+        // на третий класс брать только >= 4.
+        const val FEATURE_VERSION = 4
         private const val REG_WINDOW = 32
         private const val REG_MIN = 6
         private const val ASYM_WINDOW = 8

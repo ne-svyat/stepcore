@@ -21,6 +21,10 @@ class SynxActivity : AppCompatActivity() {
     // Уточнится, когда L3 определит реальное "достаточно".
     private val inclineTarget = 20
 
+    // Сколько вопросов подряд за один заход. Потолок, а не цель.
+    private var askedInVisit = 0
+    private val MAX_ASK_PER_VISIT = 10
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_synx)
@@ -81,14 +85,8 @@ class SynxActivity : AppCompatActivity() {
                 // Уклон в дефиците -> приоритет ему. Но каждый 3-й вопрос про
                 // ПЛОСКУЮ сессию: иначе "ровно" навсегда останется меткой по
                 // умолчанию ("не нажимал"), а не подтверждённым классом.
-                val n = prefs.getInt(KEY_ASK_N, 0)
-                val flatTurn = (n % 3) == 2
-                val s = if (flatTurn) dao.latestUnaskedFlat() ?: dao.latestUnaskedIncline()
-                        else dao.latestUnaskedIncline() ?: dao.latestUnaskedFlat()
-                if (s != null) {
-                    prefs.edit().putInt(KEY_ASK_N, n + 1).apply()
-                    askGate(s)
-                }
+                val s = nextCandidate(dao)
+                if (s != null) askGate(s)
             }
         }
     }
@@ -127,7 +125,7 @@ class SynxActivity : AppCompatActivity() {
             // Агент говорит только про уже отмеченный уклон: отличить "ровно"
             // от "в гору" по амплитуде нельзя (диапазоны перекрываются).
             var verdict = InclineAgent.Verdict.NO_BASIS
-            if (s.label != "FLAT") {
+            if (s.label != "FLAT" && s.label != "NONE") {
                 val dao = AppDb.get(this@SynxActivity).dao()
                 val near = dao.sessionsAround(
                     s.startMs - InclineAgent.WALK_GAP_MS,
@@ -169,8 +167,10 @@ class SynxActivity : AppCompatActivity() {
                 .show()
             return
         }
-        val msg = if (s.label == "FLAT")
-            "На прогулке " + shortAnchor(s) + " ты не отмечал уклон. Она была ровной?"
+        val msg = if (s.label == "NONE")
+            "На прогулке " + shortAnchor(s) + " уклон не отмечен. Она была ровной?"
+        else if (s.label == "FLAT")
+            "Прогулка " + shortAnchor(s) + " помечена «ровно» — верно?"
         else if (guess != "")
             "Прогулка " + shortAnchor(s) + " помечена «" + labelRu(s.label) +
                 "», и признаки согласны. Верно?"
@@ -199,12 +199,35 @@ class SynxActivity : AppCompatActivity() {
         prefs.edit().putInt(kk, ok).putInt(nk, n).apply()
     }
 
+    /** Кандидат на вопрос. Уклон в приоритете (он в дефиците), но каждый
+     *  третий вопрос - про неуклонную сессию, иначе "ровно" никогда не станет
+     *  подтверждённым классом. */
+    private suspend fun nextCandidate(dao: StepDao): SessionRecord? {
+        val prefs = getSharedPreferences(StepService.PREFS, MODE_PRIVATE)
+        val n = prefs.getInt(KEY_ASK_N, 0)
+        val flatTurn = (n % 3) == 2
+        val s = if (flatTurn) dao.latestUnaskedFlat() ?: dao.latestUnaskedIncline()
+                else dao.latestUnaskedIncline() ?: dao.latestUnaskedFlat()
+        if (s != null) prefs.edit().putInt(KEY_ASK_N, n + 1).apply()
+        return s
+    }
+
     private fun recordAnswer(s: SessionRecord, state: Int, word: String) {
         lifecycleScope.launch {
-            AppDb.get(this@SynxActivity).dao().setSessionConfirm(s.id, state)
+            val dao = AppDb.get(this@SynxActivity).dao()
+            dao.setSessionConfirm(s.id, state)
             journal("SYNX уклон «" + labelRu(s.label) + "»: " + word + " (" + anchor(s) + ")")
+            // Человек уже в потоке - предлагаем следующую сразу, не заставляя
+            // выходить и заходить. Потолок бережёт внимание: устал - закрыл.
+            askedInVisit++
+            if (askedInVisit < MAX_ASK_PER_VISIT) {
+                val next = nextCandidate(dao)
+                if (next != null) { askMode(next); return@launch }
+            }
+            Toast.makeText(
+                this@SynxActivity, "Записал, спасибо", Toast.LENGTH_SHORT
+            ).show()
         }
-        Toast.makeText(this, "Записал, спасибо", Toast.LENGTH_SHORT).show()
     }
 
     private fun journal(text: String) {
@@ -249,7 +272,8 @@ class SynxActivity : AppCompatActivity() {
     }
 
     private fun labelRu(l: String) = when (l) {
-        "UP" -> "в гору"; "DOWN" -> "с горы"; else -> "ровно"
+        "UP" -> "в гору"; "DOWN" -> "с горы"
+        "NONE" -> "не отмечено"; else -> "ровно"
     }
 
     companion object {
