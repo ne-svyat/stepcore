@@ -36,7 +36,10 @@ class SynxActivity : AppCompatActivity() {
         // Тумблер обучения. Выкл по умолчанию: пока не разрешил - вопросов нет.
         learnSwitch.isChecked = prefs.getBoolean(KEY_LEARN, false)
         learnSwitch.setOnCheckedChangeListener { _, checked ->
-            prefs.edit().putBoolean(KEY_LEARN, checked).apply()
+            // Включение - явное согласие: снимает и паузу "не беспокоить".
+            val e = prefs.edit().putBoolean(KEY_LEARN, checked)
+            if (checked) e.putLong(KEY_SNOOZE, 0L)
+            e.apply()
         }
 
         // Фундамент: профиль заполнен, длина шага и темп ходьбы калиброваны.
@@ -81,7 +84,9 @@ class SynxActivity : AppCompatActivity() {
             }
             // L3.0: если обучение включено и есть свежая надёжная неспрошенная
             // уклонная сессия - запускаем лесенку. Одна сессия за раз.
-            if (prefs.getBoolean(KEY_LEARN, false)) {
+            // Пауза "не беспокоить" уважается наравне с тумблером.
+            val snoozed = prefs.getLong(KEY_SNOOZE, 0L) > System.currentTimeMillis()
+            if (prefs.getBoolean(KEY_LEARN, false) && !snoozed) {
                 // Уклон в дефиците -> приоритет ему. Но каждый 3-й вопрос про
                 // ПЛОСКУЮ сессию: иначе "ровно" навсегда останется меткой по
                 // умолчанию ("не нажимал"), а не подтверждённым классом.
@@ -111,13 +116,30 @@ class SynxActivity : AppCompatActivity() {
 
     private fun askMode(s: SessionRecord) {
         val modes = arrayOf("Ходьба", "Бег", "Машина", "Покой")
+        // Полная дата обязательна: по одному времени невозможно понять, какой
+        // это был день, и легко ответить не про ту прогулку.
         AlertDialog.Builder(this)
-            .setTitle("Прогулка " + shortAnchor(s) + " — что это было?")
+            .setTitle("Что это было?")
+            .setMessage(anchor(s))
             .setItems(modes) { _, which ->
                 journal("SYNX режим: " + modes[which] + " (" + anchor(s) + ")")
                 askIncline(s)
             }
             .show()
+    }
+
+    /** Фактический состав меток внутри сессии. Метка сессии берётся с первого
+     *  образца, а одиночные чужие образцы поглощаются (защита от мис-тапа).
+     *  Поэтому показываем состав: проверяемость вместо доверия на слово. */
+    private suspend fun labelBreakdown(s: SessionRecord): String {
+        val dao = AppDb.get(this).dao()
+        val list = dao.samplesBetween(s.startMs, s.endMs)
+        if (list.isEmpty()) return ""
+        val counts = LinkedHashMap<String, Int>()
+        for (x in list) counts[x.label] = (counts[x.label] ?: 0) + 1
+        val parts = ArrayList<String>()
+        for ((k, v) in counts) parts.add(labelRu(k) + " " + v)
+        return "Образцов " + list.size + ": " + parts.joinToString(", ")
     }
 
     private fun askIncline(s: SessionRecord) {
@@ -141,19 +163,20 @@ class SynxActivity : AppCompatActivity() {
                 InclineAgent.Verdict.DOWN -> "DOWN"
                 else -> ""
             }
-            showInclineDialog(s, guess)
+            showInclineDialog(s, guess, labelBreakdown(s))
         }
     }
 
-    private fun showInclineDialog(s: SessionRecord, guess: String) {
+    private fun showInclineDialog(s: SessionRecord, guess: String, breakdown: String) {
+        val head = anchor(s) + (if (breakdown == "") "" else "\n" + breakdown) + "\n\n"
         // Агент не согласен с меткой -> спрашиваем, что было на самом деле.
         if (guess != "" && guess != s.label) {
             val opts = arrayOf("В гору", "С горы", "Не помню")
             AlertDialog.Builder(this)
                 .setTitle("Уклон")
-                .setMessage("Прогулка " + shortAnchor(s) + " помечена «" +
-                    labelRu(s.label) + "», но по признакам похоже на «" +
-                    labelRu(guess) + "». Что было на самом деле?")
+                .setMessage(head + "Помечена «" + labelRu(s.label) +
+                    "», но по признакам похоже на «" + labelRu(guess) +
+                    "». Что было на самом деле?")
                 .setItems(opts) { _, which ->
                     val truth = if (which == 0) "UP" else if (which == 1) "DOWN" else ""
                     if (truth == "") {
@@ -167,15 +190,14 @@ class SynxActivity : AppCompatActivity() {
                 .show()
             return
         }
-        val msg = if (s.label == "NONE")
-            "На прогулке " + shortAnchor(s) + " уклон не отмечен. Она была ровной?"
+        val msg = head + (if (s.label == "NONE")
+            "Уклон не отмечен. Она была ровной?"
         else if (s.label == "FLAT")
-            "Прогулка " + shortAnchor(s) + " помечена «ровно» — верно?"
+            "Помечена «ровно» — верно?"
         else if (guess != "")
-            "Прогулка " + shortAnchor(s) + " помечена «" + labelRu(s.label) +
-                "», и признаки согласны. Верно?"
+            "Помечена «" + labelRu(s.label) + "», и признаки согласны. Верно?"
         else
-            "Прогулка " + shortAnchor(s) + " помечена «" + labelRu(s.label) + "» — верно?"
+            "Помечена «" + labelRu(s.label) + "» — верно?")
         AlertDialog.Builder(this)
             .setTitle("Уклон")
             .setMessage(msg)
@@ -222,12 +244,41 @@ class SynxActivity : AppCompatActivity() {
             askedInVisit++
             if (askedInVisit < MAX_ASK_PER_VISIT) {
                 val next = nextCandidate(dao)
-                if (next != null) { askMode(next); return@launch }
+                if (next != null) { offerNext(next); return@launch }
             }
             Toast.makeText(
                 this@SynxActivity, "Записал, спасибо", Toast.LENGTH_SHORT
             ).show()
         }
+    }
+
+    /** Человек решает сам, продолжать ли. Молчаливое авто-продолжение
+     *  превращает помощь в назойливость. */
+    private fun offerNext(next: SessionRecord) {
+        AlertDialog.Builder(this)
+            .setTitle("Записал, спасибо")
+            .setMessage("Есть ещё одна прогулка:\n" + anchor(next))
+            .setPositiveButton("Ещё вопрос") { _, _ -> askMode(next) }
+            .setNegativeButton("Хватит", null)
+            .setNeutralButton("Не беспокоить") { _, _ -> askSnooze() }
+            .show()
+    }
+
+    private fun askSnooze() {
+        val names = arrayOf("Сегодня", "3 дня", "Неделя")
+        val days = intArrayOf(1, 3, 7)
+        AlertDialog.Builder(this)
+            .setTitle("Не беспокоить")
+            .setMessage("Вопросы вернутся сами. Раньше срока — переключи " +
+                "тумблер обучения выкл/вкл.")
+            .setItems(names) { _, which ->
+                val until = System.currentTimeMillis() + days[which] * 86_400_000L
+                getSharedPreferences(StepService.PREFS, MODE_PRIVATE)
+                    .edit().putLong(KEY_SNOOZE, until).apply()
+                journal("SYNX: пауза опроса на " + names[which].lowercase())
+                Toast.makeText(this, "Пауза: " + names[which], Toast.LENGTH_SHORT).show()
+            }
+            .show()
     }
 
     private fun journal(text: String) {
@@ -279,5 +330,6 @@ class SynxActivity : AppCompatActivity() {
     companion object {
         private const val KEY_LEARN = "learn_enabled"
         private const val KEY_ASK_N = "learn_ask_n"
+        private const val KEY_SNOOZE = "learn_snooze_until"
     }
 }

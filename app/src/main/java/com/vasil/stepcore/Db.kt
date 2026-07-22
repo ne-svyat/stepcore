@@ -308,6 +308,12 @@ interface StepDao {
         "AND label NOT IN ('UP','DOWN') ORDER BY endMs DESC LIMIT 1")
     suspend fun latestUnaskedFlat(): SessionRecord?
 
+    // v205: образцы внутри сессии - чтобы показать человеку фактический
+    // состав меток и не требовать веры на слово.
+    @Query("SELECT * FROM terrain_samples WHERE timeMs BETWEEN :from AND :to " +
+        "ORDER BY timeMs ASC")
+    suspend fun samplesBetween(from: Long, to: Long): List<TerrainSample>
+
     // L3.1: соседние сессии - база прогулки для относительного порога агента.
     @Query("SELECT * FROM sessions WHERE startMs BETWEEN :from AND :to")
     suspend fun sessionsAround(from: Long, to: Long): List<SessionRecord>
