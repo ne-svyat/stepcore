@@ -315,6 +315,13 @@ interface StepDao {
         "AND label NOT IN ('UP','DOWN') ORDER BY endMs DESC LIMIT 1")
     suspend fun latestUnaskedFlat(): SessionRecord?
 
+    // v214: транспортные образцы дня - поездки для карты. Сессии их вырезают
+    // (и правильно: агент уклона не должен на них учиться), но человеку нужно
+    // видеть, чем заполнен день.
+    @Query("SELECT * FROM terrain_samples WHERE timeMs BETWEEN :from AND :to " +
+        "AND mode = 'TRANSPORT' ORDER BY timeMs ASC")
+    suspend fun transportSamples(from: Long, to: Long): List<TerrainSample>
+
     // v205: образцы внутри сессии - чтобы показать человеку фактический
     // состав меток и не требовать веры на слово.
     @Query("SELECT * FROM terrain_samples WHERE timeMs BETWEEN :from AND :to " +

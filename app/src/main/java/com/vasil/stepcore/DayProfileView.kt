@@ -75,6 +75,8 @@ class DayProfileView @JvmOverloads constructor(
             "UP" -> Color.parseColor("#EF9F27")
             "DOWN" -> Color.parseColor("#3D7EFF")
             "FLAT" -> Color.parseColor("#19D45C")
+            // Транспорт - свой цвет, не спорит ни с одной меткой уклона.
+            "TRANSPORT" -> Color.parseColor("#9B7EDE")
             else -> Color.parseColor("#5A5A5A")
         }
     }
@@ -147,6 +149,7 @@ class DayProfileView @JvmOverloads constructor(
             line.strokeWidth = when {
                 sel -> 9f * d
                 s.label == "NONE" || s.label == "" -> 2f * d
+                s.label == "TRANSPORT" -> 3f * d
                 else -> 4f * d
             }
             line.alpha = if (selectedIndex >= 0 && !sel) 90 else 255
