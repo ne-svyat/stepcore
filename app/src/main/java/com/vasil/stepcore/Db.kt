@@ -308,6 +308,10 @@ interface StepDao {
         "AND label = 'FLAT' ORDER BY endMs DESC LIMIT 1")
     suspend fun latestUnaskedFlat(): SessionRecord?
 
+    // L3.1: соседние сессии - база прогулки для относительного порога агента.
+    @Query("SELECT * FROM sessions WHERE startMs BETWEEN :from AND :to")
+    suspend fun sessionsAround(from: Long, to: Long): List<SessionRecord>
+
     // v202: ответы человека - исходные данные, их нельзя терять при пересборке.
     @Query("SELECT * FROM sessions WHERE confirmState != 0")
     suspend fun answeredSessions(): List<SessionRecord>

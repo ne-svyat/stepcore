@@ -65,6 +65,16 @@ class SynxActivity : AppCompatActivity() {
                     status.text = "Вода: данных для уклона достаточно. Можно двигаться дальше."
                 }
             }
+            // L3.1: зрелость агента - по нижней границе Уилсона, не по сырому проценту.
+            val upN = prefs.getInt("ia_up_n", 0)
+            val downN = prefs.getInt("ia_down_n", 0)
+            if (upN + downN > 0) {
+                status.text = status.text.toString() + "\n\nАгент уклона: в гору — " +
+                    InclineAgent.maturity(prefs.getInt("ia_up_ok", 0), upN) +
+                    " (" + prefs.getInt("ia_up_ok", 0) + "/" + upN + "), с горы — " +
+                    InclineAgent.maturity(prefs.getInt("ia_down_ok", 0), downN) +
+                    " (" + prefs.getInt("ia_down_ok", 0) + "/" + downN + ")"
+            }
             // L3.0: если обучение включено и есть свежая надёжная неспрошенная
             // уклонная сессия - запускаем лесенку. Одна сессия за раз.
             if (prefs.getBoolean(KEY_LEARN, false)) {
@@ -113,19 +123,80 @@ class SynxActivity : AppCompatActivity() {
     }
 
     private fun askIncline(s: SessionRecord) {
-        // Честно: FLAT - это метка ПО УМОЛЧАНИЮ ("не нажимал"), а не измерение.
-        // Поэтому про плоские спрашиваем иначе, не выдавая догадку за твой выбор.
+        lifecycleScope.launch {
+            // Агент говорит только про уже отмеченный уклон: отличить "ровно"
+            // от "в гору" по амплитуде нельзя (диапазоны перекрываются).
+            var verdict = InclineAgent.Verdict.NO_BASIS
+            if (s.label != "FLAT") {
+                val dao = AppDb.get(this@SynxActivity).dao()
+                val near = dao.sessionsAround(
+                    s.startMs - InclineAgent.WALK_GAP_MS,
+                    s.startMs + InclineAgent.WALK_GAP_MS
+                )
+                verdict = InclineAgent.predict(
+                    InclineAgent.Input(s.startMs, s.chipShare, s.ampMed ?: 0f),
+                    near.map { InclineAgent.Input(it.startMs, it.chipShare, it.ampMed ?: 0f) }
+                ).verdict
+            }
+            val guess = when (verdict) {
+                InclineAgent.Verdict.UP -> "UP"
+                InclineAgent.Verdict.DOWN -> "DOWN"
+                else -> ""
+            }
+            showInclineDialog(s, guess)
+        }
+    }
+
+    private fun showInclineDialog(s: SessionRecord, guess: String) {
+        // Агент не согласен с меткой -> спрашиваем, что было на самом деле.
+        if (guess != "" && guess != s.label) {
+            val opts = arrayOf("В гору", "С горы", "Не помню")
+            AlertDialog.Builder(this)
+                .setTitle("Уклон")
+                .setMessage("Прогулка " + shortAnchor(s) + " помечена «" +
+                    labelRu(s.label) + "», но по признакам похоже на «" +
+                    labelRu(guess) + "». Что было на самом деле?")
+                .setItems(opts) { _, which ->
+                    val truth = if (which == 0) "UP" else if (which == 1) "DOWN" else ""
+                    if (truth == "") {
+                        recordAnswer(s, 3, "не подтверждено")
+                    } else {
+                        scoreAgent(guess, truth)
+                        if (truth == s.label) recordAnswer(s, 1, "подтверждено")
+                        else recordAnswer(s, 2, "дефект (метка не та)")
+                    }
+                }
+                .show()
+            return
+        }
         val msg = if (s.label == "FLAT")
             "На прогулке " + shortAnchor(s) + " ты не отмечал уклон. Она была ровной?"
+        else if (guess != "")
+            "Прогулка " + shortAnchor(s) + " помечена «" + labelRu(s.label) +
+                "», и признаки согласны. Верно?"
         else
             "Прогулка " + shortAnchor(s) + " помечена «" + labelRu(s.label) + "» — верно?"
         AlertDialog.Builder(this)
             .setTitle("Уклон")
             .setMessage(msg)
-            .setPositiveButton("Да") { _, _ -> recordAnswer(s, 1, "подтверждено") }
+            .setPositiveButton("Да") { _, _ ->
+                if (guess != "") scoreAgent(guess, s.label)
+                recordAnswer(s, 1, "подтверждено")
+            }
             .setNegativeButton("Нет") { _, _ -> recordAnswer(s, 2, "дефект") }
             .setNeutralButton("Не помню") { _, _ -> recordAnswer(s, 3, "не подтверждено") }
             .show()
+    }
+
+    /** Счёт точности агента - отдельно по направлениям (общий процент прячет
+     *  "в гору отлично, с горы мимо"). Считаем только когда известна правда. */
+    private fun scoreAgent(guess: String, truth: String) {
+        val prefs = getSharedPreferences(StepService.PREFS, MODE_PRIVATE)
+        val kk = "ia_" + truth.lowercase() + "_ok"
+        val nk = "ia_" + truth.lowercase() + "_n"
+        val ok = prefs.getInt(kk, 0) + (if (guess == truth) 1 else 0)
+        val n = prefs.getInt(nk, 0) + 1
+        prefs.edit().putInt(kk, ok).putInt(nk, n).apply()
     }
 
     private fun recordAnswer(s: SessionRecord, state: Int, word: String) {
