@@ -31,7 +31,15 @@ class SynxActivity : AppCompatActivity() {
         val orb = findViewById<SynxOrbView>(R.id.synxHeroOrb)
         val status = findViewById<TextView>(R.id.synxStatus)
         val learnSwitch = findViewById<SwitchCompat>(R.id.learnSwitch)
-        findViewById<TextView>(R.id.dayProfileButton).setOnClickListener {
+        // Кнопка должна выглядеть кнопкой: среди такого же зелёного текста
+        // ссылка неотличима от описания. Плита - язык кнопок этого проекта.
+        val profileButtonPlate = findViewById<TextView>(R.id.dayProfileButton)
+        profileButtonPlate.background = DoodleBorderDrawable(
+            androidx.core.content.ContextCompat.getColor(this, R.color.accent_teal),
+            androidx.core.content.ContextCompat.getColor(this, R.color.surface),
+            521L, resources.displayMetrics.density,
+            DoodleBorderDrawable.MAT_ROCK, DoodleBorderDrawable.RIFT_NONE)
+        profileButtonPlate.setOnClickListener {
             startActivity(android.content.Intent(this, DayProfileActivity::class.java))
         }
 
