@@ -84,6 +84,14 @@ class SynxActivity : AppCompatActivity() {
             }
             // L3.0: если обучение включено и есть свежая надёжная неспрошенная
             // уклонная сессия - запускаем лесенку. Одна сессия за раз.
+            // Пауза видна человеку: иначе молчание выглядит как поломка.
+            val snoozeUntil = prefs.getLong(KEY_SNOOZE, 0L)
+            if (snoozeUntil > System.currentTimeMillis()) {
+                val f = java.text.SimpleDateFormat("d MMMM, HH:mm", java.util.Locale("ru"))
+                status.text = status.text.toString() + "\n\nОпрос на паузе до " +
+                    f.format(java.util.Date(snoozeUntil)) +
+                    ". Вернуть раньше — выключи и включи тумблер."
+            }
             // Пауза "не беспокоить" уважается наравне с тумблером.
             val snoozed = prefs.getLong(KEY_SNOOZE, 0L) > System.currentTimeMillis()
             if (prefs.getBoolean(KEY_LEARN, false) && !snoozed) {
@@ -263,16 +271,37 @@ class SynxActivity : AppCompatActivity() {
     }
 
     private fun askSnooze() {
-        val names = arrayOf("Сегодня", "3 дня", "Неделя")
-        val days = intArrayOf(1, 3, 7)
+        val groups = arrayOf("Минуты", "Часы", "Дни", "Выключить обучение")
         AlertDialog.Builder(this)
             .setCustomTitle(dialogTitle("Не беспокоить\n\nВопросы вернутся сами. " +
                 "Раньше срока — переключи тумблер обучения выкл/вкл."))
+            .setItems(groups) { _, which ->
+                when (which) {
+                    0 -> snoozePick("Минуты", intArrayOf(5, 10, 15, 30, 60), 60_000L, "мин")
+                    1 -> snoozePick("Часы", intArrayOf(1, 2, 4, 8, 16, 24), 3_600_000L, "ч")
+                    2 -> snoozePick("Дни", intArrayOf(2, 4, 6, 8, 10), 86_400_000L, "дн")
+                    else -> {
+                        val prefs = getSharedPreferences(StepService.PREFS, MODE_PRIVATE)
+                        prefs.edit().putBoolean(KEY_LEARN, false).apply()
+                        findViewById<SwitchCompat>(R.id.learnSwitch).isChecked = false
+                        journal("SYNX: обучение выключено")
+                        Toast.makeText(this, "Обучение выключено", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+            .show()
+    }
+
+    /** Второй уровень: конкретный срок внутри выбранной единицы. */
+    private fun snoozePick(unit: String, values: IntArray, mult: Long, suffix: String) {
+        val names = Array(values.size) { values[it].toString() + " " + suffix }
+        AlertDialog.Builder(this)
+            .setCustomTitle(dialogTitle("Не беспокоить: " + unit.lowercase()))
             .setItems(names) { _, which ->
-                val until = System.currentTimeMillis() + days[which] * 86_400_000L
+                val until = System.currentTimeMillis() + values[which] * mult
                 getSharedPreferences(StepService.PREFS, MODE_PRIVATE)
                     .edit().putLong(KEY_SNOOZE, until).apply()
-                journal("SYNX: пауза опроса на " + names[which].lowercase())
+                journal("SYNX: пауза опроса на " + names[which])
                 Toast.makeText(this, "Пауза: " + names[which], Toast.LENGTH_SHORT).show()
             }
             .show()

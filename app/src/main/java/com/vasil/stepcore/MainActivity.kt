@@ -360,13 +360,13 @@ class MainActivity : AppCompatActivity() {
                             else -> "Уклон: ровно"
                         }
                         styleIncline(inclineUpBtn, v == TerrainState.Incline.UP,
-                            R.color.accent_amber, 201L)
+                            R.color.accent_amber, 201L, DoodleBorderDrawable.RIFT_UP)
                         styleIncline(inclineFlatBtn, v == TerrainState.Incline.FLAT,
-                            R.color.accent_green, 202L)
+                            R.color.accent_green, 202L, DoodleBorderDrawable.RIFT_FLAT)
                         styleIncline(inclineDownBtn, v == TerrainState.Incline.DOWN,
-                            R.color.accent_blue, 203L)
+                            R.color.accent_blue, 203L, DoodleBorderDrawable.RIFT_DOWN)
                         styleIncline(inclineNoneBtn, v == TerrainState.Incline.NONE,
-                            R.color.text_dim, 206L)
+                            R.color.text_dim, 206L, DoodleBorderDrawable.RIFT_NONE)
                     }
                 }
                 // Дорого (почасовой расчёт, БД) - по таймеру, не на каждый шаг.
@@ -810,20 +810,23 @@ class MainActivity : AppCompatActivity() {
      * притушенный до 45% текст было тяжело читать, а именно он и говорит,
      * какой режим сейчас активен.
      */
-    private fun styleIncline(v: TextView, selected: Boolean, accent: Int, seed: Long) {
+    private fun styleIncline(
+        v: TextView, selected: Boolean, accent: Int, seed: Long,
+        rift: Int = DoodleBorderDrawable.RIFT_DEFAULT
+    ) {
         v.alpha = 1f
         val d = resources.displayMetrics.density
         if (selected) {
             v.background = DoodleBorderDrawable(
                 ContextCompat.getColor(this, accent),
                 ContextCompat.getColor(this, R.color.surface),
-                seed, d, DoodleBorderDrawable.MAT_LIGHTNING)
+                seed, d, DoodleBorderDrawable.MAT_LIGHTNING, rift)
             v.setTextColor(ContextCompat.getColor(this, accent))
         } else {
             v.background = DoodleBorderDrawable(
                 ContextCompat.getColor(this, R.color.axis_dim),
                 ContextCompat.getColor(this, R.color.surface),
-                seed, d, DoodleBorderDrawable.MAT_ROCK)
+                seed, d, DoodleBorderDrawable.MAT_ROCK, rift)
             v.setTextColor(ContextCompat.getColor(this, R.color.text_dim))
         }
     }

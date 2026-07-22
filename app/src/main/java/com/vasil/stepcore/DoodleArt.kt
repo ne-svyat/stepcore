@@ -567,9 +567,18 @@ class DoodleBorderDrawable(
     private val seed: Long,
     density: Float,
     private val material: Int = MAT_ROCK,
+    private val riftMode: Int = RIFT_DEFAULT,
 ) : Drawable() {
 
     companion object {
+        // Режим трещины. По умолчанию - прежний случайный узор снизу вверх.
+        // Смысловые режимы держатся у правого края (текст по центру не
+        // задевается) и показывают направление.
+        const val RIFT_DEFAULT = 0
+        const val RIFT_UP = 1
+        const val RIFT_FLAT = 2
+        const val RIFT_DOWN = 3
+        const val RIFT_NONE = 4
         const val MAT_ROCK = 0       // тяжёлый двойной кант, глухой камень
         const val MAT_LIGHTNING = 1  // свечение + яркое ядро, пульс
         const val MAT_ROPE = 2       // две пряди + насечки витков
@@ -722,6 +731,31 @@ class DoodleBorderDrawable(
         // Трещина: от нижнего края вверх ломаной, узор свой у каждой плиты.
         val rw = Wobble(seed * 131L + 7L)
         val hgt = bounds.height().toFloat(); val wid = bounds.width().toFloat()
+        if (riftMode != RIFT_DEFAULT) {
+            // Смысловая трещина: у правого края, короткая, читается как знак.
+            riftSkip = riftMode == RIFT_NONE
+            val ex = wid * 0.90f
+            val ln = Math.min(hgt * 0.55f, 46f * d)
+            val my = hgt * 0.5f
+            riftPath.reset()
+            when (riftMode) {
+                RIFT_UP -> {
+                    riftPath.moveTo(ex - ln * 0.45f, my + ln * 0.42f)
+                    riftPath.lineTo(ex - ln * 0.08f, my + ln * 0.04f)
+                    riftPath.lineTo(ex + ln * 0.22f, my - ln * 0.32f)
+                }
+                RIFT_DOWN -> {
+                    riftPath.moveTo(ex - ln * 0.45f, my - ln * 0.42f)
+                    riftPath.lineTo(ex - ln * 0.08f, my - ln * 0.04f)
+                    riftPath.lineTo(ex + ln * 0.22f, my + ln * 0.32f)
+                }
+                else -> {
+                    riftPath.moveTo(ex - ln * 0.45f, my - ln * 0.05f)
+                    riftPath.lineTo(ex - ln * 0.05f, my + ln * 0.05f)
+                    riftPath.lineTo(ex + ln * 0.30f, my - ln * 0.02f)
+                }
+            }
+        } else {
         val startX = wid * (0.55f + 0.30f * ((rw.j(1f) + 1f) * 0.5f))
         // На высоких панелях (списки, Timeline) трещина растягивалась на
         // полэкрана - там её не рисуем; иначе ограничиваем длину.
@@ -736,6 +770,7 @@ class DoodleBorderDrawable(
             val tx = rx + wid * 0.05f * rw.j(1.6f)
             riftPath.lineTo(tx, ty)
             rx = tx; ry = ty
+        }
         }
 
         // Лиана по вертикальному краю: сторона и изгибы - от сида плиты.
