@@ -218,61 +218,55 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
+            android:orientation="vertical"
             android:layout_marginTop="6dp">
 
             <TextView
                 android:id="@+id/inclineUpButton"
-                android:layout_width="0dp"
-                android:layout_weight="1"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:gravity="center"
-                android:text="↗ В гору"
+                android:text="▲   В ГОРУ"
                 android:textColor="@color/accent_amber_bright"
-                android:textSize="14sp"
-                android:paddingTop="10dp"
-                android:paddingBottom="10dp"
-                android:layout_marginEnd="4dp" />
-
-            <TextView
-                android:id="@+id/inclineNoneButton"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_height="wrap_content"
-                android:gravity="center"
-                android:text="○ Снять"
-                android:textColor="@color/text_dim"
-                android:textSize="13sp"
-                android:paddingTop="10dp"
-                android:paddingBottom="10dp"
-                android:layout_marginEnd="3dp" />
+                android:textSize="17sp"
+                android:paddingTop="14dp"
+                android:paddingBottom="14dp" />
 
             <TextView
                 android:id="@+id/inclineFlatButton"
-                android:layout_width="0dp"
-                android:layout_weight="1"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:gravity="center"
-                android:text="Ровно"
+                android:text="━   РОВНО"
                 android:textColor="@color/text_main"
-                android:textSize="14sp"
-                android:paddingTop="10dp"
-                android:paddingBottom="10dp"
-                android:layout_marginStart="3dp"
-                android:layout_marginEnd="3dp" />
+                android:textSize="17sp"
+                android:paddingTop="14dp"
+                android:paddingBottom="14dp"
+                android:layout_marginTop="6dp" />
 
             <TextView
                 android:id="@+id/inclineDownButton"
-                android:layout_width="0dp"
-                android:layout_weight="1"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:gravity="center"
-                android:text="↘ С горы"
+                android:text="▼   С ГОРЫ"
                 android:textColor="@color/accent_teal_bright"
-                android:textSize="14sp"
-                android:paddingTop="10dp"
-                android:paddingBottom="10dp"
-                android:layout_marginStart="4dp" />
+                android:textSize="17sp"
+                android:paddingTop="14dp"
+                android:paddingBottom="14dp"
+                android:layout_marginTop="6dp" />
+
+            <TextView
+                android:id="@+id/inclineNoneButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:text="○ снять метку"
+                android:textColor="@color/text_dim"
+                android:textSize="13sp"
+                android:paddingTop="9dp"
+                android:paddingBottom="9dp"
+                android:layout_marginTop="10dp" />
         </LinearLayout>
 
         <GridLayout
