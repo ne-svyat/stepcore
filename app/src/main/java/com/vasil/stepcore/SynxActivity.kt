@@ -119,8 +119,7 @@ class SynxActivity : AppCompatActivity() {
         // Полная дата обязательна: по одному времени невозможно понять, какой
         // это был день, и легко ответить не про ту прогулку.
         AlertDialog.Builder(this)
-            .setTitle("Что это было?")
-            .setMessage(anchor(s))
+            .setCustomTitle(dialogTitle("Что это было?\n\n" + anchor(s)))
             .setItems(modes) { _, which ->
                 journal("SYNX режим: " + modes[which] + " (" + anchor(s) + ")")
                 askIncline(s)
@@ -173,10 +172,9 @@ class SynxActivity : AppCompatActivity() {
         if (guess != "" && guess != s.label) {
             val opts = arrayOf("В гору", "С горы", "Не помню")
             AlertDialog.Builder(this)
-                .setTitle("Уклон")
-                .setMessage(head + "Помечена «" + labelRu(s.label) +
+                .setCustomTitle(dialogTitle(head + "Помечена «" + labelRu(s.label) +
                     "», но по признакам похоже на «" + labelRu(guess) +
-                    "». Что было на самом деле?")
+                    "». Что было на самом деле?"))
                 .setItems(opts) { _, which ->
                     val truth = if (which == 0) "UP" else if (which == 1) "DOWN" else ""
                     if (truth == "") {
@@ -268,9 +266,8 @@ class SynxActivity : AppCompatActivity() {
         val names = arrayOf("Сегодня", "3 дня", "Неделя")
         val days = intArrayOf(1, 3, 7)
         AlertDialog.Builder(this)
-            .setTitle("Не беспокоить")
-            .setMessage("Вопросы вернутся сами. Раньше срока — переключи " +
-                "тумблер обучения выкл/вкл.")
+            .setCustomTitle(dialogTitle("Не беспокоить\n\nВопросы вернутся сами. " +
+                "Раньше срока — переключи тумблер обучения выкл/вкл."))
             .setItems(names) { _, which ->
                 val until = System.currentTimeMillis() + days[which] * 86_400_000L
                 getSharedPreferences(StepService.PREFS, MODE_PRIVATE)
@@ -279,6 +276,20 @@ class SynxActivity : AppCompatActivity() {
                 Toast.makeText(this, "Пауза: " + names[which], Toast.LENGTH_SHORT).show()
             }
             .show()
+    }
+
+    /** Заголовок-текст для диалогов СО СПИСКОМ.
+     *  setMessage() и setItems() делят одну область: если задать оба, список
+     *  не отрисуется и нажать будет нечего (баг v205). setCustomTitle живёт в
+     *  своей области и со списком не конфликтует. */
+    private fun dialogTitle(text: String): TextView {
+        val tv = TextView(this)
+        tv.text = text
+        tv.textSize = 15f
+        tv.setTextColor(getColor(R.color.text_main))
+        val pad = (16 * resources.displayMetrics.density).toInt()
+        tv.setPadding(pad + pad / 2, pad, pad + pad / 2, pad / 2)
+        return tv
     }
 
     private fun journal(text: String) {
