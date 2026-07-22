@@ -1,6 +1,9 @@
 package com.vasil.stepcore
 
 import android.os.Bundle
+import android.view.View
+import android.view.ViewGroup
+import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
@@ -35,7 +38,7 @@ class SynxActivity : AppCompatActivity() {
         // ссылка неотличима от описания. Плита - язык кнопок этого проекта.
         val profileButtonPlate = findViewById<TextView>(R.id.dayProfileButton)
         profileButtonPlate.background = DoodleBorderDrawable(
-            androidx.core.content.ContextCompat.getColor(this, R.color.accent_teal),
+            androidx.core.content.ContextCompat.getColor(this, R.color.accent_amber),
             androidx.core.content.ContextCompat.getColor(this, R.color.surface),
             521L, resources.displayMetrics.density,
             DoodleBorderDrawable.MAT_ROCK, DoodleBorderDrawable.RIFT_NONE)
@@ -137,13 +140,16 @@ class SynxActivity : AppCompatActivity() {
         val modes = arrayOf("Ходьба", "Бег", "Машина", "Покой")
         // Полная дата обязательна: по одному времени невозможно понять, какой
         // это был день, и легко ответить не про ту прогулку.
-        AlertDialog.Builder(this)
-            .setCustomTitle(dialogTitle("Что это было?\n\n" + anchor(s)))
-            .setItems(modes) { _, which ->
-                journal("SYNX режим: " + modes[which] + " (" + anchor(s) + ")")
-                askIncline(s)
-            }
-            .show()
+        lifecycleScope.launch {
+            val head = dayHeader(s, "Что это было?\n\n" + anchor(s))
+            AlertDialog.Builder(this@SynxActivity)
+                .setCustomTitle(head)
+                .setItems(modes) { _, which ->
+                    journal("SYNX режим: " + modes[which] + " (" + anchor(s) + ")")
+                    askIncline(s)
+                }
+                .show()
+        }
     }
 
     /** Фактический состав меток внутри сессии. Метка сессии берётся с первого
@@ -181,19 +187,34 @@ class SynxActivity : AppCompatActivity() {
                 InclineAgent.Verdict.DOWN -> "DOWN"
                 else -> ""
             }
-            showInclineDialog(s, guess, labelBreakdown(s))
+            val brk = labelBreakdown(s)
+            val head = dayHeader(s, headText(s, guess, brk))
+            showInclineDialog(s, guess, head)
         }
     }
 
-    private fun showInclineDialog(s: SessionRecord, guess: String, breakdown: String) {
+    /** Текст вопроса об уклоне - отдельно, чтобы вложить его в шапку с картой. */
+    private fun headText(s: SessionRecord, guess: String, breakdown: String): String {
         val head = anchor(s) + (if (breakdown == "") "" else "\n" + breakdown) + "\n\n"
+        return head + (if (guess != "" && guess != s.label)
+            "Помечена «" + labelRu(s.label) + "», но по признакам похоже на «" +
+                labelRu(guess) + "». Что было на самом деле?"
+        else if (s.label == "NONE")
+            "Уклон не отмечен. Она была ровной?"
+        else if (s.label == "FLAT")
+            "Помечена «ровно» — верно?"
+        else if (guess != "")
+            "Помечена «" + labelRu(s.label) + "», и признаки согласны. Верно?"
+        else
+            "Помечена «" + labelRu(s.label) + "» — верно?")
+    }
+
+    private fun showInclineDialog(s: SessionRecord, guess: String, headView: View) {
         // Агент не согласен с меткой -> спрашиваем, что было на самом деле.
         if (guess != "" && guess != s.label) {
             val opts = arrayOf("В гору", "С горы", "Не помню")
             AlertDialog.Builder(this)
-                .setCustomTitle(dialogTitle(head + "Помечена «" + labelRu(s.label) +
-                    "», но по признакам похоже на «" + labelRu(guess) +
-                    "». Что было на самом деле?"))
+                .setCustomTitle(headView)
                 .setItems(opts) { _, which ->
                     val truth = if (which == 0) "UP" else if (which == 1) "DOWN" else ""
                     if (truth == "") {
@@ -207,17 +228,8 @@ class SynxActivity : AppCompatActivity() {
                 .show()
             return
         }
-        val msg = head + (if (s.label == "NONE")
-            "Уклон не отмечен. Она была ровной?"
-        else if (s.label == "FLAT")
-            "Помечена «ровно» — верно?"
-        else if (guess != "")
-            "Помечена «" + labelRu(s.label) + "», и признаки согласны. Верно?"
-        else
-            "Помечена «" + labelRu(s.label) + "» — верно?")
         AlertDialog.Builder(this)
-            .setTitle("Уклон")
-            .setMessage(msg)
+            .setCustomTitle(headView)
             .setPositiveButton("Да") { _, _ ->
                 if (guess != "") scoreAgent(guess, s.label)
                 recordAnswer(s, 1, "подтверждено")
@@ -330,6 +342,49 @@ class SynxActivity : AppCompatActivity() {
         val pad = (16 * resources.displayMetrics.density).toInt()
         tv.setPadding(pad + pad / 2, pad, pad + pad / 2, pad / 2)
         return tv
+    }
+
+    /** Шапка вопроса: профиль ТОГО ЖЕ дня с подсвеченным спрашиваемым
+     *  отрезком плюс текст вопроса. Человек видит, где отрезок в дне и что
+     *  было до и после - вспомнить проще, чем по одному времени.
+     *  Живёт в setCustomTitle: своя область, со списком и кнопками не спорит. */
+    private suspend fun dayHeader(s: SessionRecord, text: String): View {
+        val d = resources.displayMetrics.density
+        val box = LinearLayout(this)
+        box.orientation = LinearLayout.VERTICAL
+        val pad = (16 * d).toInt()
+        box.setPadding(pad, pad, pad, (8 * d).toInt())
+
+        // Сессии того же календарного дня, по порядку.
+        val dayFmt = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+        val key = dayFmt.format(java.util.Date(s.startMs))
+        val dao = AppDb.get(this).dao()
+        val around = dao.sessionsAround(s.startMs - 86_400_000L, s.startMs + 86_400_000L)
+            .filter { dayFmt.format(java.util.Date(it.startMs)) == key }
+            .sortedBy { it.startMs }
+
+        if (around.size >= 2) {
+            val chart = DayProfileView(this)
+            chart.layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, (120 * d).toInt())
+            chart.setData(
+                around.map {
+                    DayProfileView.Seg(it.label, it.nSamples * 20, it.durationMs, it.startMs)
+                },
+                false
+            )
+            val idx = around.indexOfFirst { it.id == s.id }
+            if (idx >= 0) chart.select(idx)
+            box.addView(chart)
+        }
+
+        val tv = TextView(this)
+        tv.text = text
+        tv.textSize = 15f
+        tv.setTextColor(getColor(R.color.text_main))
+        tv.setPadding(0, (10 * d).toInt(), 0, 0)
+        box.addView(tv)
+        return box
     }
 
     private fun journal(text: String) {
