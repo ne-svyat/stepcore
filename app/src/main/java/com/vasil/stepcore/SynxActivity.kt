@@ -31,6 +31,9 @@ class SynxActivity : AppCompatActivity() {
         val orb = findViewById<SynxOrbView>(R.id.synxHeroOrb)
         val status = findViewById<TextView>(R.id.synxStatus)
         val learnSwitch = findViewById<SwitchCompat>(R.id.learnSwitch)
+        findViewById<TextView>(R.id.dayProfileButton).setOnClickListener {
+            startActivity(android.content.Intent(this, DayProfileActivity::class.java))
+        }
 
         val prefs = getSharedPreferences(StepService.PREFS, MODE_PRIVATE)
         // Тумблер обучения. Выкл по умолчанию: пока не разрешил - вопросов нет.

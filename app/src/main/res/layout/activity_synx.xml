@@ -17,6 +17,12 @@
             android:text="…" android:textColor="@color/accent_teal"
             android:textSize="15sp" android:gravity="center"
             android:lineSpacingExtra="3dp" android:layout_marginTop="18dp" />
+        <TextView android:id="@+id/dayProfileButton"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:gravity="center" android:text="Профиль дня"
+            android:textColor="@color/accent_teal" android:textSize="15sp"
+            android:paddingTop="12dp" android:paddingBottom="12dp"
+            android:layout_marginTop="22dp" />
         <androidx.appcompat.widget.SwitchCompat android:id="@+id/learnSwitch"
             android:layout_width="match_parent" android:layout_height="wrap_content"
             android:text="Обучение: спрашивать при открытии"

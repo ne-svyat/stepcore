@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <TextView android:id="@+id/dayTitle"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="…" android:textColor="@color/text_main"
+            android:textSize="16sp" android:lineSpacingExtra="3dp" />
+
+        <com.vasil.stepcore.DayProfileView
+            android:id="@+id/profileView"
+            android:layout_width="match_parent"
+            android:layout_height="220dp"
+            android:layout_marginTop="12dp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="10dp">
+
+            <TextView android:id="@+id/prevDay"
+                android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content" android:gravity="center"
+                android:text="← раньше" android:textColor="@color/accent_teal"
+                android:textSize="14sp" android:paddingTop="10dp"
+                android:paddingBottom="10dp" />
+
+            <TextView android:id="@+id/axisToggle"
+                android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content" android:gravity="center"
+                android:text="ось: по шагам" android:textColor="@color/text_dim"
+                android:textSize="14sp" android:paddingTop="10dp"
+                android:paddingBottom="10dp" />
+
+            <TextView android:id="@+id/nextDay"
+                android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content" android:gravity="center"
+                android:text="позже →" android:textColor="@color/accent_teal"
+                android:textSize="14sp" android:paddingTop="10dp"
+                android:paddingBottom="10dp" />
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="Линия идёт слева направо по ходу прогулки. Вверх — в гору, вниз — с горы, ровная — ровно, тонкая серая — уклон не отмечен. Крутизна условная: высоту в метрах телефон не измеряет."
+            android:textColor="@color/axis_dim" android:textSize="12sp"
+            android:lineSpacingExtra="3dp" android:layout_marginTop="8dp" />
+
+        <TextView android:id="@+id/intervalList"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="" android:textColor="@color/text_dim"
+            android:fontFamily="monospace" android:textSize="13sp"
+            android:lineSpacingExtra="4dp" android:layout_marginTop="16dp" />
+
+        <TextView android:id="@+id/moreRows"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:gravity="center" android:text=""
+            android:textColor="@color/accent_teal" android:textSize="14sp"
+            android:paddingTop="12dp" android:paddingBottom="12dp" />
+    </LinearLayout>
+</ScrollView>
