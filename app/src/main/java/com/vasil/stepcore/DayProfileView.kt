@@ -38,6 +38,7 @@ class DayProfileView @JvmOverloads constructor(
 
     private var segs: List<Seg> = emptyList()
     private var byTime = false
+    private var selectedIndex = -1
 
     private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -58,15 +59,27 @@ class DayProfileView @JvmOverloads constructor(
     fun setData(list: List<Seg>, byTimeAxis: Boolean) {
         segs = list
         byTime = byTimeAxis
+        selectedIndex = -1
         invalidate()
     }
 
-    private fun colorOf(l: String): Int = when (l) {
-        "UP" -> Color.parseColor("#EF9F27")     // как кнопка "в гору"
-        "DOWN" -> Color.parseColor("#3D7EFF")   // как кнопка "с горы"
-        "FLAT" -> Color.parseColor("#19D45C")   // как кнопка "ровно"
-        else -> Color.parseColor("#5A5A5A")     // не отмечено - тихая серая
+    fun select(index: Int) {
+        selectedIndex = index
+        invalidate()
     }
+
+    companion object {
+        /** Единая палитра меток: те же цвета у линии, у плиты интервала и у
+         *  кнопок на главном экране. Один смысл - один цвет. */
+        fun colorFor(label: String): Int = when (label) {
+            "UP" -> Color.parseColor("#EF9F27")
+            "DOWN" -> Color.parseColor("#3D7EFF")
+            "FLAT" -> Color.parseColor("#19D45C")
+            else -> Color.parseColor("#5A5A5A")
+        }
+    }
+
+    private fun colorOf(l: String): Int = colorFor(l)
 
     override fun onDraw(canvas: Canvas) {
         val d = resources.displayMetrics.density
@@ -129,12 +142,26 @@ class DayProfileView @JvmOverloads constructor(
             val x1 = px(acc + wgt)
             val y0 = py(ys[i])
             val y1 = py(ys[i + 1])
+            val sel = i == selectedIndex
             line.color = colorOf(s.label)
-            line.strokeWidth = if (s.label == "NONE" || s.label == "") 2f * d else 4f * d
+            line.strokeWidth = when {
+                sel -> 9f * d
+                s.label == "NONE" || s.label == "" -> 2f * d
+                else -> 4f * d
+            }
+            line.alpha = if (selectedIndex >= 0 && !sel) 90 else 255
             path.reset()
             path.moveTo(x0, y0)
             path.lineTo(x1, y1)
             canvas.drawPath(path, line)
+            if (sel) {
+                // Отбивки по краям: видно, где именно этот отрезок на ленте.
+                axis.color = colorOf(s.label)
+                canvas.drawLine(x0, padV, x0, h - padV, axis)
+                canvas.drawLine(x1, padV, x1, h - padV, axis)
+                axis.color = Color.parseColor("#5A5A5A")
+            }
+            line.alpha = 255
             acc += wgt
         }
     }
