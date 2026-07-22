@@ -116,6 +116,13 @@ data class TerrainSample(
     //     и записаны нулями. Амплитуду и каденс для таких строк брать
     //     из accRms/accP90/zcrCadence.
     val sampleSource: Int = 0,
+    // v213. Азимут УСТРОЙСТВА (0..360, магнитный север), не направление
+    // ходьбы: в кармане телефон лежит произвольно. Ценность - в изменении
+    // азимута между образцами: поворот тела виден в дельте.
+    val headingDeg: Float? = null,
+    // Точность магнитометра, как её сообщает система (0 ненадёжно .. 3 высокая).
+    // Без неё нельзя отличить честный курс от вранья рядом с металлом.
+    val headingAcc: Int? = null,
 )
 
 /**
@@ -457,6 +464,15 @@ val MIGRATION_8_9 = object : Migration(8, 9) {
  * Условие узкое намеренно: sampleSource = 1 И screenOn = 0. Строки
  * детектора и строки чипа при включённом экране честны и остаются.
  */
+val MIGRATION_11_12 = object : Migration(11, 12) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        // Только добавление колонок: старые строки получают NULL, что честно
+        // означает "курс тогда не писали". Прошлое не переписываем.
+        db.execSQL("ALTER TABLE terrain_samples ADD COLUMN headingDeg REAL")
+        db.execSQL("ALTER TABLE terrain_samples ADD COLUMN headingAcc INTEGER")
+    }
+}
+
 val MIGRATION_10_11 = object : Migration(10, 11) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL(
@@ -522,7 +538,7 @@ data class SessionRecord(
 )
 
 @Database(entities = [DayRecord::class, EventRecord::class, HourRecord::class, ProfileSnapshotRecord::class, TerrainSample::class, SessionRecord::class],
-    version = 11, exportSchema = false)
+    version = 12, exportSchema = false)
 abstract class AppDb : RoomDatabase() {
     abstract fun dao(): StepDao
 
@@ -532,7 +548,7 @@ abstract class AppDb : RoomDatabase() {
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
                     context.applicationContext, AppDb::class.java, "stepcore.db"
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11).build().also { instance = it }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12).build().also { instance = it }
             }
     }
 }

@@ -47,6 +47,12 @@ class StepService : Service(), SensorEventListener {
     private var accelSensor: Sensor? = null
     private var gyroSensor: Sensor? = null
     private var hwDetSensor: Sensor? = null
+    // v213: курс. ROTATION_VECTOR - сплав акселерометра, гироскопа и компаса:
+    // он устойчивее сырого магнитометра и уже сглажен системой.
+    private var rotSensor: Sensor? = null
+    @Volatile private var headingDeg: Float? = null
+    @Volatile private var headingAcc: Int? = null
+    @Volatile private var headingAtMs = 0L
     private var motionRegistered = false
 
 
@@ -200,6 +206,11 @@ class StepService : Service(), SensorEventListener {
             gyroSensor?.let {
                 sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
             }
+            // Курсу частота не нужна: повороты тела - это доли секунды, а не
+            // миллисекунды. NORMAL вместо GAME экономит батарею.
+            rotSensor?.let {
+                sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
+            }
             // STEP_DETECTOR нужен только как диагностика при калибровке, а
             // она идёт при включённом экране. В фоне он висел на FASTEST
             // и будил процессор впустую.
@@ -210,6 +221,7 @@ class StepService : Service(), SensorEventListener {
         } else {
             accelSensor?.let { sensorManager.unregisterListener(this, it) }
             gyroSensor?.let { sensorManager.unregisterListener(this, it) }
+            rotSensor?.let { sensorManager.unregisterListener(this, it) }
             hwDetSensor?.let { sensorManager.unregisterListener(this, it) }
             if (wakeLock?.isHeld == true) wakeLock?.release()
         }
@@ -316,6 +328,7 @@ class StepService : Service(), SensorEventListener {
         // Измерено: 20% батареи в час на лежащем телефоне.
         accelSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         gyroSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
+        rotSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
         detector.hasGyro = gyroSensor != null
         hwBaseline = prefs.getLong(KEY_HW_BASE, -1L)
         hwDayAnchor =
@@ -876,6 +889,22 @@ class StepService : Service(), SensorEventListener {
                 }
                 return
             }
+            Sensor.TYPE_ROTATION_VECTOR -> {
+                // На части устройств вектор приходит из 5 чисел, а матрице
+                // нужно не больше 4 - копируем ровно столько, сколько надо.
+                val v = FloatArray(4)
+                val n = if (event.values.size < 4) event.values.size else 4
+                System.arraycopy(event.values, 0, v, 0, n)
+                val rm = FloatArray(9)
+                SensorManager.getRotationMatrixFromVector(rm, v)
+                val ori = FloatArray(3)
+                SensorManager.getOrientation(rm, ori)
+                var az = Math.toDegrees(ori[0].toDouble()).toFloat()
+                if (az < 0f) az += 360f
+                headingDeg = az
+                headingAtMs = SystemClock.elapsedRealtime()
+                return
+            }
             Sensor.TYPE_GYROSCOPE -> {
                 if (screenOff) {
                     // L1.1: в фоне оси гироскопа нужны корпусу - именно они
@@ -1174,6 +1203,12 @@ class StepService : Service(), SensorEventListener {
             intervalMs = interval,
             gyro = detector.gyroRms,
             featureVersion = FeatureCollector.FEATURE_VERSION,
+            // Протухший курс хуже отсутствующего: 15 с - тот же порог, что у
+            // остальных сенсоров. Не свежий -> пишем null, а не старое число.
+            headingDeg = if (headingAtMs > 0L &&
+                SystemClock.elapsedRealtime() - headingAtMs <= 15_000L) headingDeg else null,
+            headingAcc = if (headingAtMs > 0L &&
+                SystemClock.elapsedRealtime() - headingAtMs <= 15_000L) headingAcc else null,
             pitchDeg = fx.pitchDeg,
             rollDeg = fx.rollDeg,
             gyroX = fx.gyroX,
@@ -1282,7 +1317,11 @@ class StepService : Service(), SensorEventListener {
         }
     }
 
-    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
+        // Точность компаса меняется на ходу (металл, арматура, машина).
+        // Пишем её рядом с курсом: иначе честный курс не отличить от вранья.
+        if (sensor?.type == Sensor.TYPE_ROTATION_VECTOR) headingAcc = accuracy
+    }
 
     override fun onDestroy() {
         sensorManager.unregisterListener(this)

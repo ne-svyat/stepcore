@@ -405,7 +405,9 @@ class FeatureCollector {
         // v204: 4 = метка FLAT стала осознанной (появился NONE).
         // Старые строки (<=3) хранят неоднозначный FLAT - при обучении
         // на третий класс брать только >= 4.
-        const val FEATURE_VERSION = 4
+        // v213: 5 = в строке появился курс (headingDeg/headingAcc).
+        // Строки <= 4 курса не содержат - это не пропуск, а эпоха.
+        const val FEATURE_VERSION = 5
         private const val REG_WINDOW = 32
         private const val REG_MIN = 6
         private const val ASYM_WINDOW = 8
