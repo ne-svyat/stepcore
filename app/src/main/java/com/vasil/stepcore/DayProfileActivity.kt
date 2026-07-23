@@ -2,9 +2,11 @@ package com.vasil.stepcore
 
 import android.os.Bundle
 import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
@@ -39,7 +41,9 @@ class DayProfileActivity : AppCompatActivity() {
         // v217: сколько строк корпуса дал отрезок. -1 = не считали (режим
         // сессий). 0 в журнальном режиме значит "модель этого не видела".
         val rows: Int = -1,
-        val journal: Boolean = false
+        val journal: Boolean = false,
+        val id: Long = 0,
+        val userLabel: String? = null
     )
 
     // 0 = сессии по шагам, 1 = сессии по времени, 2 = журнал (всегда по
@@ -51,6 +55,7 @@ class DayProfileActivity : AppCompatActivity() {
     private var shown = 20
     private var dayKey = ""       // yyyy-MM-dd показанного дня
     private var items: List<Item> = emptyList()
+    private var selected = -1
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -75,6 +80,12 @@ class DayProfileActivity : AppCompatActivity() {
             if (dayShift > 0) { dayShift--; shown = 20; load() }
         }
         findViewById<TextView>(R.id.moreRows).setOnClickListener { shown += 20; renderList() }
+        val editBtn = findViewById<TextView>(R.id.editLabelButton)
+        editBtn.background = DoodleBorderDrawable(
+            ContextCompat.getColor(this, R.color.accent_amber),
+            ContextCompat.getColor(this, R.color.surface),
+            888L, d, DoodleBorderDrawable.MAT_ROCK, DoodleBorderDrawable.RIFT_NONE)
+        editBtn.setOnClickListener { askEditLabel() }
         val diagBtn = findViewById<TextView>(R.id.diagButton)
         diagBtn.background = DoodleBorderDrawable(
             ContextCompat.getColor(this, R.color.accent_amber),
@@ -126,7 +137,7 @@ class DayProfileActivity : AppCompatActivity() {
             }
             val walk = ofDay.map {
                 Item(it.startMs, it.endMs, it.label, it.nSamples * 20, it.durationMs,
-                    it.confirmState, it.chipShare, false)
+                    it.confirmState, it.chipShare, false, -1, false, it.id, it.userLabel)
             }
             val rides = transportSpans(dao, ofDay.first().startMs, ofDay.last().endMs)
             items = (walk + rides).sortedBy { it.startMs }
@@ -138,7 +149,9 @@ class DayProfileActivity : AppCompatActivity() {
                 (if (rides.isEmpty()) "" else ", поездок " + rides.size)
 
             view.setData(
-                items.map { DayProfileView.Seg(it.label, it.steps, it.durationMs, it.startMs) },
+                items.map {
+                    DayProfileView.Seg(effLabel(it), it.steps, it.durationMs, it.startMs)
+                },
                 byTime
             )
             renderList()
@@ -208,16 +221,59 @@ class DayProfileActivity : AppCompatActivity() {
         return out
     }
 
+    /** Правка метки. Исходная остаётся: переписывать прошлое нельзя. */
+    private fun askEditLabel() {
+        val i = selected
+        if (i < 0 || i >= items.size) return
+        val s = items[i]
+        if (s.journal || s.transport || s.id == 0L) return
+        val opts = arrayOf("▲ В гору", "━ Ровно", "▼ С горы", "Вернуть как было")
+        val codes = arrayOf("UP", "FLAT", "DOWN", "")
+        AlertDialog.Builder(this)
+            .setCustomTitle(editTitle(s))
+            .setItems(opts) { _, which ->
+                lifecycleScope.launch {
+                    val dao = AppDb.get(this@DayProfileActivity).dao()
+                    if (codes[which] == "") dao.clearUserLabel(s.id)
+                    else dao.setUserLabel(s.id, codes[which])
+                    android.widget.Toast.makeText(
+                        this@DayProfileActivity,
+                        if (codes[which] == "") "Правка снята" else "Исправлено",
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                    load()
+                }
+            }
+            .show()
+    }
+
+    private fun editTitle(s: Item): View {
+        val tv = TextView(this)
+        val f = SimpleDateFormat("HH:mm", Locale("ru"))
+        tv.text = "Отрезок " + f.format(Date(s.startMs)) + "–" + f.format(Date(s.endMs)) +
+            "\nСейчас: " + labelRu(effLabel(s)) +
+            "\n\nИсходная метка сохранится — правка ложится рядом."
+        tv.textSize = 15f
+        tv.setTextColor(getColor(R.color.text_main))
+        val pad = (16 * resources.displayMetrics.density).toInt()
+        tv.setPadding(pad, pad, pad, pad / 2)
+        return tv
+    }
+
+    /** Истина для показа и обучения: правка человека главнее исходной метки. */
+    private fun effLabel(s: Item): String = s.userLabel ?: s.label
+
     private fun renderList() {
         val box = findViewById<LinearLayout>(R.id.intervalList)
         box.removeAllViews()
         val d = resources.displayMetrics.density
         val tFmt = SimpleDateFormat("HH:mm", Locale("ru"))
         for ((i, s) in items.take(shown).withIndex()) {
-            val color = DayProfileView.colorFor(s.label)
+            val color = DayProfileView.colorFor(effLabel(s))
             val tv = TextView(this)
             tv.text = tFmt.format(Date(s.startMs)) + " – " + tFmt.format(Date(s.endMs)) +
-                "   " + labelRu(s.label) + "\n" +
+                "   " + labelRu(effLabel(s)) +
+                (if (s.userLabel != null) " ✎" else "") + "\n" +
                 (if (s.journal)
                     (s.durationMs / 60000L).toString() + " мин" +
                         (if (s.steps > 0) " · ~" + s.steps + " шагов" else "") +
@@ -234,7 +290,7 @@ class DayProfileActivity : AppCompatActivity() {
             tv.background = DoodleBorderDrawable(
                 color, ContextCompat.getColor(this, R.color.surface),
                 400L + i, d, DoodleBorderDrawable.MAT_ROCK,
-                when (s.label) {
+                when (effLabel(s)) {
                     "UP" -> DoodleBorderDrawable.RIFT_UP
                     "DOWN" -> DoodleBorderDrawable.RIFT_DOWN
                     "FLAT" -> DoodleBorderDrawable.RIFT_FLAT
@@ -253,11 +309,16 @@ class DayProfileActivity : AppCompatActivity() {
 
     private fun selectRow(i: Int) {
         findViewById<DayProfileView>(R.id.profileView).select(i)
+        selected = i
         val s = items[i]
+        // Править можно только настоящую сессию: журнальный отрезок - запись
+        // действия человека, а поездка не про уклон.
+        findViewById<TextView>(R.id.editLabelButton).visibility =
+            if (!s.journal && !s.transport && s.id != 0L) View.VISIBLE else View.GONE
         val f = SimpleDateFormat("EEE, d MMMM yyyy, HH:mm", Locale("ru"))
         val t2 = SimpleDateFormat("HH:mm", Locale("ru"))
         val det = findViewById<TextView>(R.id.detailText)
-        det.setTextColor(DayProfileView.colorFor(s.label))
+        det.setTextColor(DayProfileView.colorFor(effLabel(s)))
         det.text = f.format(Date(s.startMs)) + "–" + t2.format(Date(s.endMs)) + "\n" +
             (if (s.journal)
                 labelRu(s.label) + " · " + (s.durationMs / 60000L) + " мин" +
@@ -274,9 +335,12 @@ class DayProfileActivity : AppCompatActivity() {
                     s.chipShare <= 0.4f -> "в руке"
                     else -> "то в руке, то в кармане"
                 }
-                labelRu(s.label) + " · ~" + s.steps + " шагов · " +
+                labelRu(effLabel(s)) + " · ~" + s.steps + " шагов · " +
                     (s.durationMs / 60000L) + " мин · телефон " + carry +
-                    "\nОтвет: " + confirmRu(s.confirmState)
+                    "\nОтвет: " + confirmRu(s.confirmState) +
+                    (if (s.userLabel != null)
+                        "\nИсправлено человеком, исходная метка: " + labelRu(s.label)
+                     else "")
             })
     }
 

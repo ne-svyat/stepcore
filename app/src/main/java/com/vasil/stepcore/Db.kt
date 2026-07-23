@@ -309,6 +309,13 @@ interface StepDao {
     @Query("UPDATE sessions SET confirmState = :state WHERE id = :id")
     suspend fun setSessionConfirm(id: Long, state: Int)
 
+    // v218: правка метки. Заодно подтверждение - человек ответил осознанно.
+    @Query("UPDATE sessions SET userLabel = :label, confirmState = 1 WHERE id = :id")
+    suspend fun setUserLabel(id: Long, label: String)
+
+    @Query("UPDATE sessions SET userLabel = NULL WHERE id = :id")
+    suspend fun clearUserLabel(id: Long)
+
     // L3.0: свежая надёжная ПЛОСКАЯ сессия, про которую ещё не спрашивали.
     // Нужна, чтобы "ровно" стало подтверждённым классом, а не меткой по умолчанию.
     @Query("SELECT * FROM sessions WHERE reliable = 1 AND confirmState = 0 " +
@@ -471,6 +478,14 @@ val MIGRATION_8_9 = object : Migration(8, 9) {
  * Условие узкое намеренно: sampleSource = 1 И screenOn = 0. Строки
  * детектора и строки чипа при включённом экране честны и остаются.
  */
+val MIGRATION_12_13 = object : Migration(12, 13) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        // Только добавление колонки: старые строки получают NULL, что честно
+        // означает "правки не было". Ничего не переписываем.
+        db.execSQL("ALTER TABLE sessions ADD COLUMN userLabel TEXT")
+    }
+}
+
 val MIGRATION_11_12 = object : Migration(11, 12) {
     override fun migrate(db: SupportSQLiteDatabase) {
         // Только добавление колонок: старые строки получают NULL, что честно
@@ -541,11 +556,14 @@ data class SessionRecord(
     // Наполнится активным обучением. Сейчас всегда 0.
     val confirmState: Int = 0,
     // прослеживаемость: по краям можно поднять исходные образцы
-    val builtFromMaxTimeMs: Long = 0  // до какого образца корпус уже свёрнут
+    val builtFromMaxTimeMs: Long = 0,  // до какого образца корпус уже свёрнут
+    // v218. Правка метки человеком. Исходный label НЕ переписывается: он
+    // факт того, что было нажато тогда. null = правки не было.
+    val userLabel: String? = null
 )
 
 @Database(entities = [DayRecord::class, EventRecord::class, HourRecord::class, ProfileSnapshotRecord::class, TerrainSample::class, SessionRecord::class],
-    version = 12, exportSchema = false)
+    version = 13, exportSchema = false)
 abstract class AppDb : RoomDatabase() {
     abstract fun dao(): StepDao
 
@@ -555,7 +573,7 @@ abstract class AppDb : RoomDatabase() {
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
                     context.applicationContext, AppDb::class.java, "stepcore.db"
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12).build().also { instance = it }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13).build().also { instance = it }
             }
     }
 }

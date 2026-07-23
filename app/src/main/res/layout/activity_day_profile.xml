@@ -30,6 +30,13 @@
         android:lineSpacingExtra="2dp" android:layout_marginTop="8dp"
         android:paddingStart="4dp" android:paddingEnd="4dp" />
 
+    <TextView android:id="@+id/editLabelButton"
+        android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:gravity="center" android:text="✎  Исправить метку"
+        android:textColor="@color/accent_amber_bright" android:textSize="15sp"
+        android:paddingTop="12dp" android:paddingBottom="12dp"
+        android:layout_marginTop="10dp" android:visibility="gone" />
+
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
