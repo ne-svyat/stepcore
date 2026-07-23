@@ -35,10 +35,18 @@ class DayProfileActivity : AppCompatActivity() {
         val durationMs: Long,
         val confirmState: Int,
         val chipShare: Float,
-        val transport: Boolean
+        val transport: Boolean,
+        // v217: сколько строк корпуса дал отрезок. -1 = не считали (режим
+        // сессий). 0 в журнальном режиме значит "модель этого не видела".
+        val rows: Int = -1,
+        val journal: Boolean = false
     )
 
-    private var byTime = false
+    // 0 = сессии по шагам, 1 = сессии по времени, 2 = журнал (всегда по
+    // времени: шаги при включённом экране в журнал не пишутся).
+    private var viewMode = 0
+    private val byTime: Boolean get() = viewMode >= 1
+    private val sourceJournal: Boolean get() = viewMode == 2
     private var dayShift = 0
     private var shown = 20
     private var dayKey = ""       // yyyy-MM-dd показанного дня
@@ -59,7 +67,9 @@ class DayProfileActivity : AppCompatActivity() {
                 (312 + id % 7).toLong(), d,
                 DoodleBorderDrawable.MAT_ROCK, DoodleBorderDrawable.RIFT_NONE)
         }
-        findViewById<TextView>(R.id.axisToggle).setOnClickListener { byTime = !byTime; load() }
+        findViewById<TextView>(R.id.axisToggle).setOnClickListener {
+            viewMode = (viewMode + 1) % 3; shown = 20; load()
+        }
         findViewById<TextView>(R.id.prevDay).setOnClickListener { dayShift++; shown = 20; load() }
         findViewById<TextView>(R.id.nextDay).setOnClickListener {
             if (dayShift > 0) { dayShift--; shown = 20; load() }
@@ -77,7 +87,9 @@ class DayProfileActivity : AppCompatActivity() {
     private fun load() {
         val view = findViewById<DayProfileView>(R.id.profileView)
         val head = findViewById<TextView>(R.id.dayTitle)
-        findViewById<TextView>(R.id.axisToggle).text = if (byTime) "по времени" else "по шагам"
+        findViewById<TextView>(R.id.axisToggle).text = when (viewMode) {
+            0 -> "по шагам"; 1 -> "по времени"; else -> "журнал"
+        }
 
         lifecycleScope.launch {
             val dao = AppDb.get(this@DayProfileActivity).dao()
@@ -96,6 +108,22 @@ class DayProfileActivity : AppCompatActivity() {
             val ofDay = all.filter { dayFmt.format(Date(it.startMs)) == day }
                 .sortedBy { it.startMs }
 
+            if (sourceJournal) {
+                items = journalItems(dao, day)
+                val titleFmtJ = SimpleDateFormat("EEEE, d MMMM yyyy", Locale("ru"))
+                val blind = items.count { it.rows == 0 }
+                head.text = titleFmtJ.format(Date(ofDay.first().startMs)) + "\n" +
+                    "журнал: " + items.size + " отрезков" +
+                    (if (blind > 0) ", без признаков " + blind else "")
+                view.setData(
+                    items.map {
+                        DayProfileView.Seg(it.label, it.steps, it.durationMs, it.startMs)
+                    },
+                    true
+                )
+                renderList()
+                return@launch
+            }
             val walk = ofDay.map {
                 Item(it.startMs, it.endMs, it.label, it.nSamples * 20, it.durationMs,
                     it.confirmState, it.chipShare, false)
@@ -139,6 +167,47 @@ class DayProfileActivity : AppCompatActivity() {
         return out
     }
 
+    /** Лента из журнала: интервалы между нажатиями метки.
+     *  Времена нажатий - факт, записанный в момент действия человека.
+     *  Для каждого интервала считаем строки корпуса: ноль означает, что
+     *  отрезок был, но модель его не видела. */
+    private suspend fun journalItems(dao: StepDao, day: String): List<Item> {
+        val events = dao.eventsOfDay(day)
+        if (events.isEmpty()) return emptyList()
+        val dayFrom = events.first().timeMs
+        val dayTo = events.last().timeMs
+        val rows = dao.samplesBetween(dayFrom, dayTo + 60_000L)
+
+        val markAt = ArrayList<Long>()
+        val markLab = ArrayList<String>()
+        for (e in events) {
+            if (!e.text.startsWith("Уклон: ")) continue
+            val t = e.text.removePrefix("Уклон: ").replace(" (шторка)", "").trim()
+            markAt.add(e.timeMs)
+            markLab.add(
+                when (t) {
+                    "в гору" -> "UP"; "с горы" -> "DOWN"
+                    "не отмечено" -> "NONE"; else -> "FLAT"
+                }
+            )
+        }
+        if (markAt.isEmpty()) return emptyList()
+
+        val out = ArrayList<Item>()
+        for (i in markAt.indices) {
+            val from = markAt[i]
+            val to = if (i + 1 < markAt.size) markAt[i + 1] else dayTo
+            val dur = to - from
+            if (dur < 12_000L) continue          // мгновенные перещёлкивания
+            val n = rows.count { it.timeMs in from until to }
+            out.add(
+                Item(from, to, markLab[i], stepsBetween(events, from, to), dur,
+                    0, 0f, false, n, true)
+            )
+        }
+        return out
+    }
+
     private fun renderList() {
         val box = findViewById<LinearLayout>(R.id.intervalList)
         box.removeAllViews()
@@ -149,7 +218,11 @@ class DayProfileActivity : AppCompatActivity() {
             val tv = TextView(this)
             tv.text = tFmt.format(Date(s.startMs)) + " – " + tFmt.format(Date(s.endMs)) +
                 "   " + labelRu(s.label) + "\n" +
-                (if (s.transport) "поездка · " + (s.durationMs / 60000L) + " мин"
+                (if (s.journal)
+                    (s.durationMs / 60000L).toString() + " мин" +
+                        (if (s.steps > 0) " · ~" + s.steps + " шагов" else "") +
+                        " · " + (if (s.rows == 0) "без признаков" else "строк " + s.rows)
+                 else if (s.transport) "поездка · " + (s.durationMs / 60000L) + " мин"
                  else "~" + s.steps + " шагов · " + (s.durationMs / 60000L) + " мин · " +
                      confirmRu(s.confirmState))
             tv.textSize = 14f
@@ -186,7 +259,13 @@ class DayProfileActivity : AppCompatActivity() {
         val det = findViewById<TextView>(R.id.detailText)
         det.setTextColor(DayProfileView.colorFor(s.label))
         det.text = f.format(Date(s.startMs)) + "–" + t2.format(Date(s.endMs)) + "\n" +
-            (if (s.transport)
+            (if (s.journal)
+                labelRu(s.label) + " · " + (s.durationMs / 60000L) + " мин" +
+                    (if (s.steps > 0) " · ~" + s.steps + " шагов (при выкл. экране)" else "") +
+                    "\n" + (if (s.rows == 0)
+                        "Строк корпуса нет: отрезок был, но модель его не видела."
+                     else "Строк корпуса: " + s.rows)
+             else if (s.transport)
                 "поездка · " + (s.durationMs / 60000L) + " мин\n" +
                     "Шаги в транспорте не считаются как ходьба, и уклон здесь не учится."
              else {
