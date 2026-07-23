@@ -870,12 +870,30 @@ class StepService : Service(), SensorEventListener {
                 // гироскопу), но метка уклона, оси гироскопа, наклон
                 // телефона и амплитуда из сырого канала существуют и без
                 // него. Без этой ветки они были бы потеряны.
-                if (detector.mode != StepDetector.Mode.WALK &&
-                    detector.mode != StepDetector.Mode.RUN) {
+                // v216. Раньше здесь стояло просто "детектор не в ходьбе".
+                // Это открывало дыру: нажатие метки будит экран, детектор
+                // встаёт в WALK, экран гаснет - и режим ЗАЛИПАЕТ, потому что
+                // разбудить и сбросить его некому. Канал оставался закрытым,
+                // сам детектор спал, строки не писались вовсе. Измерено
+                // 23 июля: 717 и 795 шагов подъёма дали ноль строк.
+                // Теперь режим блокирует канал, только пока он СВЕЖИЙ:
+                // без подтверждённого шага дольше MODE_STALE_MS "ходьба" -
+                // воспоминание, а не наблюдение.
+                val modeFresh = lastConfirmedElapsed > 0L &&
+                    SystemClock.elapsedRealtime() - lastConfirmedElapsed <= MODE_STALE_MS
+                val detectorBusy = modeFresh &&
+                    (detector.mode == StepDetector.Mode.WALK ||
+                        detector.mode == StepDetector.Mode.RUN)
+                if (!detectorBusy) {
                     chipSinceSample += delta
                     if (chipSinceSample >= chipSampleEvery()) {
                         chipSinceSample = 0
-                        writeTerrainSample(detector.mode.name, 0f, 0f, source = 1)
+                        // Режим в строке - честный: если детектор протух,
+                        // пишем IDLE, а не его несвежее мнение.
+                        val modeName =
+                            if (modeFresh) detector.mode.name
+                            else StepDetector.Mode.IDLE.name
+                        writeTerrainSample(modeName, 0f, 0f, source = 1)
                     }
                 }
                 StepsState.steps.value = walkSteps + runSteps
@@ -1517,6 +1535,13 @@ class StepService : Service(), SensorEventListener {
          */
         const val LABEL_WINDOW_MS = 120_000L
         /** L1.1: период и длительность окна фоновой обработки. */
+        // v216. Через сколько без подтверждённого шага режим детектора
+        // считается протухшим и перестаёт блокировать чиповый канал.
+        // 15 с - тот же порог, что у сенсорных признаков: за это время
+        // идущий человек делает ~28 шагов, то есть живой детектор
+        // подтвердил бы их многократно. Молчание дольше означает, что
+        // детектор спит, а не что человек стоит.
+        const val MODE_STALE_MS = 15_000L
         const val BG_PERIOD_MS = 60_000L
         const val BG_WINDOW_MS = 12_000L
         // Калибровка темпа. MIN_CAL_INTERVALS оставлен прежним, 10: менять
