@@ -41,6 +41,7 @@ class DayProfileActivity : AppCompatActivity() {
     private var byTime = false
     private var dayShift = 0
     private var shown = 20
+    private var dayKey = ""       // yyyy-MM-dd показанного дня
     private var items: List<Item> = emptyList()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -64,6 +65,12 @@ class DayProfileActivity : AppCompatActivity() {
             if (dayShift > 0) { dayShift--; shown = 20; load() }
         }
         findViewById<TextView>(R.id.moreRows).setOnClickListener { shown += 20; renderList() }
+        val diagBtn = findViewById<TextView>(R.id.diagButton)
+        diagBtn.background = DoodleBorderDrawable(
+            ContextCompat.getColor(this, R.color.accent_amber),
+            ContextCompat.getColor(this, R.color.surface),
+            777L, d, DoodleBorderDrawable.MAT_ROCK, DoodleBorderDrawable.RIFT_NONE)
+        diagBtn.setOnClickListener { lifecycleScope.launch { collectDiag() } }
         load()
     }
 
@@ -85,6 +92,7 @@ class DayProfileActivity : AppCompatActivity() {
             val days = all.map { dayFmt.format(Date(it.startMs)) }.distinct()
             dayShift = dayShift.coerceIn(0, days.size - 1)
             val day = days[dayShift]
+            dayKey = day
             val ofDay = all.filter { dayFmt.format(Date(it.startMs)) == day }
                 .sortedBy { it.startMs }
 
@@ -191,6 +199,102 @@ class DayProfileActivity : AppCompatActivity() {
                     (s.durationMs / 60000L) + " мин · телефон " + carry +
                     "\nОтвет: " + confirmRu(s.confirmState)
             })
+    }
+
+    /** Сверка журнала с корпусом.
+     *  Интервалы меток берутся из событий "Уклон: ..." - это ТОЧНЫЕ времена
+     *  нажатий человека, факт, а не реконструкция. Для каждого интервала
+     *  считаются шаги (из записей "За время блокировки") и число строк
+     *  корпуса. Интервал вида "6 мин, 717 шагов -> 0 строк" и есть дыра. */
+    private suspend fun collectDiag() {
+        if (dayKey == "") return
+        val dao = AppDb.get(this).dao()
+        val events = dao.eventsOfDay(dayKey)
+        if (events.isEmpty()) {
+            android.widget.Toast.makeText(
+                this, "Журнал за этот день пуст", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        val dayFrom = events.first().timeMs
+        val dayTo = events.last().timeMs + 60_000L
+        val rows = dao.samplesBetween(dayFrom, dayTo)
+
+        // Интервалы меток: от нажатия до следующего нажатия.
+        data class Mark(val at: Long, val label: String)
+        val marks = ArrayList<Mark>()
+        for (e in events) {
+            if (!e.text.startsWith("Уклон: ")) continue
+            val t = e.text.removePrefix("Уклон: ").replace(" (шторка)", "").trim()
+            val lab = when (t) {
+                "в гору" -> "UP"; "с горы" -> "DOWN"
+                "не отмечено" -> "NONE"; else -> "FLAT"
+            }
+            marks.add(Mark(e.timeMs, lab))
+        }
+
+        val tf = SimpleDateFormat("HH:mm:ss", Locale("ru"))
+        val sb = StringBuilder()
+        sb.append("StepCore — диагностика сбора\n")
+        sb.append(SimpleDateFormat("EEEE, d MMMM yyyy", Locale("ru"))
+            .format(Date(dayFrom))).append("\n\n")
+        sb.append("Строк корпуса за день: ").append(rows.size)
+            .append(" (детектор ").append(rows.count { it.sampleSource == 0 })
+            .append(", чип ").append(rows.count { it.sampleSource == 1 }).append(")\n\n")
+
+        if (marks.isEmpty()) {
+            sb.append("Нажатий метки в журнале нет.\n")
+        } else {
+            sb.append("Интервалы меток из журнала:\n")
+            val perLabelMin = HashMap<String, Float>()
+            val perLabelRows = HashMap<String, Int>()
+            for (i in marks.indices) {
+                val from = marks[i].at
+                val to = if (i + 1 < marks.size) marks[i + 1].at else dayTo
+                val lab = marks[i].label
+                val mins = (to - from) / 60000f
+                if (mins < 0.2f) continue          // мгновенные перещёлкивания
+                val inRange = rows.filter { it.timeMs in from until to }
+                val steps = stepsBetween(events, from, to)
+                perLabelMin[lab] = (perLabelMin[lab] ?: 0f) + mins
+                perLabelRows[lab] = (perLabelRows[lab] ?: 0) + inRange.size
+                sb.append("  ").append(tf.format(Date(from))).append("–")
+                    .append(tf.format(Date(to))).append("  ")
+                    .append(labelRu(lab)).append("  ")
+                    .append(String.format(Locale.US, "%.1f", mins)).append(" мин · ~")
+                    .append(steps).append(" шаг. · строк ").append(inRange.size)
+                    .append(" (д ").append(inRange.count { it.sampleSource == 0 })
+                    .append(", ч ").append(inRange.count { it.sampleSource == 1 }).append(")")
+                if (inRange.isEmpty() && steps > 0) sb.append("   <-- ПУСТО")
+                sb.append("\n")
+            }
+            sb.append("\nСводка по меткам:\n")
+            for (lab in arrayOf("UP", "DOWN", "FLAT", "NONE")) {
+                val m = perLabelMin[lab] ?: continue
+                sb.append("  ").append(labelRu(lab)).append(": ")
+                    .append(String.format(Locale.US, "%.1f", m)).append(" мин · строк ")
+                    .append(perLabelRows[lab] ?: 0).append("\n")
+            }
+        }
+
+        val cm = getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+            as android.content.ClipboardManager
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("StepCore diag", sb.toString()))
+        android.widget.Toast.makeText(
+            this, "Диагностика в буфере", android.widget.Toast.LENGTH_SHORT).show()
+    }
+
+    /** Шаги внутри интервала - из записей журнала "За время блокировки: N шагов".
+     *  Это единственный честный источник: корпус тут как раз и пуст. */
+    private fun stepsBetween(events: List<EventRecord>, from: Long, to: Long): Int {
+        var sum = 0
+        for (e in events) {
+            if (e.timeMs < from || e.timeMs >= to) continue
+            if (!e.text.startsWith("За время блокировки:")) continue
+            val digits = e.text.filter { it.isDigit() || it == ' ' }.trim().split(" ")
+            val n = digits.firstOrNull { it.isNotEmpty() }?.toIntOrNull() ?: 0
+            sum += n
+        }
+        return sum
     }
 
     private fun labelRu(l: String) = when (l) {

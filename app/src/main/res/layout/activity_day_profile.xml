@@ -81,6 +81,13 @@
                 android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:orientation="vertical" android:layout_marginTop="10dp" />
 
+            <TextView android:id="@+id/diagButton"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:gravity="center" android:text="⚕  Диагностика сбора"
+                android:textColor="@color/accent_amber_bright" android:textSize="15sp"
+                android:paddingTop="14dp" android:paddingBottom="14dp"
+                android:layout_marginTop="14dp" />
+
             <TextView android:id="@+id/moreRows"
                 android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:gravity="center" android:text=""
