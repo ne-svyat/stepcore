@@ -259,9 +259,6 @@ class MainActivity : AppCompatActivity() {
         inclineDownBtn.setOnClickListener { setIncline(TerrainState.Incline.DOWN) }
         inclineNoneBtn.setOnClickListener { setIncline(TerrainState.Incline.NONE) }
 
-        findViewById<TextView>(R.id.rebuildSessionsButton).setOnClickListener {
-            lifecycleScope.launch { rebuildSessions(findViewById(R.id.sessionText)) }
-        }
         findViewById<TextView>(R.id.exportSessionsButton).setOnClickListener {
             lifecycleScope.launch { exportSessions() }
         }
@@ -282,13 +279,6 @@ class MainActivity : AppCompatActivity() {
 
         val diagBtn = findViewById<Button>(R.id.diagButton)
         val reconcileBtn = findViewById<Button>(R.id.reconcileButton)
-        val bgAccelSwitch = findViewById<SwitchCompat>(R.id.bgAccelSwitch)
-        bgAccelSwitch.isChecked = prefs.getBoolean("bg_accel", false)
-        StepsState.bgAccel.value = bgAccelSwitch.isChecked
-        bgAccelSwitch.setOnCheckedChangeListener { _, checked ->
-            StepsState.bgAccel.value = checked
-            prefs.edit().putBoolean("bg_accel", checked).apply()
-        }
         detailLogSwitch.isChecked = prefs.getBoolean("detail_log", false)
         StepsState.detailLog.value = detailLogSwitch.isChecked
         detailLogSwitch.setOnCheckedChangeListener { _, checked ->
@@ -890,7 +880,6 @@ class MainActivity : AppCompatActivity() {
         frame(findViewById(R.id.inclineFlatButton), R.color.axis_dim, R.color.surface, 202L)
         frame(findViewById(R.id.inclineDownButton), R.color.accent_green, R.color.surface_green, 203L)
         frame(findViewById(R.id.inclineNoneButton), R.color.text_dim, R.color.surface, 206L)
-        frame(findViewById(R.id.rebuildSessionsButton), R.color.accent_teal, R.color.surface, 204L)
         frame(findViewById(R.id.exportSessionsButton), R.color.accent_blue, R.color.surface, 205L)
 
         findViewById<DoodleSceneView>(R.id.headerScene).setScene(DoodleSceneView.HEADER)

@@ -732,36 +732,7 @@
                     </LinearLayout>
                 </LinearLayout>
 
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:layout_marginBottom="12dp">
-                    <View
-                        android:layout_width="3dp"
-                        android:layout_height="match_parent"
-                        android:background="@color/accent_amber" />
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="vertical"
-                        android:paddingStart="10dp">
-                        <androidx.appcompat.widget.SwitchCompat
-                            android:id="@+id/bgAccelSwitch"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:text="Сбор при выключенном экране"
-                            android:textColor="@color/accent_amber_bright"
-                            android:textSize="17sp" />
-                        <TextView
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:text="Признаки собираются и с заблокированным экраном, окнами по 12 секунд раз в минуту. Счёт шагов не меняется. ЖРЁТ БАТАРЕЮ — включай только на замер."
-                            android:textColor="@color/text_dim"
-                            android:textSize="13sp"
-                            android:layout_marginTop="2dp" />
-                    </LinearLayout>
-                </LinearLayout>
+                
 
                 <LinearLayout
                     android:layout_width="match_parent"
@@ -859,18 +830,6 @@
                             android:textColor="@color/accent_teal"
                             android:fontFamily="monospace"
                             android:textSize="14sp"
-                            android:layout_marginTop="10dp" />
-
-                        <TextView
-                            android:id="@+id/rebuildSessionsButton"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:gravity="center"
-                            android:text="⟳ Пересобрать сессии"
-                            android:textColor="@color/accent_teal"
-                            android:textSize="14sp"
-                            android:paddingTop="10dp"
-                            android:paddingBottom="10dp"
                             android:layout_marginTop="10dp" />
 
                         <TextView

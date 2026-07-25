@@ -122,6 +122,16 @@ class SynxActivity : AppCompatActivity() {
 
         val prefs = getSharedPreferences(StepService.PREFS, MODE_PRIVATE)
         // Тумблер обучения. Выкл по умолчанию: пока не разрешил - вопросов нет.
+        // v227. "Сбор при выключенном экране" переехал сюда из Инструментов.
+        // Пишет тот же ключ bg_accel: сервис читает его из prefs напрямую,
+        // и StepsState держит его для живого решения об окне сбора.
+        val bgSwitch = findViewById<SwitchCompat>(R.id.synxBgAccelSwitch)
+        bgSwitch.isChecked = prefs.getBoolean("bg_accel", false)
+        StepsState.bgAccel.value = bgSwitch.isChecked
+        bgSwitch.setOnCheckedChangeListener { _, checked ->
+            StepsState.bgAccel.value = checked
+            prefs.edit().putBoolean("bg_accel", checked).apply()
+        }
         learnSwitch.isChecked = prefs.getBoolean(KEY_LEARN, false)
         learnSwitch.setOnCheckedChangeListener { _, checked ->
             // Включение - явное согласие: снимает и паузу "не беспокоить".
