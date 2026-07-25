@@ -47,7 +47,10 @@ class DayProfileActivity : AppCompatActivity() {
         // v222: медианный каденс сессии (шаг/с). null = детектор не мерил.
         val cadenceMed: Float? = null,
         // v223: ровность ритма (IQR каденса / медиана). Больше = сбивчивее.
-        val rhythmStab: Float? = null
+        val rhythmStab: Float? = null,
+        // v225: надёжна ли сессия (годится ли учить агента). На карту попадают
+        // все, но ненадёжные рисуем тоньше и помечаем.
+        val reliable: Boolean = true
     )
 
     // 0 = сессии по шагам, 1 = сессии по времени, 2 = журнал (всегда по
@@ -123,7 +126,9 @@ class DayProfileActivity : AppCompatActivity() {
 
         lifecycleScope.launch {
             val dao = AppDb.get(this@DayProfileActivity).dao()
-            val all = dao.reliableSessions()
+            // v225: карта показывает ВСЕ сессии дня. Обучение это не трогает -
+            // оно берёт reliableSessions() отдельно.
+            val all = dao.allSessionsForMap()
             if (all.isEmpty()) {
                 head.text = "Данных пока нет"
                 view.setData(emptyList(), byTime)
@@ -174,7 +179,7 @@ class DayProfileActivity : AppCompatActivity() {
             val walk = ofDay.map {
                 Item(it.startMs, it.endMs, it.label, it.nSamples * 20, it.durationMs,
                     it.confirmState, it.chipShare, false, -1, false, it.id, it.userLabel,
-                    it.cadenceMed, it.rhythmStab)
+                    it.cadenceMed, it.rhythmStab, it.reliable)
             }
             val rides = transportSpans(dao, ofDay.first().startMs, ofDay.last().endMs)
             items = (walk + rides).sortedBy { it.startMs }
@@ -187,7 +192,8 @@ class DayProfileActivity : AppCompatActivity() {
 
             view.setData(
                 items.map {
-                    DayProfileView.Seg(effLabel(it), it.steps, it.durationMs, it.startMs)
+                    DayProfileView.Seg(effLabel(it), it.steps, it.durationMs, it.startMs,
+                        it.reliable)
                 },
                 byTime
             )
@@ -383,6 +389,9 @@ class DayProfileActivity : AppCompatActivity() {
                      else "") +
                     (if (rhythmRu(s.rhythmStab) != "")
                         "\nРитм: " + rhythmRu(s.rhythmStab) else "") +
+                    (if (!s.reliable)
+                        "\nКороткий отрезок — виден на карте, но агента им не учим."
+                     else "") +
                     "\nОтвет: " + confirmRu(s.confirmState) +
                     (if (s.userLabel != null)
                         "\nИсправлено человеком, исходная метка: " + labelRu(s.label)

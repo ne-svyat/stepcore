@@ -33,7 +33,8 @@ class DayProfileView @JvmOverloads constructor(
         val label: String,
         val steps: Int,
         val durationMs: Long,
-        val startMs: Long
+        val startMs: Long,
+        val reliable: Boolean = true
     )
 
     private var segs: List<Seg> = emptyList()
@@ -150,6 +151,7 @@ class DayProfileView @JvmOverloads constructor(
                 sel -> 9f * d
                 s.label == "NONE" || s.label == "" -> 2f * d
                 s.label == "TRANSPORT" -> 3f * d
+                !s.reliable -> 2.5f * d          // короткий отрезок - тоньше
                 else -> 4f * d
             }
             line.alpha = if (selectedIndex >= 0 && !sel) 90 else 255

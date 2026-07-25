@@ -364,6 +364,12 @@ interface StepDao {
     @Query("SELECT * FROM sessions WHERE reliable = 1 ORDER BY endMs DESC")
     suspend fun reliableSessions(): List<SessionRecord>
 
+    // v225: ВСЕ сессии для карты дня. Надёжность - критерий обучения, а не
+    // существования: короткий подъём был, и на карте он должен быть виден.
+    // Обучение по-прежнему берёт только reliableSessions().
+    @Query("SELECT * FROM sessions ORDER BY endMs DESC")
+    suspend fun allSessionsForMap(): List<SessionRecord>
+
     @Query("SELECT COUNT(*) FROM terrain_samples WHERE featureVersion >= 2")
     suspend fun countSamplesV2(): Int
 }
