@@ -801,66 +801,7 @@
                     </LinearLayout>
                 </LinearLayout>
 
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal">
-                    <View
-                        android:layout_width="3dp"
-                        android:layout_height="match_parent"
-                        android:background="@color/accent_green" />
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="vertical"
-                        android:paddingStart="10dp">
-                        <TextView
-                            android:id="@+id/corpusText"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:text="Корпус: —"
-                            android:textColor="@color/text_main"
-                            android:fontFamily="monospace"
-                            android:textSize="14sp" />
-                        <TextView
-                            android:id="@+id/sessionText"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:text="Сессии: —"
-                            android:textColor="@color/accent_teal"
-                            android:fontFamily="monospace"
-                            android:textSize="14sp"
-                            android:layout_marginTop="10dp" />
-
-                        <TextView
-                            android:id="@+id/exportSessionsButton"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:gravity="center"
-                            android:text="⬇ Экспорт сессий (CSV)"
-                            android:textColor="@color/accent_blue"
-                            android:textSize="14sp"
-                            android:paddingTop="10dp"
-                            android:paddingBottom="10dp"
-                            android:layout_marginTop="10dp" />
-
-                        <TextView
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:text="Образцы, свёрнутые в непрерывные куски ходьбы. Основа обучения: сессия знает медиану, разброс, тренд усталости и метку уклона. Строятся при открытии этой панели."
-                            android:textColor="@color/text_dim"
-                            android:textSize="13sp"
-                            android:layout_marginTop="2dp" />
-
-                        <TextView
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:text="Размеченные образцы походки. Копятся сами, пока идёт счёт. Метки «в гору» и «с горы» появляются только от твоего нажатия — из шторки или с кнопок выше."
-                            android:textColor="@color/text_dim"
-                            android:textSize="13sp"
-                            android:layout_marginTop="4dp" />
-                    </LinearLayout>
-                </LinearLayout>
+                
 
             </LinearLayout>
 

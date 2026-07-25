@@ -1,5 +1,6 @@
 package com.vasil.stepcore
 
+import android.content.Context
 import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
@@ -27,6 +28,53 @@ class SynxActivity : AppCompatActivity() {
     // Сколько вопросов подряд за один заход. Потолок, а не цель.
     private var askedInVisit = 0
     private val MAX_ASK_PER_VISIT = 10
+
+    /** Состав корпуса: сколько образцов и по каким меткам. Ноль по метке -
+     *  это ноль ДАННЫХ, а не отсутствие уклона: показываем честно. */
+    private suspend fun refreshCorpusSynx(view: TextView) {
+        val dao = AppDb.get(this).dao()
+        val total = dao.countSamplesV3()
+        if (total == 0) { view.text = "Корпус: пока пусто"; return }
+        val flat = dao.countSamplesLabel("FLAT")
+        val up = dao.countSamplesLabel("UP")
+        val down = dao.countSamplesLabel("DOWN")
+        val chip = dao.countSamplesChip()
+        view.text = "Корпус: " + total + " образцов" +
+            "\n  ровно " + flat + " · в гору " + up + " · с горы " + down +
+            "\n  от детектора " + (total - chip) + " · от чипа " + chip
+    }
+
+    /** Экспорт ВСЕХ сессий в CSV (в буфер). Все, не только надёжные: для
+     *  разбора нужна полная картина, включая короткие уклонные. */
+    private suspend fun exportCorpusSynx() {
+        val dao = AppDb.get(this).dao()
+        val list = dao.allSessionsForMap()
+        fun f(x: Float?): String =
+            if (x == null) "" else String.format(java.util.Locale.US, "%.3f", x)
+        val sb = StringBuilder()
+        sb.append("startMs,label,userLabel,confirm,reliable,nSamples,durMs,")
+        sb.append("walkShare,runShare,chipShare,ampMed,ampIqr,cadMed,cadIqr,")
+        sb.append("pitchMed,gyroMed,ampTrend,cadTrend,rhythmStab,pitchRange\n")
+        for (x in list) {
+            sb.append(x.startMs).append(",").append(x.label).append(",")
+                .append(x.userLabel ?: "").append(",").append(x.confirmState).append(",")
+                .append(if (x.reliable) 1 else 0).append(",")
+                .append(x.nSamples).append(",").append(x.durationMs).append(",")
+                .append(f(x.walkShare)).append(",").append(f(x.runShare)).append(",")
+                .append(f(x.chipShare)).append(",").append(f(x.ampMed)).append(",")
+                .append(f(x.ampIqr)).append(",").append(f(x.cadenceMed)).append(",")
+                .append(f(x.cadenceIqr)).append(",").append(f(x.pitchMed)).append(",")
+                .append(f(x.gyroMed)).append(",").append(f(x.ampTrend)).append(",")
+                .append(f(x.cadenceTrend)).append(",").append(f(x.rhythmStab)).append(",")
+                .append(f(x.pitchRange)).append("\n")
+        }
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE)
+            as android.content.ClipboardManager
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("StepCore corpus", sb.toString()))
+        android.widget.Toast.makeText(
+            this, "Корпус (" + list.size + " сессий) в буфере",
+            android.widget.Toast.LENGTH_SHORT).show()
+    }
 
     /** Инкрементальный догон сессий: строит только хвост корпуса после
      *  lastBuiltTimeMs, старые сессии с их ответами не трогает. Дёшево,
@@ -131,6 +179,13 @@ class SynxActivity : AppCompatActivity() {
         bgSwitch.setOnCheckedChangeListener { _, checked ->
             StepsState.bgAccel.value = checked
             prefs.edit().putBoolean("bg_accel", checked).apply()
+        }
+
+        // v228. Счётчик корпуса и экспорт переехали сюда из Инструментов.
+        val corpusText = findViewById<TextView>(R.id.synxCorpusText)
+        lifecycleScope.launch { refreshCorpusSynx(corpusText) }
+        findViewById<TextView>(R.id.synxExportButton).setOnClickListener {
+            lifecycleScope.launch { exportCorpusSynx() }
         }
         learnSwitch.isChecked = prefs.getBoolean(KEY_LEARN, false)
         learnSwitch.setOnCheckedChangeListener { _, checked ->

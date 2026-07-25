@@ -228,10 +228,7 @@ class MainActivity : AppCompatActivity() {
             toolsToggle.text = if (open) "⚙  Инструменты  ▾" else "⚙  Инструменты  ▴"
             // v188: срез корпуса читается только при открытии панели.
             // Фонового опроса нет - батарея не тратится.
-            if (!open) lifecycleScope.launch {
-                refreshCorpus(findViewById(R.id.corpusText))
-                buildSessions(findViewById(R.id.sessionText))
-            }
+            // v228: корпус и сессии переехали в SYNX; здесь ничего не читаем.
         }
 
         // Метки местности (Сегмент 1): ручной уклон -> журнал + TerrainState.
@@ -259,9 +256,6 @@ class MainActivity : AppCompatActivity() {
         inclineDownBtn.setOnClickListener { setIncline(TerrainState.Incline.DOWN) }
         inclineNoneBtn.setOnClickListener { setIncline(TerrainState.Incline.NONE) }
 
-        findViewById<TextView>(R.id.exportSessionsButton).setOnClickListener {
-            lifecycleScope.launch { exportSessions() }
-        }
 
         lifecycleScope.launch {
             val y = java.time.LocalDate.now().minusDays(1).toString()
@@ -880,7 +874,6 @@ class MainActivity : AppCompatActivity() {
         frame(findViewById(R.id.inclineFlatButton), R.color.axis_dim, R.color.surface, 202L)
         frame(findViewById(R.id.inclineDownButton), R.color.accent_green, R.color.surface_green, 203L)
         frame(findViewById(R.id.inclineNoneButton), R.color.text_dim, R.color.surface, 206L)
-        frame(findViewById(R.id.exportSessionsButton), R.color.accent_blue, R.color.surface, 205L)
 
         findViewById<DoodleSceneView>(R.id.headerScene).setScene(DoodleSceneView.HEADER)
         findViewById<DoodleSceneView>(R.id.nightScene).setScene(DoodleSceneView.NIGHT)

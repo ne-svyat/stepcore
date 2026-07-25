@@ -33,7 +33,18 @@
             android:text="Когда включено, StepCore иногда спросит про одну прогулку. Отвечай честно: неверная метка отравляет корпус, и потом нужно много правильных, чтобы выправить. Промолчать лучше, чем ответить наугад."
             android:textColor="@color/text_dim" android:textSize="13sp"
             android:lineSpacingExtra="3dp" android:layout_marginTop="6dp" />
-<androidx.appcompat.widget.SwitchCompat android:id="@+id/synxBgAccelSwitch"
+<TextView android:id="@+id/synxCorpusText"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="Корпус: —"
+            android:textColor="@color/text_main" android:fontFamily="monospace"
+            android:textSize="14sp" android:layout_marginTop="24dp" />
+        <TextView android:id="@+id/synxExportButton"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:gravity="center" android:text="⬇  Экспорт корпуса (CSV)"
+            android:textColor="@color/accent_blue" android:textSize="15sp"
+            android:paddingTop="12dp" android:paddingBottom="12dp"
+            android:layout_marginTop="10dp" />
+        <androidx.appcompat.widget.SwitchCompat android:id="@+id/synxBgAccelSwitch"
             android:layout_width="match_parent" android:layout_height="wrap_content"
             android:text="Сбор при выключенном экране"
             android:textColor="@color/accent_amber_bright" android:textSize="15sp"
