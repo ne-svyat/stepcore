@@ -32,6 +32,45 @@ class SynxActivity : AppCompatActivity() {
      *  lastBuiltTimeMs, старые сессии с их ответами не трогает. Дёшево,
      *  без потери подтверждений - тот же путь, что buildSessions на главном
      *  экране, только без диагностики. */
+    /** Разовая полная пересборка новым порогом. Сохраняет ответы человека
+     *  (confirmState, userLabel) по совпадению времени и метки - прошлое
+     *  неизменно. Тот же выверенный путь, что кнопка на главном экране. */
+    private suspend fun rebuildAllWithAnswers(dao: StepDao) {
+        val saved = dao.answeredSessions().map {
+            Triple(it.startMs + it.durationMs / 2, it.label, it.confirmState)
+        }
+        dao.deleteAllSessions()
+        val raw = dao.samplesAfter(0L)
+        if (raw.isNotEmpty()) {
+            val maxT = raw.maxOf { it.timeMs }
+            val input = raw.map { t ->
+                val amp = if (t.sampleSource == 1) t.accRms else t.amp
+                val cad = if (t.sampleSource == 1) t.zcrCadence
+                          else if (t.intervalMs > 0f) 1000f / t.intervalMs else null
+                SampleIn(
+                    timeMs = t.timeMs, label = t.label, mode = t.mode,
+                    featureVersion = t.featureVersion, sampleSource = t.sampleSource,
+                    amp = amp, cadence = cad, pitchDeg = t.pitchDeg, gyro = t.gyro
+                )
+            }
+            for (o in SessionEngine.build(input)) {
+                dao.insertSession(SessionRecord(
+                    startMs = o.startMs, endMs = o.endMs, durationMs = o.durationMs,
+                    label = o.label, nSamples = o.nSamples, reliable = o.reliable,
+                    walkShare = o.modeShare["WALK"] ?: 0f, runShare = o.modeShare["RUN"] ?: 0f,
+                    ampMed = o.ampMed, ampIqr = o.ampIqr,
+                    cadenceMed = o.cadenceMed, cadenceIqr = o.cadenceIqr,
+                    pitchMed = o.pitchMed, gyroMed = o.gyroMed, chipShare = o.chipShare,
+                    featureVersion = o.featureVersion, ampTrend = o.ampTrend,
+                    cadenceTrend = o.cadenceTrend, rhythmStab = o.rhythmStab,
+                    pitchRange = o.pitchRange, confirmState = o.confirmState,
+                    builtFromMaxTimeMs = maxT
+                ))
+            }
+        }
+        for ((mid, label, state) in saved) dao.restoreConfirmAt(mid, label, state)
+    }
+
     private suspend fun catchUpSessions(dao: StepDao) {
         val after = dao.lastBuiltTimeMs()
         val raw = dao.samplesAfter(after)
@@ -102,6 +141,14 @@ class SynxActivity : AppCompatActivity() {
             // прогулки не попадут ни в стихию, ни в вопросы, и счётчик
             // будет стоять, хотя человек весь день ходил. Догон
             // инкрементальный - только новый хвост, ответы не трогаются.
+            // v226. Порог надёжности уклонных смягчён - но старые сессии в
+            // базе построены строгим. Один раз пересобираем весь корпус
+            // новым порогом (с сохранением ответов), потом снова инкремент.
+            val prefsMig = getSharedPreferences(StepService.PREFS, MODE_PRIVATE)
+            if (!prefsMig.getBoolean("reliable_v226_done", false)) {
+                rebuildAllWithAnswers(dao)
+                prefsMig.edit().putBoolean("reliable_v226_done", true).apply()
+            }
             catchUpSessions(dao)
             val reliableIncline = dao.countSessionsInclineReliable()
             when {

@@ -70,6 +70,13 @@ object SessionEngine {
     const val LABEL_CONFIRM = 2
     const val MIN_SAMPLES = 10           // короче -> reliable=false
     const val MIN_DURATION_MS = 30_000L
+    // v226. Уклонные сессии (UP/DOWN) надёжны при меньшем пороге: их метку
+    // человек жмёт ОСОЗНАННО из шторки, а интервальная ходьба (200 шагов
+    // вверх-вниз, подъёмы 1-2 мин) в строгий порог не проходит и теряется.
+    // Измерено 25.07: n>=5 & 20с пропускает 6 подъёмов из 10 против 4,
+    // отсекая только шум 0.2-0.4 мин с 1-3 образцами.
+    const val INCLINE_MIN_SAMPLES = 5
+    const val INCLINE_MIN_DURATION_MS = 20_000L
     // короткое мелькание транспорта НЕ рвёт; долгое рвёт
     const val TRANSPORT_BREAK_MS = 15_000L
 
@@ -152,7 +159,13 @@ object SessionEngine {
         val start = g.first().timeMs; val end = g.last().timeMs
         val dur = end - start
         val n = g.size
-        val reliable = n >= MIN_SAMPLES && dur >= MIN_DURATION_MS
+        // Порог надёжности зависит от типа: уклонным можно мягче (осознанная
+        // метка, короткие интервалы), плоским - строго (их вагон, шум не нужен).
+        val lbl = g.first().label
+        val incline = lbl == "UP" || lbl == "DOWN"
+        val minN = if (incline) INCLINE_MIN_SAMPLES else MIN_SAMPLES
+        val minDur = if (incline) INCLINE_MIN_DURATION_MS else MIN_DURATION_MS
+        val reliable = n >= minN && dur >= minDur
 
         val modeShare = g.groupingBy { it.mode }.eachCount()
             .mapValues { it.value.toFloat() / n }
