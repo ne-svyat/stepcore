@@ -210,12 +210,16 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center_horizontal"
+            android:gravity="center"
             android:text="Уклон: ровно"
             android:textColor="@color/text_dim"
             android:textSize="14sp"
+            android:paddingTop="10dp"
+            android:paddingBottom="10dp"
             android:layout_marginTop="9dp" />
 
         <LinearLayout
+            android:id="@+id/inclineBox"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"

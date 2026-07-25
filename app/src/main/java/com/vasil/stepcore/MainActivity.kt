@@ -240,6 +240,20 @@ class MainActivity : AppCompatActivity() {
         val inclineDownBtn = findViewById<TextView>(R.id.inclineDownButton)
         val inclineNoneBtn = findViewById<TextView>(R.id.inclineNoneButton)
         val inclineLabel = findViewById<TextView>(R.id.inclineLabel)
+        // v219. Блок кнопок сворачивается: на главном экране он нужен не
+        // всегда, а место занимает. Состояние запоминается - кто ставит
+        // метки с главного экрана, раскрывает один раз и дальше жмёт вслепую
+        // (конституция: экран портит измерение). Путь через шторку не задет.
+        val inclineBox = findViewById<android.widget.LinearLayout>(R.id.inclineBox)
+        val inclPrefs = getSharedPreferences(StepService.PREFS, MODE_PRIVATE)
+        var inclineOpen = inclPrefs.getBoolean("incline_box_open", false)
+        inclineBox.visibility = if (inclineOpen) View.VISIBLE else View.GONE
+        inclineLabel.setOnClickListener {
+            inclineOpen = !inclineOpen
+            inclineBox.visibility = if (inclineOpen) View.VISIBLE else View.GONE
+            inclPrefs.edit().putBoolean("incline_box_open", inclineOpen).apply()
+            refreshInclineLabel(inclineLabel, TerrainState.incline.value, inclineOpen)
+        }
         inclineUpBtn.setOnClickListener { setIncline(TerrainState.Incline.UP) }
         inclineFlatBtn.setOnClickListener { setIncline(TerrainState.Incline.FLAT) }
         inclineDownBtn.setOnClickListener { setIncline(TerrainState.Incline.DOWN) }
@@ -353,12 +367,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 launch {
                     TerrainState.incline.collect { v ->
-                        inclineLabel.text = when (v) {
-                            TerrainState.Incline.UP -> "Уклон: в гору"
-                            TerrainState.Incline.DOWN -> "Уклон: с горы"
-                            TerrainState.Incline.NONE -> "Уклон: не отмечено"
-                            else -> "Уклон: ровно"
-                        }
+                        refreshInclineLabel(inclineLabel, v, inclineOpen)
                         styleIncline(inclineUpBtn, v == TerrainState.Incline.UP,
                             R.color.accent_amber, 201L, DoodleBorderDrawable.RIFT_UP)
                         styleIncline(inclineFlatBtn, v == TerrainState.Incline.FLAT,
@@ -810,6 +819,28 @@ class MainActivity : AppCompatActivity() {
      * притушенный до 45% текст было тяжело читать, а именно он и говорит,
      * какой режим сейчас активен.
      */
+    /** Строка статуса метки: цвет = сама метка, поэтому свёрнутый блок всё
+     *  равно сообщает состояние одним взглядом. Не показываем метрику,
+     *  которая врёт: "не отмечено" пишется честно, а не как "ровно". */
+    private fun refreshInclineLabel(
+        tv: TextView, v: TerrainState.Incline, open: Boolean
+    ) {
+        val name = when (v) {
+            TerrainState.Incline.UP -> "в гору"
+            TerrainState.Incline.DOWN -> "с горы"
+            TerrainState.Incline.NONE -> "не отмечено"
+            else -> "ровно"
+        }
+        val color = when (v) {
+            TerrainState.Incline.UP -> R.color.accent_amber_bright
+            TerrainState.Incline.DOWN -> R.color.accent_teal_bright
+            TerrainState.Incline.NONE -> R.color.text_dim
+            else -> R.color.accent_green
+        }
+        tv.text = "Уклон: " + name + "   " + (if (open) "▾" else "▸")
+        tv.setTextColor(ContextCompat.getColor(this, color))
+    }
+
     private fun styleIncline(
         v: TextView, selected: Boolean, accent: Int, seed: Long,
         rift: Int = DoodleBorderDrawable.RIFT_DEFAULT
