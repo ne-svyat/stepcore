@@ -104,10 +104,16 @@ object StrideModel {
      * Второй вызов с ДРУГИМ каденсом мог бы решить (a,b) точно - задел,
      * пока сохраняем последнюю точку и сдвиг.
      */
-    fun applyCalibration(c: Context, metres: Float, steps: Int, byGps: Boolean = false) {
+    fun applyCalibration(
+        c: Context, metres: Float, steps: Int, byGps: Boolean = false,
+        // v230. Фактический каденс ЭТОГО замера (Гц). <=0 -> откат на профиль.
+        // Именно он делает две точки разными: медленный проход низкий, быстрый
+        // высокий. Без него c1≈c2 и Шаг Б не сработал бы.
+        measuredCadence: Float = 0f
+    ) {
         if (steps <= 0 || metres <= 0f) return
         val measuredSL = metres / steps
-        val cadence = avgWalkCadenceHz(c)
+        val cadence = if (measuredCadence > 0f) measuredCadence else avgWalkCadenceHz(c)
         val pr = p(c)
 
         // Есть ли уже сохранённая ПЕРВАЯ точка на заметно другом каденсе?

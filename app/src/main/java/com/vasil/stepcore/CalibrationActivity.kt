@@ -36,6 +36,7 @@ class CalibrationActivity : AppCompatActivity() {
     private var activeKind: CalibrationRegistry.Kind? = null
     private var gpsCal: LocationCalibrator? = null
     private var gpsStepsAtStart = 0
+    private var gpsStartMs = 0L
 
     private val gpsPermLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -226,6 +227,7 @@ class CalibrationActivity : AppCompatActivity() {
         gpsCal = cal
         activeKind = CalibrationRegistry.Kind.STRIDE
         gpsStepsAtStart = StepsState.steps.value
+        gpsStartMs = System.currentTimeMillis()
         cal.onUpdate = { metres, fixes, acc ->
             runOnUiThread {
                 val a = if (acc >= 0) "±${acc.toInt()}м" else "—"
@@ -286,11 +288,18 @@ class CalibrationActivity : AppCompatActivity() {
             toastState("Мало данных (%.0f м, %d шагов). Нужно ≥100 м на открытом небе.".format(metres, steps))
             return
         }
-        StrideModel.applyCalibration(this, metres, steps, byGps = true)
+        // Фактический каденс замера: шаги за замер / его длительность.
+        val durSec = (System.currentTimeMillis() - gpsStartMs) / 1000f
+        val measuredCad = if (durSec > 0f) steps / durSec else 0f
+        StrideModel.applyCalibration(this, metres, steps, byGps = true,
+            measuredCadence = measuredCad)
         lifecycleScope.launch { ProfileHistory.record(this@CalibrationActivity) }   // V11
         CalibrationRegistry.markDone(this, CalibrationRegistry.Kind.STRIDE)
         val cm = StrideModel.measuredStrideCm(this) ?: 0
-        toastState("Готово (GPS): %.0f м за %d шагов = длина шага %d см".format(metres, steps, cm))
+        val slopeNote = if (StrideModel.hasPersonalSlope(this))
+            " · наклон персональный ✓" else " · наклон табличный (нужен 2-й проход на др. темпе)"
+        toastState("Готово: %.0f м за %d шагов = %d см · темп %.2f Гц%s"
+            .format(metres, steps, cm, measuredCad, slopeNote))
     }
 
     private fun showFinish() {
