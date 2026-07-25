@@ -266,6 +266,9 @@ class StepService : Service(), SensorEventListener {
     private var pendW = 0
     private var pendR = 0
     private var pendUp = 0
+    // v220. Взвешенная сумма интервалов шага текущего часа и число этих шагов.
+    private var pendCadSum = 0L
+    private var pendCadN = 0
     private var pendDown = 0
 
     private var lastLoggedMode = "IDLE"
@@ -863,6 +866,14 @@ class StepService : Service(), SensorEventListener {
                 } else transportChipAccum = 0
                 rolloverDayIfNeeded()
                 val asRun = !screenOff && detector.mode == StepDetector.Mode.RUN
+                // Интервал шага копим только если детектор его реально мерил
+                // (ходьба/бег с акселерометром). В кармане mode иной - каденс
+                // не искажаем, час останется с нулём и откатится на константу.
+                val iv = detector.lastIntervalMs
+                if (!asRun && iv in 250f..2000f) {
+                    pendCadSum += (iv.toLong()) * delta
+                    pendCadN += delta
+                }
                 if (asRun) { runSteps += delta; bumpHour(0, delta) }
                 else { walkSteps += delta; bumpHour(delta, 0) }
                 if (screenOff) hwSessionAdded += delta
@@ -1283,10 +1294,12 @@ class StepService : Service(), SensorEventListener {
     private fun flushHour() {
         if (pendKey.isEmpty() || (pendW == 0 && pendR == 0)) return
         val k = pendKey; val w = pendW; val r = pendR; val up = pendUp; val down = pendDown
+        val cadSum = pendCadSum; val cadN = pendCadN
         pendW = 0; pendR = 0; pendUp = 0; pendDown = 0
+        pendCadSum = 0L; pendCadN = 0
         scope.launch {
             val dao = AppDb.get(this@StepService).dao()
-            dao.ensureHour(k); dao.addHour(k, w, r, up, down)
+            dao.ensureHour(k); dao.addHour(k, w, r, up, down, cadSum, cadN)
         }
     }
 

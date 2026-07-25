@@ -50,6 +50,13 @@ data class HourRecord(
     // Сегмент 2: сколько шагов часа помечено уклоном (flat = total-up-down).
     val upSteps: Int = 0,
     val downSteps: Int = 0,
+    // v220. Живой каденс часа как ВЗВЕШЕННАЯ сумма интервалов шага:
+    // cadenceIntervalSum = Σ(intervalMs), cadenceStepSum = число этих шагов.
+    // Медианный интервал = sum/count -> каденс = 1000/интервал. Взвешивание
+    // по шагам, а не среднее средних: медленная минута не перевесит быструю.
+    // 0 в обоих значит "детектор не мерил" (карман) -> откат на константу.
+    val cadenceIntervalSum: Long = 0,
+    val cadenceStepSum: Int = 0,
 )
 
 /**
@@ -221,8 +228,8 @@ interface StepDao {
     @Query("INSERT OR IGNORE INTO hours(dateHour, walkSteps, runSteps) VALUES(:k, 0, 0)")
     suspend fun ensureHour(k: String)
 
-    @Query("UPDATE hours SET walkSteps = walkSteps + :w, runSteps = runSteps + :r, upSteps = upSteps + :up, downSteps = downSteps + :down WHERE dateHour = :k")
-    suspend fun addHour(k: String, w: Int, r: Int, up: Int, down: Int)
+    @Query("UPDATE hours SET walkSteps = walkSteps + :w, runSteps = runSteps + :r, upSteps = upSteps + :up, downSteps = downSteps + :down, cadenceIntervalSum = cadenceIntervalSum + :cadSum, cadenceStepSum = cadenceStepSum + :cadN WHERE dateHour = :k")
+    suspend fun addHour(k: String, w: Int, r: Int, up: Int, down: Int, cadSum: Long, cadN: Int)
 
     @Query("SELECT * FROM hours WHERE dateHour LIKE :dayPrefix || '%' ORDER BY dateHour ASC")
     suspend fun hoursOfDay(dayPrefix: String): List<HourRecord>
@@ -478,6 +485,15 @@ val MIGRATION_8_9 = object : Migration(8, 9) {
  * Условие узкое намеренно: sampleSource = 1 И screenOn = 0. Строки
  * детектора и строки чипа при включённом экране честны и остаются.
  */
+val MIGRATION_13_14 = object : Migration(13, 14) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        // Только добавление колонок: старые часы получают 0/0 = "каденс не
+        // мерили", и расчёт для них честно откатывается на константу профиля.
+        db.execSQL("ALTER TABLE hours ADD COLUMN cadenceIntervalSum INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE hours ADD COLUMN cadenceStepSum INTEGER NOT NULL DEFAULT 0")
+    }
+}
+
 val MIGRATION_12_13 = object : Migration(12, 13) {
     override fun migrate(db: SupportSQLiteDatabase) {
         // Только добавление колонки: старые строки получают NULL, что честно
@@ -563,7 +579,7 @@ data class SessionRecord(
 )
 
 @Database(entities = [DayRecord::class, EventRecord::class, HourRecord::class, ProfileSnapshotRecord::class, TerrainSample::class, SessionRecord::class],
-    version = 13, exportSchema = false)
+    version = 14, exportSchema = false)
 abstract class AppDb : RoomDatabase() {
     abstract fun dao(): StepDao
 
@@ -573,7 +589,7 @@ abstract class AppDb : RoomDatabase() {
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
                     context.applicationContext, AppDb::class.java, "stepcore.db"
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13).build().also { instance = it }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14).build().also { instance = it }
             }
     }
 }

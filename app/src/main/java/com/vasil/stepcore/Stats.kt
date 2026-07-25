@@ -132,7 +132,12 @@ object Stats {
         val p = ProfileHistory.at(c, hourEndMs(hour.dateHour))
         val mass = p.weightKg + p.loadKg
         if (mass <= 0f) return 0 to 0f
-        val cadence = StrideModel.walkCadenceHzOf(p.walkMinIntervalMs, p.walkMaxIntervalMs)
+        // v220. Каденс ЧАСА, если детектор его мерил; иначе - константа
+        // профиля (тот же прежний путь). Динамика длины шага заработала:
+        // формула SL = a*cadence + b теперь считается в живой точке.
+        val liveCad = StrideModel.cadenceHzFromHour(hour.cadenceIntervalSum, hour.cadenceStepSum)
+        val cadence = if (liveCad > 0f) liveCad
+            else StrideModel.walkCadenceHzOf(p.walkMinIntervalMs, p.walkMaxIntervalMs)
         val walkStride =
             StrideModel.walkStrideMOf(cadence, p.strideManual, p.strideA, p.strideB, p.heightCm)
         val runStride = StrideModel.runStrideMOf(p.heightCm)

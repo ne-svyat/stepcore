@@ -41,6 +41,18 @@ object StrideModel {
         return if (medMs > 0) 1000f / medMs else 1.8f
     }
 
+    /** v220. Каденс из ЖИВОГО среднего интервала часа (мс -> Гц).
+     *  Диапазон зажат: вне 1.3..2.4 Гц линейная модель длины шага не
+     *  валидна (PDR-литература), а мусорный интервал не должен раздуть
+     *  дистанцию. count == 0 -> нет измерений -> вернём 0, вызывающий
+     *  откатится на константу профиля. */
+    fun cadenceHzFromHour(intervalSum: Long, stepCount: Int): Float {
+        if (stepCount <= 0 || intervalSum <= 0L) return 0f
+        val medMs = intervalSum.toFloat() / stepCount
+        if (medMs <= 0f) return 0f
+        return (1000f / medMs).coerceIn(1.3f, 2.4f)
+    }
+
     fun walkStrideMOf(
         cadenceHz: Float, strideManual: Boolean,
         strideA: Float, strideB: Float, heightCm: Int
