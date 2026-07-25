@@ -289,6 +289,11 @@ interface StepDao {
     @Query("SELECT COALESCE(MAX(builtFromMaxTimeMs), 0) FROM sessions")
     suspend fun lastBuiltTimeMs(): Long
 
+    // v223: докуда реально дошёл корпус. Больше lastBuiltTimeMs - сессии
+    // устарели, на карте по-сессиям не хватает свежих прогулок.
+    @Query("SELECT COALESCE(MAX(timeMs), 0) FROM terrain_samples")
+    suspend fun maxSampleTimeMs(): Long
+
     @Query("DELETE FROM sessions")
     suspend fun deleteAllSessions()
 

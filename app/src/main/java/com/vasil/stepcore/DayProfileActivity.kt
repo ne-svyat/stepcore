@@ -45,7 +45,9 @@ class DayProfileActivity : AppCompatActivity() {
         val id: Long = 0,
         val userLabel: String? = null,
         // v222: медианный каденс сессии (шаг/с). null = детектор не мерил.
-        val cadenceMed: Float? = null
+        val cadenceMed: Float? = null,
+        // v223: ровность ритма (IQR каденса / медиана). Больше = сбивчивее.
+        val rhythmStab: Float? = null
     )
 
     // 0 = сессии по шагам, 1 = сессии по времени, 2 = журнал (всегда по
@@ -82,6 +84,21 @@ class DayProfileActivity : AppCompatActivity() {
             if (dayShift > 0) { dayShift--; shown = 20; load() }
         }
         findViewById<TextView>(R.id.moreRows).setOnClickListener { shown += 20; renderList() }
+        // Плашка устаревания: если корпус ушёл вперёд свёрнутых сессий, мигаем
+        // и ведём на главный экран к готовой кнопке пересборки. Пересборку не
+        // дублируем - там выверенный возврат ответов, меньше кода = меньше
+        // шанс потерять подтверждения.
+        val staleBanner = findViewById<TextView>(R.id.staleBanner)
+        staleBanner.background = DoodleBorderDrawable(
+            ContextCompat.getColor(this, R.color.accent_amber),
+            ContextCompat.getColor(this, R.color.surface),
+            909L, d, DoodleBorderDrawable.MAT_ROCK, DoodleBorderDrawable.RIFT_NONE)
+        staleBanner.setOnClickListener {
+            android.widget.Toast.makeText(
+                this, "Нажми «Пересобрать сессии» на главном экране",
+                android.widget.Toast.LENGTH_LONG).show()
+            finish()
+        }
         val editBtn = findViewById<TextView>(R.id.editLabelButton)
         editBtn.background = DoodleBorderDrawable(
             ContextCompat.getColor(this, R.color.accent_amber),
@@ -122,6 +139,9 @@ class DayProfileActivity : AppCompatActivity() {
                 .sortedBy { it.startMs }
 
             if (sourceJournal) {
+                findViewById<TextView>(R.id.staleBanner).also {
+                    it.clearAnimation(); it.visibility = View.GONE
+                }
                 items = journalItems(dao, day)
                 val titleFmtJ = SimpleDateFormat("EEEE, d MMMM yyyy", Locale("ru"))
                 val blind = items.count { it.rows == 0 }
@@ -137,10 +157,24 @@ class DayProfileActivity : AppCompatActivity() {
                 renderList()
                 return@launch
             }
+            // Сессии устарели? Журнал живой, сессии ждут пересборки.
+            val banner = findViewById<TextView>(R.id.staleBanner)
+            val built = dao.lastBuiltTimeMs()
+            val maxSample = dao.maxSampleTimeMs()
+            if (!sourceJournal && maxSample - built > 120_000L) {
+                banner.visibility = View.VISIBLE
+                val blink = android.view.animation.AlphaAnimation(1f, 0.3f)
+                blink.duration = 700
+                blink.repeatMode = android.view.animation.Animation.REVERSE
+                blink.repeatCount = android.view.animation.Animation.INFINITE
+                banner.startAnimation(blink)
+            } else {
+                banner.clearAnimation(); banner.visibility = View.GONE
+            }
             val walk = ofDay.map {
                 Item(it.startMs, it.endMs, it.label, it.nSamples * 20, it.durationMs,
                     it.confirmState, it.chipShare, false, -1, false, it.id, it.userLabel,
-                    it.cadenceMed)
+                    it.cadenceMed, it.rhythmStab)
             }
             val rides = transportSpans(dao, ofDay.first().startMs, ofDay.last().endMs)
             items = (walk + rides).sortedBy { it.startMs }
@@ -347,6 +381,8 @@ class DayProfileActivity : AppCompatActivity() {
                         "\nТемп: " + tempoRu(s.cadenceMed) + " (" +
                             String.format(java.util.Locale.US, "%.2f", s.cadenceMed) + " шаг/с)"
                      else "") +
+                    (if (rhythmRu(s.rhythmStab) != "")
+                        "\nРитм: " + rhythmRu(s.rhythmStab) else "") +
                     "\nОтвет: " + confirmRu(s.confirmState) +
                     (if (s.userLabel != null)
                         "\nИсправлено человеком, исходная метка: " + labelRu(s.label)
@@ -453,6 +489,18 @@ class DayProfileActivity : AppCompatActivity() {
     /** Темп по каденсу. Пороги привязаны к длине шага (v220): спокойный
      *  шаг ~0.64-0.68 м даёт <1.65 Гц, быстрый ~0.80 м даёт >=1.95.
      *  null -> "" : детектор не мерил, выдумывать темп нельзя. */
+    /** Ровность ритма как признак усталости. rhythmStab = IQR/медиана
+     *  каденса: выше - сбивчивее шаг. Пороги грубые, это наблюдение, не
+     *  диагноз. null -> "" (детектор не мерил). */
+    private fun rhythmRu(rs: Float?): String {
+        if (rs == null || rs <= 0f) return ""
+        return when {
+            rs < 0.12f -> "ровный ритм"
+            rs < 0.22f -> "лёгкая сбивчивость"
+            else -> "сбивчивый ритм"
+        }
+    }
+
     private fun tempoRu(cad: Float?): String {
         if (cad == null || cad <= 0f) return ""
         return when {
