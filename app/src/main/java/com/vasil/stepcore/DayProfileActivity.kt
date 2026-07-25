@@ -43,7 +43,9 @@ class DayProfileActivity : AppCompatActivity() {
         val rows: Int = -1,
         val journal: Boolean = false,
         val id: Long = 0,
-        val userLabel: String? = null
+        val userLabel: String? = null,
+        // v222: медианный каденс сессии (шаг/с). null = детектор не мерил.
+        val cadenceMed: Float? = null
     )
 
     // 0 = сессии по шагам, 1 = сессии по времени, 2 = журнал (всегда по
@@ -137,7 +139,8 @@ class DayProfileActivity : AppCompatActivity() {
             }
             val walk = ofDay.map {
                 Item(it.startMs, it.endMs, it.label, it.nSamples * 20, it.durationMs,
-                    it.confirmState, it.chipShare, false, -1, false, it.id, it.userLabel)
+                    it.confirmState, it.chipShare, false, -1, false, it.id, it.userLabel,
+                    it.cadenceMed)
             }
             val rides = transportSpans(dao, ofDay.first().startMs, ofDay.last().endMs)
             items = (walk + rides).sortedBy { it.startMs }
@@ -280,7 +283,10 @@ class DayProfileActivity : AppCompatActivity() {
                         " · " + (if (s.rows == 0) "без признаков" else "строк " + s.rows)
                  else if (s.transport) "поездка · " + (s.durationMs / 60000L) + " мин"
                  else "~" + s.steps + " шагов · " + (s.durationMs / 60000L) + " мин · " +
-                     confirmRu(s.confirmState))
+                     confirmRu(s.confirmState) +
+                     (if (tempoRu(s.cadenceMed) != "")
+                         "  " + tempoIcon(s.cadenceMed) + " " + tempoRu(s.cadenceMed)
+                      else ""))
             tv.textSize = 14f
             tv.setTextColor(color)
             tv.setLineSpacing(3f * d, 1f)
@@ -337,6 +343,10 @@ class DayProfileActivity : AppCompatActivity() {
                 }
                 labelRu(effLabel(s)) + " · ~" + s.steps + " шагов · " +
                     (s.durationMs / 60000L) + " мин · телефон " + carry +
+                    (if (tempoRu(s.cadenceMed) != "")
+                        "\nТемп: " + tempoRu(s.cadenceMed) + " (" +
+                            String.format(java.util.Locale.US, "%.2f", s.cadenceMed) + " шаг/с)"
+                     else "") +
                     "\nОтвет: " + confirmRu(s.confirmState) +
                     (if (s.userLabel != null)
                         "\nИсправлено человеком, исходная метка: " + labelRu(s.label)
@@ -438,6 +448,27 @@ class DayProfileActivity : AppCompatActivity() {
             sum += n
         }
         return sum
+    }
+
+    /** Темп по каденсу. Пороги привязаны к длине шага (v220): спокойный
+     *  шаг ~0.64-0.68 м даёт <1.65 Гц, быстрый ~0.80 м даёт >=1.95.
+     *  null -> "" : детектор не мерил, выдумывать темп нельзя. */
+    private fun tempoRu(cad: Float?): String {
+        if (cad == null || cad <= 0f) return ""
+        return when {
+            cad < 1.65f -> "спокойно"
+            cad < 1.95f -> "обычно"
+            else -> "быстро"
+        }
+    }
+
+    private fun tempoIcon(cad: Float?): String {
+        if (cad == null || cad <= 0f) return ""
+        return when {
+            cad < 1.65f -> "▰"          // ▰ одна полоса
+            cad < 1.95f -> "▰▰"
+            else -> "▰▰▰"
+        }
     }
 
     private fun labelRu(l: String) = when (l) {
