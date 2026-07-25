@@ -1339,11 +1339,15 @@ class StepService : Service(), SensorEventListener {
      */
     private fun persistDbBlocking() {
         val k = pendKey; val w = pendW; val r = pendR; val up = pendUp; val down = pendDown
+        // v221: каденс сбрасываем здесь тоже - иначе при аварийном сохранении
+        // накопленные интервалы утекут в следующий час.
+        val pcs = pendCadSum; val pcn = pendCadN
         pendW = 0; pendR = 0; pendUp = 0; pendDown = 0
+        pendCadSum = 0L; pendCadN = 0
         val d = currentDay; val dw = walkSteps; val dr = runSteps
         runBlocking {
             val dao = AppDb.get(this@StepService).dao()
-            if (k.isNotEmpty() && (w > 0 || r > 0)) { dao.ensureHour(k); dao.addHour(k, w, r, up, down) }
+            if (k.isNotEmpty() && (w > 0 || r > 0)) { dao.ensureHour(k); dao.addHour(k, w, r, up, down, pcs, pcn) }
             dao.upsertDay(DayRecord(d, dw, dr))
         }
     }
