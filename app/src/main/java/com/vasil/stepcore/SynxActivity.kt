@@ -405,12 +405,40 @@ class SynxActivity : AppCompatActivity() {
     /** Кандидат на вопрос. Уклон в приоритете (он в дефиците), но каждый
      *  третий вопрос - про неуклонную сессию, иначе "ровно" никогда не станет
      *  подтверждённым классом. */
+    /** Активное обучение: среди свежих неспрошенных уклонных выбираем ту, где
+     *  агент СОМНЕВАЕТСЯ (наименьший margin) - такой вопрос учит быстрее. Пока
+     *  у агента нет базы (<AGENT_BASE_MIN подтверждённых), margin - шум, и мы
+     *  берём просто самую свежую. */
+    private suspend fun mostUncertainIncline(dao: StepDao): SessionRecord? {
+        val base = dao.countInclineConfirmed()
+        if (base < AGENT_BASE_MIN) return dao.latestUnaskedIncline()
+        val window = dao.unaskedInclineWindow(UNCERTAIN_WINDOW)
+        if (window.isEmpty()) return null
+        if (window.size == 1) return window[0]
+        var best: SessionRecord? = null
+        var bestMargin = Float.MAX_VALUE
+        for (cand in window) {
+            val near = dao.sessionsAround(
+                cand.startMs - InclineAgent.WALK_GAP_MS,
+                cand.startMs + InclineAgent.WALK_GAP_MS)
+            val r = InclineAgent.predict(
+                InclineAgent.Input(cand.startMs, cand.chipShare, cand.ampMed ?: 0f),
+                near.map { InclineAgent.Input(it.startMs, it.chipShare, it.ampMed ?: 0f) })
+            // UNSURE/NO_BASIS - самые ценные: margin 0. Иначе меньший margin
+            // = ближе к границе = спорнее.
+            val m = if (r.verdict == InclineAgent.Verdict.UNSURE ||
+                        r.verdict == InclineAgent.Verdict.NO_BASIS) 0f else r.margin
+            if (m < bestMargin) { bestMargin = m; best = cand }
+        }
+        return best ?: window[0]
+    }
+
     private suspend fun nextCandidate(dao: StepDao): SessionRecord? {
         val prefs = getSharedPreferences(StepService.PREFS, MODE_PRIVATE)
         val n = prefs.getInt(KEY_ASK_N, 0)
         val flatTurn = (n % 3) == 2
-        val s = if (flatTurn) dao.latestUnaskedFlat() ?: dao.latestUnaskedIncline()
-                else dao.latestUnaskedIncline() ?: dao.latestUnaskedFlat()
+        val s = if (flatTurn) dao.latestUnaskedFlat() ?: mostUncertainIncline(dao)
+                else mostUncertainIncline(dao) ?: dao.latestUnaskedFlat()
         if (s != null) prefs.edit().putInt(KEY_ASK_N, n + 1).apply()
         return s
     }
@@ -588,6 +616,10 @@ class SynxActivity : AppCompatActivity() {
     companion object {
         private const val KEY_LEARN = "learn_enabled"
         private const val KEY_ASK_N = "learn_ask_n"
+        // v231. Активное обучение: окно свежих неспрошенных уклонных и
+        // минимальная база подтверждённых, при которой margin осмыслен.
+        private const val UNCERTAIN_WINDOW = 8
+        private const val AGENT_BASE_MIN = 15
         private const val KEY_SNOOZE = "learn_snooze_until"
     }
 }

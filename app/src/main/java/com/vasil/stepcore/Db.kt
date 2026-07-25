@@ -317,6 +317,18 @@ interface StepDao {
         "AND label != 'FLAT' ORDER BY endMs DESC LIMIT 1")
     suspend fun latestUnaskedIncline(): SessionRecord?
 
+    // v231: ОКНО свежих неспрошенных уклонных (для активного обучения -
+    // среди них выбираем самую спорную по margin агента).
+    @Query("SELECT * FROM sessions WHERE reliable = 1 AND confirmState = 0 " +
+        "AND label != 'FLAT' ORDER BY endMs DESC LIMIT :limit")
+    suspend fun unaskedInclineWindow(limit: Int): List<SessionRecord>
+
+    // v231: сколько уклонных ПОДТВЕРЖДЕНО - база агента. Пока мала, margin
+    // ещё шум, приоритет спорным не включаем.
+    @Query("SELECT COUNT(*) FROM sessions WHERE label != 'FLAT' " +
+        "AND reliable = 1 AND confirmState = 1")
+    suspend fun countInclineConfirmed(): Int
+
     // L3.0: записать исход вопроса в три архива (1=подтв, 2=дефект, 3=серая зона).
     @Query("UPDATE sessions SET confirmState = :state WHERE id = :id")
     suspend fun setSessionConfirm(id: Long, state: Int)
