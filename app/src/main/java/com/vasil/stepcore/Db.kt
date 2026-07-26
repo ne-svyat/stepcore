@@ -333,6 +333,16 @@ interface StepDao {
     @Query("UPDATE sessions SET confirmState = :state WHERE id = :id")
     suspend fun setSessionConfirm(id: Long, state: Int)
 
+    // v244: кандидаты на автометку - надёжные уклонные, ещё не тронутые.
+    // Порядок от старых к свежим: сначала разбираем накопившееся.
+    @Query("SELECT * FROM sessions WHERE reliable = 1 AND confirmState = 0 " +
+        "AND label != 'FLAT' AND label != 'NONE' ORDER BY endMs ASC LIMIT :limit")
+    suspend fun autoLabelCandidates(limit: Int): List<SessionRecord>
+
+    // v244: сколько сессий проставлено автоматически (для показа).
+    @Query("SELECT COUNT(*) FROM sessions WHERE confirmState = 4")
+    suspend fun countAutoLabeled(): Int
+
     // v218: правка метки. Заодно подтверждение - человек ответил осознанно.
     @Query("UPDATE sessions SET userLabel = :label, confirmState = 1 WHERE id = :id")
     suspend fun setUserLabel(id: Long, label: String)

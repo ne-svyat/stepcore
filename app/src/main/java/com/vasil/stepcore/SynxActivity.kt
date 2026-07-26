@@ -142,6 +142,54 @@ class SynxActivity : AppCompatActivity() {
         for ((mid, label, state) in saved) dao.restoreConfirmAt(mid, label, state)
     }
 
+    /** L3.2 автометка. Ставит подтверждение сам, но только там, где
+     *  доказал право: направление с Уилсоном >= 90%, уверенный вердикт,
+     *  запас до границы, и совпадение с меткой человека.
+     *  Расхождение НЕ съедаем - оно уходит в вопросы, это самый ценный
+     *  материал. Каждая пятая всё равно спрашивается: без контроля
+     *  система перестанет замечать дрейф походки.
+     *  Авто-метки помечаются состоянием 4 и НЕ идут в базу агента -
+     *  иначе он начнёт учиться на своих же догадках. */
+    private suspend fun autoLabelSessions(dao: StepDao) {
+        val prefs = getSharedPreferences(StepService.PREFS, MODE_PRIVATE)
+        val upOk = prefs.getInt("ia_up_ok", 0); val upN = prefs.getInt("ia_up_n", 0)
+        val dnOk = prefs.getInt("ia_down_ok", 0); val dnN = prefs.getInt("ia_down_n", 0)
+        val upTrusted = InclineAgent.trusted(upOk, upN)
+        val dnTrusted = InclineAgent.trusted(dnOk, dnN)
+        if (!upTrusted && !dnTrusted) return
+
+        var seen = prefs.getInt(KEY_AUTO_SEEN, 0)
+        var marked = 0
+        for (s in dao.autoLabelCandidates(AUTO_BATCH)) {
+            val near = dao.sessionsAround(
+                s.startMs - InclineAgent.WALK_GAP_MS,
+                s.startMs + InclineAgent.WALK_GAP_MS)
+            val r = InclineAgent.predict(
+                InclineAgent.Input(s.startMs, s.chipShare, s.ampMed ?: 0f),
+                near.map { InclineAgent.Input(it.startMs, it.chipShare, it.ampMed ?: 0f) })
+            val v = when (r.verdict) {
+                InclineAgent.Verdict.UP -> "UP"
+                InclineAgent.Verdict.DOWN -> "DOWN"
+                else -> ""
+            }
+            if (v == "") continue                     // не уверен - человеку
+            if (v != s.label) continue                // расхождение - человеку
+            if (r.margin < InclineAgent.AUTO_MARGIN) continue
+            val ok = if (v == "UP") upTrusted else dnTrusted
+            if (!ok) continue                         // направление не в доверии
+            seen++
+            if (seen % InclineAgent.AUTO_CONTROL_EVERY == 0) continue  // контроль
+            dao.setSessionConfirm(s.id, 4)
+            marked++
+        }
+        prefs.edit().putInt(KEY_AUTO_SEEN, seen).apply()
+        if (marked > 0) {
+            android.widget.Toast.makeText(this,
+                "Агент сам разметил " + marked + " прогулок",
+                android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
     private suspend fun catchUpSessions(dao: StepDao) {
         val after = dao.lastBuiltTimeMs()
         val raw = dao.samplesAfter(after)
@@ -238,6 +286,10 @@ class SynxActivity : AppCompatActivity() {
                 prefsMig.edit().putBoolean("reliable_v226_done", true).apply()
             }
             catchUpSessions(dao)
+            // v244. L3.2: агент сам подтверждает направления, в которых
+            // заслужил доверие. Строго после догона - иначе свежие
+            // сессии не попадут под разбор.
+            autoLabelSessions(dao)
             val reliableIncline = dao.countSessionsInclineReliable()
             when {
                 !profileDone || !strideDone || !walkDone -> {
@@ -673,6 +725,10 @@ class SynxActivity : AppCompatActivity() {
         // минимальная база подтверждённых, при которой margin осмыслен.
         private const val UNCERTAIN_WINDOW = 8
         private const val AGENT_BASE_MIN = 15
+        // v244. Сколько сессий разбираем за один заход и счётчик для
+        // контрольной доли (каждая пятая уходит человеку).
+        private const val AUTO_BATCH = 40
+        private const val KEY_AUTO_SEEN = "auto_label_seen"
         private const val KEY_SNOOZE = "learn_snooze_until"
     }
 }
