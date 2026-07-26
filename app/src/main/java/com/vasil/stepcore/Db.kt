@@ -340,6 +340,10 @@ interface StepDao {
     @Query("UPDATE sessions SET userLabel = NULL WHERE id = :id")
     suspend fun clearUserLabel(id: Long)
 
+    // v235: удалить сессию по id - при разрезке заменяем на две.
+    @Query("DELETE FROM sessions WHERE id = :id")
+    suspend fun deleteSessionById(id: Long)
+
     // L3.0: свежая надёжная ПЛОСКАЯ сессия, про которую ещё не спрашивали.
     // Нужна, чтобы "ровно" стало подтверждённым классом, а не меткой по умолчанию.
     @Query("SELECT * FROM sessions WHERE reliable = 1 AND confirmState = 0 " +

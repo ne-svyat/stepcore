@@ -431,7 +431,7 @@ class SynxActivity : AppCompatActivity() {
                 recordAnswer(s, 1, "подтверждено")
             }
             .setNegativeButton("Нет") { _, _ -> recordAnswer(s, 2, "дефект") }
-            .setNeutralButton("Не помню") { _, _ -> recordAnswer(s, 3, "не подтверждено") }
+            .setNeutralButton("🔍 Разобрать") { _, _ -> openSplit(s) }
             .show()
     }
 
@@ -485,6 +485,15 @@ class SynxActivity : AppCompatActivity() {
                 else mostUncertainIncline(dao) ?: dao.latestUnaskedFlat()
         if (s != null) prefs.edit().putInt(KEY_ASK_N, n + 1).apply()
         return s
+    }
+
+    /** Открыть экран разбора по шагам: там можно увидеть точку разлома,
+     *  объяснение словами и разрезать сессию на две с разными метками. */
+    private fun openSplit(s: SessionRecord) {
+        val i = android.content.Intent(this, SplitActivity::class.java)
+        i.putExtra("startMs", s.startMs)
+        i.putExtra("endMs", s.endMs)
+        startActivity(i)
     }
 
     private fun recordAnswer(s: SessionRecord, state: Int, word: String) {

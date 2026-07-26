@@ -78,6 +78,7 @@
             android:name=".SynxActivity"
             android:exported="false"
             android:screenOrientation="portrait" />
+        <activity android:name=".SplitActivity" android:exported="false" />
 
     </application>
 </manifest>
