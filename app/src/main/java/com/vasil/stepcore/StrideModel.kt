@@ -201,6 +201,18 @@ object StrideModel {
         p(c).edit().putString(KEY_HIST, sb.toString()).apply()
     }
 
+    /** Скорость прохода, м/с. Время замера = шаги / каденс.
+     *  Именно скорость должна различаться между калибровками: модель
+     *  SL = a*cadence + b описывает, как удлиняется шаг при РАЗГОНЕ. */
+    fun speedOf(pt: CalPoint): Float {
+        if (pt.cadence <= 0f || pt.steps <= 0) return 0f
+        val durSec = pt.steps / pt.cadence
+        return if (durSec > 0f) pt.metres / durSec else 0f
+    }
+
+    fun durationSecOf(pt: CalPoint): Float =
+        if (pt.cadence > 0f) pt.steps / pt.cadence else 0f
+
     /** Медиана длины шага по истории - устойчивый якорь. В отличие от
      *  последнего замера не скачет от выброса к выбросу. */
     fun medianStride(h: List<CalPoint>): Float? {
@@ -279,7 +291,10 @@ object StrideModel {
               .append("  темп ").append(String.format(java.util.Locale.US, "%.2f", x.cadence))
               .append(" Гц  шаг ").append((x.strideM * 100).toInt()).append(" см")
               .append("  (").append(x.metres.toInt()).append(" м / ")
-              .append(x.steps).append(" шаг.)\n")
+              .append(x.steps).append(" шаг.)")
+              .append("\n     ").append(durationSecOf(x).toInt()).append(" с, ")
+              .append(String.format(java.util.Locale.US, "%.2f", speedOf(x)))
+              .append(" м/с\n")
         }
         val cads = h.map { it.cadence }
         val spread = (cads.max() - cads.min())
@@ -308,6 +323,42 @@ object StrideModel {
               .append("  b=").append(String.format(java.util.Locale.US, "%.3f", fit.second))
               .append("\n")
             return sb.toString()
+        }
+        // v240. ГЛАВНАЯ проверка: менялась ли СКОРОСТЬ. Модель описывает
+        // удлинение шага при разгоне. Если скорость одна, то
+        // длина = скорость / каденс - связь обратная, наклон выйдет
+        // отрицательным по арифметике, а не из-за шума.
+        val speeds = clean.map { speedOf(it) }.filter { it > 0f }
+        if (speeds.size >= 2) {
+            val vmin = speeds.min(); val vmax = speeds.max()
+            sb.append("Скорость: от ")
+              .append(String.format(java.util.Locale.US, "%.2f", vmin))
+              .append(" до ")
+              .append(String.format(java.util.Locale.US, "%.2f", vmax))
+              .append(" м/с\n")
+            val ratio = if (vmin > 0f) vmax / vmin else 1f
+            if (ratio < 1.35f) {
+                sb.append("\nВОТ ПРИЧИНА: скорость почти не менялась.\n")
+                sb.append("Длина шага x каденс = скорость. Если скорость одна,\n")
+                sb.append("то чаще шаги = короче шаг — связь ОБРАТНАЯ, и наклон\n")
+                sb.append("выходит отрицательным по арифметике. Модель описывает\n")
+                sb.append("удлинение шага при РАЗГОНЕ, а не смену манеры шага.\n\n")
+                val med = clean.map { it.metres }.sorted()[clean.size / 2]
+                val slow = (med / 1.15f).toInt()
+                val fast = (med / 2.05f).toInt()
+                sb.append("ЗАДАНИЕ (если захочешь наклон):\n")
+                sb.append("  1) тот же отрезок ~").append(med.toInt())
+                  .append(" м НЕ СПЕША, примерно за ").append(slow).append(" с\n")
+                sb.append("  2) он же БЫСТРЫМ шагом, примерно за ").append(fast)
+                  .append(" с\n")
+                sb.append("Разница во ВРЕМЕНИ — вот что нужно, не в частоте шагов.\n\n")
+                val m2 = medianStride(clean)
+                sb.append("НО ЭТО НЕОБЯЗАТЕЛЬНО. Длина шага уже посчитана")
+                if (m2 != null) sb.append(" = ").append((m2 * 100).toInt()).append(" см")
+                sb.append(",\nона устойчива и работает. Наклон дал бы небольшую\n")
+                sb.append("поправку на очень быстрой ходьбе — и только.\n")
+                return sb.toString()
+            }
         }
         // v239. Главная проверка: а меняется ли у человека каденс вообще?
         // У этого пользователя измерено: каденс бега и ходьбы совпадает
