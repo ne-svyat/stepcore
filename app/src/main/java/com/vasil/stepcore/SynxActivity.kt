@@ -346,42 +346,63 @@ class SynxActivity : AppCompatActivity() {
             // Агент говорит только про уже отмеченный уклон: отличить "ровно"
             // от "в гору" по амплитуде нельзя (диапазоны перекрываются).
             var verdict = InclineAgent.Verdict.NO_BASIS
+            var margin = 0f
             if (s.label != "FLAT" && s.label != "NONE") {
                 val dao = AppDb.get(this@SynxActivity).dao()
                 val near = dao.sessionsAround(
                     s.startMs - InclineAgent.WALK_GAP_MS,
                     s.startMs + InclineAgent.WALK_GAP_MS
                 )
-                verdict = InclineAgent.predict(
+                val r = InclineAgent.predict(
                     InclineAgent.Input(s.startMs, s.chipShare, s.ampMed ?: 0f),
                     near.map { InclineAgent.Input(it.startMs, it.chipShare, it.ampMed ?: 0f) }
-                ).verdict
+                )
+                verdict = r.verdict; margin = r.margin
             }
             val guess = when (verdict) {
                 InclineAgent.Verdict.UP -> "UP"
                 InclineAgent.Verdict.DOWN -> "DOWN"
                 else -> ""
             }
+            val note = confidenceNote(verdict, margin)
             val brk = labelBreakdown(s)
-            val head = dayHeader(s, headText(s, guess, brk))
+            val head = dayHeader(s, headText(s, guess, brk, note))
             showInclineDialog(s, guess, head)
         }
     }
 
     /** Текст вопроса об уклоне - отдельно, чтобы вложить его в шапку с картой. */
-    private fun headText(s: SessionRecord, guess: String, breakdown: String): String {
+    private fun headText(
+        s: SessionRecord, guess: String, breakdown: String, note: String = ""
+    ): String {
         val head = anchor(s) + (if (breakdown == "") "" else "\n" + breakdown) + "\n\n"
+        val tail = if (note == "") "" else "\n\n" + note
         return head + (if (guess != "" && guess != s.label)
             "Помечена «" + labelRu(s.label) + "», но по признакам похоже на «" +
-                labelRu(guess) + "». Что было на самом деле?"
+                labelRu(guess) + "». Что было на самом деле?" + tail
         else if (s.label == "NONE")
             "Уклон не отмечен. Она была ровной?"
         else if (s.label == "FLAT")
             "Помечена «ровно» — верно?"
         else if (guess != "")
-            "Помечена «" + labelRu(s.label) + "», и признаки согласны. Верно?"
+            "Помечена «" + labelRu(s.label) + "», и признаки согласны. Верно?" + tail
         else
             "Помечена «" + labelRu(s.label) + "» — верно?")
+    }
+
+    /** Заметка об уверенности агента - честно показывает, почему спрашиваем.
+     *  На корпусе доказано: уверенные ответы 100%, спорные агент не гадает.
+     *  Порог margin взят из UNSURE_BAND агента (0.15) с запасом. */
+    private fun confidenceNote(v: InclineAgent.Verdict, margin: Float): String = when (v) {
+        InclineAgent.Verdict.UNSURE ->
+            "🤔 Я на грани — по признакам почти поровну. Твой ответ тут ценнее всего."
+        InclineAgent.Verdict.NO_BASIS ->
+            "🌱 Признаков рядом пока мало — подскажи, буду точнее."
+        InclineAgent.Verdict.UP, InclineAgent.Verdict.DOWN ->
+            if (margin < 0.35f)
+                "🤔 Похоже, но уверенность средняя — потому и спрашиваю."
+            else
+                "✓ По признакам уверенно. Проверь, не ошибся ли я."
     }
 
     private fun showInclineDialog(s: SessionRecord, guess: String, headView: View) {
