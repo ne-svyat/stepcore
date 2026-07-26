@@ -59,6 +59,17 @@ class SplitActivity : AppCompatActivity() {
             addText(root, "Мало образцов для разбора (нужно ≥6, есть ${amps.size}).")
             return
         }
+        // v236. Уклон читается только когда телефон в кармане: там
+        // амплитуда 6-8, а в руке 1.7-4.2 и разница подъём/спуск тонет.
+        // Тот же порог, что у агента (POCKET_MIN).
+        val chipShare = samples.count { it.sampleSource == 1 }.toFloat() / samples.size
+        if (chipShare < InclineAgent.POCKET_MIN) {
+            addView(root, ChartView(this, amps, null))
+            addText(root, "Телефон был в основном в руке — уклон по такой " +
+                "записи не читается (амплитуда сглажена). Разрезать не берусь: " +
+                "это была бы догадка, а не измерение.")
+            return
+        }
         val split = SplitFinder.find(amps)
         addView(root, ChartView(this, amps, split?.index))
 

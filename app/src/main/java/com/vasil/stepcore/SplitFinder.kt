@@ -19,6 +19,10 @@ object SplitFinder {
 
     private const val MIN_SIDE = 3       // минимум образцов в каждой части
     private const val SIGNIF = 0.4f      // разрыв/разброс, ниже которого не режем
+    // v236. Абсолютный порог: настоящий зазор UP/DOWN по корпусу 1.35
+    // (в гору 6.44, с горы 7.79). Берём 1.0 - с запасом, но выше шума.
+    // Без него на ровной ходьбе рябь 0.5 выглядела значимой.
+    private const val MIN_ABS_GAP = 1.0f
 
     fun find(amps: List<Float>): Split? {
         val n = amps.size
@@ -35,8 +39,11 @@ object SplitFinder {
             val score = gap * (0.5f + 0.5f * balance)
             if (score > bestScore) { bestScore = score; best = Split(k, gap, lm, rm) }
         }
-        val spread = (amps.max() - amps.min()).coerceAtLeast(0.1f)
         val b = best ?: return null
+        // Сначала физика: разрыв должен быть сопоставим с реальным
+        // различием подъёма и спуска, иначе это рябь ровной ходьбы.
+        if (b.gap < MIN_ABS_GAP) return null
+        val spread = (amps.max() - amps.min()).coerceAtLeast(0.1f)
         return if (b.gap / spread >= SIGNIF) b else null
     }
 
