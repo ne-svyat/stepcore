@@ -57,6 +57,7 @@ class SplitActivity : AppCompatActivity() {
         }
         if (amps.size < 6) {
             addText(root, "Мало образцов для разбора (нужно ≥6, есть ${amps.size}).")
+            addCloseButton(root)
             return
         }
         // v236. Уклон читается только когда телефон в кармане: там
@@ -68,6 +69,7 @@ class SplitActivity : AppCompatActivity() {
             addText(root, "Телефон был в основном в руке — уклон по такой " +
                 "записи не читается (амплитуда сглажена). Разрезать не берусь: " +
                 "это была бы догадка, а не измерение.")
+            addCloseButton(root)
             return
         }
         val split = SplitFinder.find(amps)
@@ -76,6 +78,7 @@ class SplitActivity : AppCompatActivity() {
         if (split == null) {
             addText(root, "Сессия выглядит однородной — амплитуда не прыгает. " +
                 "Резать не нужно: это один участок.")
+            addCloseButton(root)
             return
         }
 
@@ -100,6 +103,12 @@ class SplitActivity : AppCompatActivity() {
             }
         }
         root.addView(cut)
+        // v241. Явный выход: свайп назад раньше выкидывал на главный
+        // экран, что сбивало. Кнопка закрывает разбор предсказуемо.
+        val keep = Button(this)
+        keep.text = "Оставить как есть"
+        keep.setOnClickListener { finish() }
+        root.addView(keep)
     }
 
     /** Заменяет одну сессию на две по точке разлома. Каждая половина - своя
@@ -142,6 +151,13 @@ class SplitActivity : AppCompatActivity() {
             userLabel = label,
             builtFromMaxTimeMs = part.last().timeMs
         ))
+    }
+
+    private fun addCloseButton(root: LinearLayout) {
+        val b = Button(this)
+        b.text = "Понятно, закрыть"
+        b.setOnClickListener { finish() }
+        root.addView(b)
     }
 
     private fun labelRu(l: String) = when (l) {
