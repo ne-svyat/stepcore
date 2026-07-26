@@ -295,6 +295,9 @@ class StepService : Service(), SensorEventListener {
     private var distCalActive = false
     private var distCalChipStart = -1L
     private var distCalMetres = 0f
+    // v242. Время старта замера по метражу: каденс считаем из него,
+    // а не из профиля - иначе в историю попадает чужое число.
+    private var distCalStartMs = 0L
 
     override fun onCreate() {
         super.onCreate()
@@ -726,6 +729,7 @@ class StepService : Service(), SensorEventListener {
         }
         distCalActive = true
         distCalMetres = metres
+        distCalStartMs = System.currentTimeMillis()
         distCalChipStart = hwLastTotal
         StepsState.calibrationState.value =
             "Калибровка дистанции: пройди ${metres.toInt()} м и нажми Готово"
@@ -741,12 +745,18 @@ class StepService : Service(), SensorEventListener {
                 "Мало шагов ($steps) - калибровка не сохранена. Нужен отрезок подлиннее."
             return
         }
-        StrideModel.applyCalibration(this, distCalMetres, steps)
+        // Фактический каденс замера: шаги / длительность (как в GPS-пути).
+        val durSec = (System.currentTimeMillis() - distCalStartMs) / 1000f
+        val measuredCad = if (durSec > 0f) steps / durSec else 0f
+        StrideModel.applyCalibration(this, distCalMetres, steps,
+            measuredCadence = measuredCad)
         scope.launch { ProfileHistory.record(this@StepService) }   // V11
         CalibrationRegistry.markDone(this, CalibrationRegistry.Kind.STRIDE)
         val slCm = StrideModel.measuredStrideCm(this) ?: 0
         StepsState.calibrationState.value =
-            "Готово: ${distCalMetres.toInt()} м за $steps шагов = длина шага $slCm см"
+            "Готово: ${distCalMetres.toInt()} м за $steps шагов = " +
+            "длина шага $slCm см (темп " +
+            String.format(java.util.Locale.US, "%.2f", measuredCad) + " Гц)"
     }
 
     private fun loadProfile() {
