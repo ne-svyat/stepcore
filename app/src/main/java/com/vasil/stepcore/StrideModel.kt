@@ -33,6 +33,11 @@ object StrideModel {
     // иначе близкие темпы дают вечное "нужен второй проход".
     private const val HIST_MAX = 10
     private const val KEY_HIST = "stride_cal_history"
+    // v238. Отсев выбросов: замер, отклонившийся от медианы больше чем
+    // на MAD_K медианных отклонений - это GPS-прыжок или пропуск шагов.
+    // На данных Markus: 92 см при медиане 73 и MAD 5 -> выброс.
+    private const val MAD_K = 3.0f
+    private const val MIN_FIT_POINTS = 4   // меньше - регрессии не верим
     private const val HEIGHT_FACTOR_WALK = 0.414f
     private const val HEIGHT_FACTOR_RUN = 0.65f
 
@@ -125,17 +130,25 @@ object StrideModel {
         // большим разбросом каденса среди всех сохранённых калибровок.
         addToHistory(c, CalPoint(System.currentTimeMillis(), cadence,
             measuredSL, metres, steps))
-        val solved = solveFromHistory(calHistory(c))
+        val hist = calHistory(c)
+        // v238. Сначала регрессия по всем чистым точкам (шум усредняется).
+        val solved = fitSlope(hist)
 
         val a: Float
         val b: Float
         if (solved != null) {
             a = solved.first; b = solved.second
         } else {
-            // Первая точка или вторая слишком близко/кривая: наклон табличный,
-            // сдвиг из текущей точки. Динамика уже работает (v220).
+            // Наклон честно не выводится: шум замера больше эффекта.
+            // Тогда табличный наклон, но якорь по МЕДИАНЕ истории, а не
+            // по последнему замеру - иначе длина шага скачет от выброса
+            // к выбросу (у Markus прыгала 68..92 см).
             a = A_DEFAULT
-            b = measuredSL - A_DEFAULT * cadence
+            val clean = cleanPoints(hist)
+            val medSL = medianStride(clean) ?: measuredSL
+            val medCad = if (clean.isEmpty()) cadence
+                else clean.map { it.cadence }.sorted()[clean.size / 2]
+            b = medSL - A_DEFAULT * medCad
         }
 
         pr.edit()
@@ -188,6 +201,54 @@ object StrideModel {
         p(c).edit().putString(KEY_HIST, sb.toString()).apply()
     }
 
+    /** Медиана длины шага по истории - устойчивый якорь. В отличие от
+     *  последнего замера не скачет от выброса к выбросу. */
+    fun medianStride(h: List<CalPoint>): Float? {
+        if (h.isEmpty()) return null
+        val v = h.map { it.strideM }.sorted()
+        return v[v.size / 2]
+    }
+
+    /** Медианное абсолютное отклонение - устойчивая мера разброса. */
+    fun madStride(h: List<CalPoint>): Float {
+        val med = medianStride(h) ?: return 0f
+        val dev = h.map { kotlin.math.abs(it.strideM - med) }.sorted()
+        if (dev.isEmpty()) return 0f
+        return dev[dev.size / 2]
+    }
+
+    /** Точки без выбросов: GPS-прыжки и пропуски шагов не должны
+     *  тянуть модель. Если разброс нулевой - берём всё. */
+    fun cleanPoints(h: List<CalPoint>): List<CalPoint> {
+        val med = medianStride(h) ?: return h
+        val mad = madStride(h)
+        if (mad <= 0f) return h
+        return h.filter { kotlin.math.abs(it.strideM - med) <= MAD_K * mad }
+    }
+
+    /** Наклон методом наименьших квадратов по всем чистым точкам.
+     *  Двухточечный метод делит разницу длин на разницу темпов и
+     *  умножает шум; регрессия его усредняет. Возвращает null, если
+     *  точек мало, темп однороден или наклон неправдоподобен. */
+    fun fitSlope(h: List<CalPoint>): Pair<Float, Float>? {
+        val pts = cleanPoints(h)
+        if (pts.size < MIN_FIT_POINTS) return null
+        val cads = pts.map { it.cadence }
+        if ((cads.max() - cads.min()) < MIN_CADENCE_GAP) return null
+        var mx = 0f; var my = 0f
+        for (x in pts) { mx += x.cadence; my += x.strideM }
+        mx /= pts.size; my /= pts.size
+        var num = 0f; var den = 0f
+        for (x in pts) {
+            val dx = x.cadence - mx
+            num += dx * (x.strideM - my); den += dx * dx
+        }
+        if (den <= 0f) return null
+        val a = num / den
+        if (a < SANE_A_MIN || a > SANE_A_MAX) return null
+        return a to (my - a * mx)
+    }
+
     /** Пара с максимальным разбросом каденса - на ней наклон точнее всего.
      *  Две близкие точки наклон не задают (делим на почти ноль). */
     fun bestPair(h: List<CalPoint>): Pair<CalPoint, CalPoint>? {
@@ -225,6 +286,39 @@ object StrideModel {
         sb.append("\nРазброс темпа: ")
           .append(String.format(java.util.Locale.US, "%.2f", spread)).append(" Гц")
         sb.append(" (нужно ≥ ").append(MIN_CADENCE_GAP).append(")\n")
+        val clean = cleanPoints(h)
+        val mad = madStride(h)
+        val med = medianStride(clean)
+        if (med != null) {
+            sb.append("Медиана длины шага: ").append((med * 100).toInt())
+              .append(" см  (её и берём за опору)\n")
+        }
+        sb.append("Шум замера (MAD): ").append((mad * 100).toInt()).append(" см")
+        if (mad > 0.06f) sb.append("  ← БОЛЬШОЙ")
+        sb.append("\n")
+        if (clean.size < h.size) {
+            sb.append("Отброшено выбросов: ").append(h.size - clean.size)
+              .append(" (GPS-прыжок или пропуск шагов)\n")
+        }
+        val fit = fitSlope(h)
+        if (fit != null) {
+            sb.append("\nНАКЛОН ПЕРСОНАЛЬНЫЙ ✓ (регрессия по ")
+              .append(clean.size).append(" точкам)\n")
+            sb.append("a=").append(String.format(java.util.Locale.US, "%.3f", fit.first))
+              .append("  b=").append(String.format(java.util.Locale.US, "%.3f", fit.second))
+              .append("\n")
+            return sb.toString()
+        }
+        if (mad > 0.06f) {
+            sb.append("\nПОЧЕМУ НАКЛОН НЕ ВЫВЕДЕН: шум замера больше эффекта.\n")
+            sb.append("Разница длины шага между медленной и быстрой ходьбой\n")
+            sb.append("всего 10-13 см, а твои замеры пляшут на ")
+              .append((mad * 200).toInt()).append(" см.\n")
+            sb.append("ЧТО ДЕЛАТЬ: отрезок ДЛИННЕЕ (300 м лучше 100 м) -\n")
+            sb.append("ошибка GPS размазывается по большему пути.\n")
+            sb.append("Длина шага при этом уже устойчива: берётся медиана.\n")
+            return sb.toString()
+        }
         val pair = bestPair(h)
         if (pair == null) {
             sb.append("\nПОЧЕМУ НАКЛОН НЕ ВЫВЕДЕН: все проходы на близком темпе.\n")
