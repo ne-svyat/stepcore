@@ -254,7 +254,7 @@ class CalibrationActivity : AppCompatActivity() {
 
     private fun askMetres() {
         val input = EditText(this).apply {
-            hint = "Длина отрезка, м (например 500)"
+            hint = "Длина отрезка, м (минимум 200, лучше 400)"
             inputType = android.text.InputType.TYPE_CLASS_NUMBER
         }
         AlertDialog.Builder(this)
@@ -264,7 +264,12 @@ class CalibrationActivity : AppCompatActivity() {
             .setView(input)
             .setPositiveButton("Начать") { _, _ ->
                 val m = input.text.toString().replace(',', '.').toFloatOrNull()
-                if (m == null || m < 50f) { toastState("Нужен отрезок минимум 50 м"); return@setPositiveButton }
+                // v243: короткие отрезки шумят втрое сильнее (измерено).
+                if (m == null || m < StrideModel.REFERENCE_METRES) {
+                    toastState("Нужен отрезок минимум " +
+                        StrideModel.REFERENCE_METRES.toInt() + " м (лучше 300-400)")
+                    return@setPositiveButton
+                }
                 activeKind = CalibrationRegistry.Kind.STRIDE
                 startForegroundService(Intent(this, StepService::class.java)
                     .setAction(StepService.ACTION_CAL_DIST_START)
@@ -297,7 +302,7 @@ class CalibrationActivity : AppCompatActivity() {
         val metres = cal.stop()
         gpsCal = null
         val steps = StepsState.steps.value - gpsStepsAtStart
-        if (metres < 100f || steps < 30) {
+        if (metres < StrideModel.REFERENCE_METRES || steps < 30) {
             toastState("Мало данных (%.0f м, %d шагов). Нужно ≥100 м на открытом небе.".format(metres, steps))
             return
         }

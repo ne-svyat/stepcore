@@ -38,6 +38,10 @@ object StrideModel {
     // На данных Markus: 92 см при медиане 73 и MAD 5 -> выброс.
     private const val MAD_K = 3.0f
     private const val MIN_FIT_POINTS = 4   // меньше - регрессии не верим
+    // v243. Эталонный замер: длина, на которой ошибка GPS и округление
+    // шагов уже размазаны. Измерено у Markus: на ~300 м разброс 2 см,
+    // на 105-152 м - 12 см. Опору строим только по длинным, если есть.
+    const val REFERENCE_METRES = 200f
     private const val HEIGHT_FACTOR_WALK = 0.414f
     private const val HEIGHT_FACTOR_RUN = 0.65f
 
@@ -144,7 +148,8 @@ object StrideModel {
             // по последнему замеру - иначе длина шага скачет от выброса
             // к выбросу (у Markus прыгала 68..92 см).
             a = A_DEFAULT
-            val clean = cleanPoints(hist)
+            // v243. Опора - эталонные (длинные) замеры, если они есть.
+            val clean = anchorPoints(hist)
             val medSL = medianStride(clean) ?: measuredSL
             val medCad = if (clean.isEmpty()) cadence
                 else clean.map { it.cadence }.sorted()[clean.size / 2]
@@ -212,6 +217,18 @@ object StrideModel {
 
     fun durationSecOf(pt: CalPoint): Float =
         if (pt.cadence > 0f) pt.steps / pt.cadence else 0f
+
+    /** Эталонные точки: замеры длиннее REFERENCE_METRES. На них опираемся,
+     *  если их хотя бы две - короткие проходы шумят втрое сильнее. */
+    fun referencePoints(h: List<CalPoint>): List<CalPoint> =
+        h.filter { it.metres >= REFERENCE_METRES }
+
+    /** Точки, на которых строится опора: эталонные, если их >= 2,
+     *  иначе все чистые. */
+    fun anchorPoints(h: List<CalPoint>): List<CalPoint> {
+        val ref = referencePoints(cleanPoints(h))
+        return if (ref.size >= 2) ref else cleanPoints(h)
+    }
 
     /** Медиана длины шага по истории - устойчивый якорь. В отличие от
      *  последнего замера не скачет от выброса к выбросу. */
@@ -294,7 +311,9 @@ object StrideModel {
               .append(x.steps).append(" шаг.)")
               .append("\n     ").append(durationSecOf(x).toInt()).append(" с, ")
               .append(String.format(java.util.Locale.US, "%.2f", speedOf(x)))
-              .append(" м/с\n")
+              .append(" м/с")
+              .append(if (x.metres >= REFERENCE_METRES) "  ★ эталон" else "")
+              .append("\n")
         }
         val cads = h.map { it.cadence }
         val spread = (cads.max() - cads.min())
@@ -303,10 +322,17 @@ object StrideModel {
         sb.append(" (нужно ≥ ").append(MIN_CADENCE_GAP).append(")\n")
         val clean = cleanPoints(h)
         val mad = madStride(h)
-        val med = medianStride(clean)
+        val anchor = anchorPoints(h)
+        val refCount = referencePoints(cleanPoints(h)).size
+        val med = medianStride(anchor)
         if (med != null) {
-            sb.append("Медиана длины шага: ").append((med * 100).toInt())
-              .append(" см  (её и берём за опору)\n")
+            sb.append("ОПОРА: длина шага ").append((med * 100).toInt()).append(" см")
+            if (refCount >= 2)
+                sb.append("  (по ").append(refCount).append(" эталонным замерам ≥")
+                  .append(REFERENCE_METRES.toInt()).append(" м)\n")
+            else
+                sb.append("  (эталонных замеров ≥").append(REFERENCE_METRES.toInt())
+                  .append(" м пока мало — короткие шумят сильнее)\n")
         }
         sb.append("Шум замера (MAD): ").append((mad * 100).toInt()).append(" см")
         if (mad > 0.06f) sb.append("  ← БОЛЬШОЙ")
