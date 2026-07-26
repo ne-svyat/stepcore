@@ -210,6 +210,18 @@ class SynxActivity : AppCompatActivity() {
         findViewById<TextView>(R.id.synxExportButton).setOnClickListener {
             lifecycleScope.launch { exportCorpusSynx() }
         }
+        findViewById<TextView>(R.id.synxCalReportButton).setOnClickListener {
+            val rep = StrideModel.calibrationReport(this)
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE)
+                as android.content.ClipboardManager
+            cm.setPrimaryClip(
+                android.content.ClipData.newPlainText("StepCore calib", rep))
+            androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("Отчёт калибровки (скопирован)")
+                .setMessage(rep)
+                .setPositiveButton("Ок", null)
+                .show()
+        }
         learnSwitch.isChecked = prefs.getBoolean(KEY_LEARN, false)
         learnSwitch.setOnCheckedChangeListener { _, checked ->
             // Включение - явное согласие: снимает и паузу "не беспокоить".

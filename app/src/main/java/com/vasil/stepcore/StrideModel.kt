@@ -28,6 +28,11 @@ object StrideModel {
     private const val MIN_CADENCE_GAP = 0.15f   // ближе - наклон не определить
     private const val SANE_A_MIN = 0.15f        // разумный наклон человека
     private const val SANE_A_MAX = 0.65f
+    // v237. История калибровок: последние N точек. Наклон решается по
+    // паре с МАКСИМАЛЬНЫМ разбросом каденса, а не по двум последним -
+    // иначе близкие темпы дают вечное "нужен второй проход".
+    private const val HIST_MAX = 10
+    private const val KEY_HIST = "stride_cal_history"
     private const val HEIGHT_FACTOR_WALK = 0.414f
     private const val HEIGHT_FACTOR_RUN = 0.65f
 
@@ -116,13 +121,11 @@ object StrideModel {
         val cadence = if (measuredCadence > 0f) measuredCadence else avgWalkCadenceHz(c)
         val pr = p(c)
 
-        // Есть ли уже сохранённая ПЕРВАЯ точка на заметно другом каденсе?
-        val hadPoint = pr.getBoolean("stride_manual", false)
-        val c1 = pr.getFloat("stride_cal_cadence", 0f)
-        val sl1 = pr.getFloat("stride_measured_sl", 0f)
-
-        val solved = if (hadPoint && c1 > 0f && sl1 > 0f)
-            solveTwoPoint(c1, sl1, cadence, measuredSL) else null
+        // v237. Кладём точку в историю и решаем наклон по паре с самым
+        // большим разбросом каденса среди всех сохранённых калибровок.
+        addToHistory(c, CalPoint(System.currentTimeMillis(), cadence,
+            measuredSL, metres, steps))
+        val solved = solveFromHistory(calHistory(c))
 
         val a: Float
         val b: Float
@@ -146,6 +149,110 @@ object StrideModel {
             .apply()
     }
 
+    /** Точка калибровки: когда, на каком каденсе, какая вышла длина шага. */
+    data class CalPoint(
+        val timeMs: Long, val cadence: Float, val strideM: Float,
+        val metres: Float, val steps: Int
+    )
+
+    /** История калибровок, свежие первыми. Хранится строкой в prefs:
+     *  time,cadence,stride,metres,steps; ... - без зависимостей на JSON. */
+    fun calHistory(c: Context): List<CalPoint> {
+        val raw = p(c).getString(KEY_HIST, "") ?: ""
+        if (raw.isEmpty()) return emptyList()
+        val out = ArrayList<CalPoint>()
+        for (rec in raw.split(";")) {
+            if (rec.isBlank()) continue
+            val f = rec.split(",")
+            if (f.size < 5) continue
+            val t = f[0].toLongOrNull() ?: continue
+            val cad = f[1].toFloatOrNull() ?: continue
+            val sl = f[2].toFloatOrNull() ?: continue
+            val m = f[3].toFloatOrNull() ?: 0f
+            val st = f[4].toIntOrNull() ?: 0
+            out.add(CalPoint(t, cad, sl, m, st))
+        }
+        return out
+    }
+
+    private fun addToHistory(c: Context, pt: CalPoint) {
+        val list = ArrayList(calHistory(c))
+        list.add(0, pt)
+        while (list.size > HIST_MAX) list.removeAt(list.size - 1)
+        val sb = StringBuilder()
+        for (x in list) {
+            sb.append(x.timeMs).append(",").append(x.cadence).append(",")
+              .append(x.strideM).append(",").append(x.metres).append(",")
+              .append(x.steps).append(";")
+        }
+        p(c).edit().putString(KEY_HIST, sb.toString()).apply()
+    }
+
+    /** Пара с максимальным разбросом каденса - на ней наклон точнее всего.
+     *  Две близкие точки наклон не задают (делим на почти ноль). */
+    fun bestPair(h: List<CalPoint>): Pair<CalPoint, CalPoint>? {
+        if (h.size < 2) return null
+        var lo = h[0]; var hi = h[0]
+        for (x in h) {
+            if (x.cadence < lo.cadence) lo = x
+            if (x.cadence > hi.cadence) hi = x
+        }
+        return if (hi.cadence - lo.cadence >= MIN_CADENCE_GAP) lo to hi else null
+    }
+
+    fun solveFromHistory(h: List<CalPoint>): Pair<Float, Float>? {
+        val pair = bestPair(h) ?: return null
+        return solveTwoPoint(pair.first.cadence, pair.first.strideM,
+            pair.second.cadence, pair.second.strideM)
+    }
+
+    /** Отчёт для человека: все калибровки и честный диагноз. */
+    fun calibrationReport(c: Context): String {
+        val h = calHistory(c)
+        val sb = StringBuilder("StepCore — отчёт калибровки\n\n")
+        if (h.isEmpty()) return sb.append("Калибровок пока нет.").toString()
+        val fmt = java.text.SimpleDateFormat("dd.MM HH:mm", java.util.Locale("ru"))
+        sb.append("Калибровок сохранено: ").append(h.size).append("\n\n")
+        for ((i, x) in h.withIndex()) {
+            sb.append(i + 1).append(") ").append(fmt.format(java.util.Date(x.timeMs)))
+              .append("  темп ").append(String.format(java.util.Locale.US, "%.2f", x.cadence))
+              .append(" Гц  шаг ").append((x.strideM * 100).toInt()).append(" см")
+              .append("  (").append(x.metres.toInt()).append(" м / ")
+              .append(x.steps).append(" шаг.)\n")
+        }
+        val cads = h.map { it.cadence }
+        val spread = (cads.max() - cads.min())
+        sb.append("\nРазброс темпа: ")
+          .append(String.format(java.util.Locale.US, "%.2f", spread)).append(" Гц")
+        sb.append(" (нужно ≥ ").append(MIN_CADENCE_GAP).append(")\n")
+        val pair = bestPair(h)
+        if (pair == null) {
+            sb.append("\nПОЧЕМУ НАКЛОН НЕ ВЫВЕДЕН: все проходы на близком темпе.\n")
+            sb.append("НУЖНО: один проход ЯВНО медленно (прогулочный шаг),\n")
+            sb.append("второй ЯВНО быстро (энергичный шаг). Разница темпа важнее длины.\n")
+        } else {
+            val sol = solveFromHistory(h)
+            if (sol == null) {
+                sb.append("\nПОЧЕМУ НАКЛОН НЕ ВЫВЕДЕН: наклон вышел неправдоподобным\n")
+                sb.append("(вероятно разные маршруты или GPS-дрейф). Пройди оба замера\n")
+                sb.append("на ОДНОМ прямом отрезке, ≥150 м, открытое небо.\n")
+            } else {
+                sb.append("\nНАКЛОН ПЕРСОНАЛЬНЫЙ ✓\n")
+                sb.append("a=").append(String.format(java.util.Locale.US, "%.3f", sol.first))
+                  .append("  b=").append(String.format(java.util.Locale.US, "%.3f", sol.second))
+                  .append("\nПостроен по проходам на ")
+                  .append(String.format(java.util.Locale.US, "%.2f", pair.first.cadence))
+                  .append(" и ")
+                  .append(String.format(java.util.Locale.US, "%.2f", pair.second.cadence))
+                  .append(" Гц.\n")
+            }
+        }
+        sb.append("\nРазброс длины шага между проходами - это нормально:\n")
+        sb.append("GPS на коротком отрезке врёт на несколько процентов.\n")
+        sb.append("Чем длиннее замер, тем точнее (≥150 м лучше 100 м).\n")
+        return sb.toString()
+    }
+
     /** Решает прямую SL = a*cadence + b по двум точкам. Возвращает (a,b) или
      *  null, если точки не годятся: близкие каденсы или неправдоподобный
      *  наклон (GPS-дрейф, разный маршрут). null -> откат на табличный наклон. */
@@ -166,6 +273,7 @@ object StrideModel {
             .remove("stride_a").remove("stride_b")
             .remove("stride_manual").remove("stride_by_gps").remove("stride_measured_sl")
             .remove("stride_cal_cadence").remove("stride_personal_slope")
+            .remove(KEY_HIST)
             .apply()
     }
 
