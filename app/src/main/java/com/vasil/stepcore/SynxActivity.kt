@@ -68,12 +68,35 @@ class SynxActivity : AppCompatActivity() {
                 .append(f(x.cadenceTrend)).append(",").append(f(x.rhythmStab)).append(",")
                 .append(f(x.pitchRange)).append("\n")
         }
+        // Буфер обмена обрезает большой корпус - пишем ФАЙЛ в Downloads,
+        // его можно скинуть целиком. Буфер оставляем как запасной для мелочи.
+        val text = sb.toString()
+        var savedTo: String? = null
+        try {
+            val fname = "stepcore_corpus_" + System.currentTimeMillis() + ".csv"
+            val cv = android.content.ContentValues().apply {
+                put(android.provider.MediaStore.Downloads.DISPLAY_NAME, fname)
+                put(android.provider.MediaStore.Downloads.MIME_TYPE, "text/csv")
+            }
+            val uri = contentResolver.insert(
+                android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv)
+            if (uri != null) {
+                contentResolver.openOutputStream(uri)?.use {
+                    it.write(text.toByteArray()); it.flush()
+                }
+                savedTo = fname
+            }
+        } catch (e: Exception) { savedTo = null }
+
         val cm = getSystemService(Context.CLIPBOARD_SERVICE)
             as android.content.ClipboardManager
-        cm.setPrimaryClip(android.content.ClipData.newPlainText("StepCore corpus", sb.toString()))
-        android.widget.Toast.makeText(
-            this, "Корпус (" + list.size + " сессий) в буфере",
-            android.widget.Toast.LENGTH_SHORT).show()
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("StepCore corpus", text))
+
+        val msg = if (savedTo != null)
+            "Корпус (" + list.size + " сессий) -> Downloads/" + savedTo + " и в буфере"
+        else
+            "Корпус (" + list.size + " сессий) в буфере (файл не удалось записать)"
+        android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_LONG).show()
     }
 
     /** Инкрементальный догон сессий: строит только хвост корпуса после

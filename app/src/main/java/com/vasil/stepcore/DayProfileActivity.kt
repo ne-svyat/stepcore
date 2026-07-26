@@ -186,9 +186,15 @@ class DayProfileActivity : AppCompatActivity() {
 
             val titleFmt = SimpleDateFormat("EEEE, d MMMM yyyy", Locale("ru"))
             val steps = walk.sumOf { it.steps }
+            // Замыкание высоты: сумма подъёмов минус спусков (в шагах), только
+            // по надёжным уклонным. Ноль = вернулся на ту же высоту.
+            val upSteps = walk.filter { effLabel(it) == "UP" && it.reliable }.sumOf { it.steps }
+            val downSteps = walk.filter { effLabel(it) == "DOWN" && it.reliable }.sumOf { it.steps }
+            val closure = heightClosure(upSteps, downSteps)
             head.text = titleFmt.format(Date(ofDay.first().startMs)) + "\n" +
                 walk.size + " отрезков, ~" + steps + " шагов" +
-                (if (rides.isEmpty()) "" else ", поездок " + rides.size)
+                (if (rides.isEmpty()) "" else ", поездок " + rides.size) +
+                (if (closure != null) "\n" + closure else "")
 
             view.setData(
                 items.map {
@@ -526,6 +532,25 @@ class DayProfileActivity : AppCompatActivity() {
             cad < 1.95f -> "▰▰"
             else -> "▰▰▰"
         }
+    }
+
+    /** Замыкание высоты дня. Если есть и подъёмы, и спуски - день похож на
+     *  замкнутый (вышел-вернулся), и расхождение осмысленно. Если только
+     *  подъёмы или только спуски - это дорога в один конец (работа), тогда
+     *  расхождение ожидаемо и мы не выдаём его за ошибку. */
+    private fun heightClosure(up: Int, down: Int): String? {
+        if (up == 0 && down == 0) return null
+        val diff = up - down
+        // дорога в один конец: один из классов пуст
+        if (up == 0 || down == 0)
+            return "↕ высота: только " + (if (up > 0) "подъёмы" else "спуски") +
+                   " (дорога в один конец?)"
+        val tol = ((up + down) * 0.12f).toInt().coerceAtLeast(60)  // 12% или 60 шагов
+        return if (kotlin.math.abs(diff) <= tol)
+            "✓ высота сошлась (расхождение " + diff + " шаг.)"
+        else
+            "↕ высота не сошлась: " + (if (diff > 0) "+" else "") + diff +
+            " шаг. (" + (if (diff > 0) "спуска" else "подъёма") + " не хватает)"
     }
 
     private fun labelRu(l: String) = when (l) {
