@@ -101,11 +101,11 @@ class SynxActivity : AppCompatActivity() {
 
     /** Инкрементальный догон сессий: строит только хвост корпуса после
      *  lastBuiltTimeMs, старые сессии с их ответами не трогает. Дёшево,
-     *  без потери подтверждений - тот же путь, что buildSessions на главном
+     *  без потери подтверждений - тот же движок SessionEngine, что и на главном
      *  экране, только без диагностики. */
     /** Разовая полная пересборка новым порогом. Сохраняет ответы человека
      *  (confirmState, userLabel) по совпадению времени и метки - прошлое
-     *  неизменно. Тот же выверенный путь, что кнопка на главном экране. */
+     *  неизменно. Тот же выверенный путь свёртки корпуса в сессии. */
     private suspend fun rebuildAllWithAnswers(dao: StepDao) {
         val saved = dao.answeredSessions().map {
             Triple(it.startMs + it.durationMs / 2, it.label, it.confirmState)

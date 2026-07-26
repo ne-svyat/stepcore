@@ -89,18 +89,21 @@ class DayProfileActivity : AppCompatActivity() {
         findViewById<TextView>(R.id.moreRows).setOnClickListener { shown += 20; renderList() }
         // Плашка устаревания: если корпус ушёл вперёд свёрнутых сессий, мигаем
         // и ведём на главный экран к готовой кнопке пересборки. Пересборку не
-        // дублируем - там выверенный возврат ответов, меньше кода = меньше
-        // шанс потерять подтверждения.
+        // v233: тап ведёт в SYNX, где сессии догоняются автоматически (v224).
         val staleBanner = findViewById<TextView>(R.id.staleBanner)
         staleBanner.background = DoodleBorderDrawable(
             ContextCompat.getColor(this, R.color.accent_amber),
             ContextCompat.getColor(this, R.color.surface),
             909L, d, DoodleBorderDrawable.MAT_ROCK, DoodleBorderDrawable.RIFT_NONE)
         staleBanner.setOnClickListener {
+            // v233. Пересборки-кнопки больше нет (v227), сессии догоняются сами
+            // при входе в SYNX (v224). Поэтому просто открываем SYNX - там
+            // catchUpSessions подтянет свежие прогулки. Вернёшься сюда - карта
+            // уже свежая.
             android.widget.Toast.makeText(
-                this, "Нажми «Пересобрать сессии» на главном экране",
-                android.widget.Toast.LENGTH_LONG).show()
-            finish()
+                this, "Открываю SYNX — там сессии обновятся автоматически",
+                android.widget.Toast.LENGTH_SHORT).show()
+            startActivity(android.content.Intent(this, SynxActivity::class.java))
         }
         val editBtn = findViewById<TextView>(R.id.editLabelButton)
         editBtn.background = DoodleBorderDrawable(
