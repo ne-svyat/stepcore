@@ -90,6 +90,18 @@
             android:visibility="gone"
             android:layout_marginTop="8dp" />
 
+        <TextView
+            android:id="@+id/calReportButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:text="⚙  Отчёт калибровки"
+            android:textColor="@color/accent_amber_bright"
+            android:textSize="16sp"
+            android:paddingTop="12dp"
+            android:paddingBottom="12dp"
+            android:layout_marginTop="16dp" />
+
         <LinearLayout
             android:id="@+id/calContainer"
             android:layout_width="match_parent"

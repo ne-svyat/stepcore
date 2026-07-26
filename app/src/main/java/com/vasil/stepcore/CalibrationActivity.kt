@@ -55,6 +55,19 @@ class CalibrationActivity : AppCompatActivity() {
         calStatus = findViewById(R.id.calStatus)
         finishBtn = findViewById(R.id.finishButton)
         container = findViewById(R.id.calContainer)
+        findViewById<android.widget.TextView>(R.id.calReportButton)
+            .setOnClickListener {
+                val rep = StrideModel.calibrationReport(this)
+                val cm = getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                    as android.content.ClipboardManager
+                cm.setPrimaryClip(
+                    android.content.ClipData.newPlainText("StepCore calib", rep))
+                AlertDialog.Builder(this)
+                    .setTitle("Отчёт калибровки (скопирован)")
+                    .setMessage(rep)
+                    .setPositiveButton("Ок", null)
+                    .show()
+            }
 
         finishBtn.setOnClickListener { finishActive() }
 
