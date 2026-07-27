@@ -79,6 +79,7 @@
             android:exported="false"
             android:screenOrientation="portrait" />
         <activity android:name=".SplitActivity" android:exported="false" />
+        <activity android:name=".SlopeCalActivity" android:exported="false" />
 
     </application>
 </manifest>

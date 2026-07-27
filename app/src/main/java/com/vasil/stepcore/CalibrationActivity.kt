@@ -55,6 +55,11 @@ class CalibrationActivity : AppCompatActivity() {
         calStatus = findViewById(R.id.calStatus)
         finishBtn = findViewById(R.id.finishButton)
         container = findViewById(R.id.calContainer)
+        findViewById<android.widget.TextView>(R.id.slopeCalButton)
+            .setOnClickListener {
+                startActivity(android.content.Intent(
+                    this, SlopeCalActivity::class.java))
+            }
         findViewById<android.widget.TextView>(R.id.calReportButton)
             .setOnClickListener {
                 val rep = StrideModel.calibrationReport(this)
