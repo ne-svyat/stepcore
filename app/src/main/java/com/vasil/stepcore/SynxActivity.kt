@@ -39,7 +39,23 @@ class SynxActivity : AppCompatActivity() {
         val up = dao.countSamplesLabel("UP")
         val down = dao.countSamplesLabel("DOWN")
         val chip = dao.countSamplesChip()
+        // v248. Состояние автометки: человек должен видеть, включилась ли
+        // она и по каким направлениям, иначе непонятно, работает ли L3.2.
+        val pr = getSharedPreferences(StepService.PREFS, MODE_PRIVATE)
+        val upOk = pr.getInt("ia_up_ok", 0); val upN = pr.getInt("ia_up_n", 0)
+        val dnOk = pr.getInt("ia_down_ok", 0); val dnN = pr.getInt("ia_down_n", 0)
+        val autoCnt = dao.countAutoLabeled()
+        fun st(ok: Int, n: Int): String {
+            if (n == 0) return "нет данных"
+            val lb = InclineAgent.wilsonLower(ok, n)
+            return ok.toString() + "/" + n + " = " +
+                String.format(java.util.Locale.US, "%.0f", lb * 100) + "%" +
+                (if (lb >= InclineAgent.AUTO_TRUST) "  ✓ авто" else "")
+        }
         view.text = "Корпус: " + total + " образцов" +
+            "\n  автометка: в гору " + st(upOk, upN) +
+            "\n              с горы " + st(dnOk, dnN) +
+            (if (autoCnt > 0) "\n  агент разметил сам: " + autoCnt else "") +
             "\n  ровно " + flat + " · в гору " + up + " · с горы " + down +
             "\n  от детектора " + (total - chip) + " · от чипа " + chip
     }
@@ -460,20 +476,9 @@ class SynxActivity : AppCompatActivity() {
     private fun showInclineDialog(s: SessionRecord, guess: String, headView: View) {
         // Агент не согласен с меткой -> спрашиваем, что было на самом деле.
         if (guess != "" && guess != s.label) {
-            val opts = arrayOf("В гору", "С горы", "Не помню")
-            AlertDialog.Builder(this)
-                .setCustomTitle(headView)
-                .setItems(opts) { _, which ->
-                    val truth = if (which == 0) "UP" else if (which == 1) "DOWN" else ""
-                    if (truth == "") {
-                        recordAnswer(s, 3, "не подтверждено")
-                    } else {
-                        scoreAgent(guess, truth)
-                        if (truth == s.label) recordAnswer(s, 1, "подтверждено")
-                        else recordAnswer(s, 2, "дефект (метка не та)")
-                    }
-                }
-                .show()
+            // Агент не согласен с меткой. Спрашиваем правду и СОХРАНЯЕМ её:
+            // раньше правильная метка терялась, оставался только "дефект".
+            askTruth(s, guess, headView)
             return
         }
         AlertDialog.Builder(this)
@@ -482,7 +487,11 @@ class SynxActivity : AppCompatActivity() {
                 if (guess != "") scoreAgent(guess, s.label)
                 recordAnswer(s, 1, "подтверждено")
             }
-            .setNegativeButton("Нет") { _, _ -> recordAnswer(s, 2, "дефект") }
+            .setNegativeButton("Нет") { _, _ ->
+                // v248: "нет" без продолжения терял правду. Спрашиваем,
+                // что было на самом деле, и записываем это.
+                askTruth(s, guess, null)
+            }
             .setNeutralButton("🔍 Разобрать") { _, _ -> openSplit(s) }
             .show()
     }
@@ -546,6 +555,47 @@ class SynxActivity : AppCompatActivity() {
         i.putExtra("startMs", s.startMs)
         i.putExtra("endMs", s.endMs)
         startActivity(i)
+    }
+
+    /** Спрашивает, каким был уклон на самом деле, и СОХРАНЯЕТ ответ.
+     *  Исходная метка не переписывается (прошлое неизменно) - правда
+     *  ложится рядом в userLabel и становится истиной для показа и
+     *  обучения. Это то же правило, что у ручной правки (v218). */
+    private fun askTruth(s: SessionRecord, guess: String, headView: View?) {
+        val opts = arrayOf("В гору", "Ровно", "С горы", "Не помню")
+        val codes = arrayOf("UP", "FLAT", "DOWN", "")
+        val b = AlertDialog.Builder(this)
+        if (headView != null) b.setCustomTitle(headView)
+        else b.setTitle("А что было на самом деле?")
+        b.setItems(opts) { _, which ->
+            val truth = codes[which]
+            if (truth == "") { recordAnswer(s, 3, "не подтверждено"); return@setItems }
+            if (guess != "") scoreAgent(guess, truth)
+            lifecycleScope.launch {
+                val dao = AppDb.get(this@SynxActivity).dao()
+                if (truth == s.label) {
+                    dao.setSessionConfirm(s.id, 1)
+                    journal("SYNX уклон «" + labelRu(s.label) + "»: подтверждено (" +
+                        anchor(s) + ")")
+                } else {
+                    // Правка: исходная метка остаётся фактом нажатия,
+                    // правда живёт рядом.
+                    dao.setUserLabel(s.id, truth)
+                    journal("SYNX уклон: было «" + labelRu(s.label) + "», человек " +
+                        "поправил на «" + labelRu(truth) + "» (" + anchor(s) + ")")
+                }
+                askedInVisit++
+                if (askedInVisit < MAX_ASK_PER_VISIT) {
+                    val next = nextCandidate(dao)
+                    if (next != null) { offerNext(next); return@launch }
+                }
+                Toast.makeText(this@SynxActivity,
+                    if (truth == s.label) "Записал, спасибо"
+                    else "Поправил на «" + labelRu(truth) + "», спасибо",
+                    Toast.LENGTH_SHORT).show()
+            }
+        }
+        b.show()
     }
 
     private fun recordAnswer(s: SessionRecord, state: Int, word: String) {
