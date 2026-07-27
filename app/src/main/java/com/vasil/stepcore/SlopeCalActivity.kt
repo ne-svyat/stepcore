@@ -94,7 +94,7 @@ class SlopeCalActivity : AppCompatActivity() {
         hint.textSize = 14f
         hint.setTextColor(ContextCompat.getColor(this, R.color.text_dim))
         hint.setPadding(0, (16 * dens).toInt(), 0, 0)
-        hint.lineSpacingExtra = 3f * dens
+        hint.setLineSpacing(3f * dens, 1f)
         root.addView(hint)
 
         val close = TextView(this)
