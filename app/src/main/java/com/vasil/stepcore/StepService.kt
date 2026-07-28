@@ -302,6 +302,10 @@ class StepService : Service(), SensorEventListener {
     // v250. Калибровка уклона. Автомат здесь, а не в Activity: телефон
     // уходит в карман, экран гаснет, и HyperOS морозит активность.
     // Служба живёт всегда, поэтому отрезок не может "замереть".
+    // v251. Панель меток: смахнули - вернём, когда снова пойдёт.
+    private var marksHidden = false
+    private var marksRepostAtSteps = 0
+
     private var slopeActive = false
     private var slopeStartSteps = 0
     private var slopeStartMs = 0L
@@ -329,6 +333,10 @@ class StepService : Service(), SensorEventListener {
 
         createChannel()
         startForeground(NOTIF_ID, buildNotification(walkSteps + runSteps))
+        // v251. Панель меток - отдельным обычным уведомлением, иначе
+        // HyperOS прячет её на локскрине вместе со служебным.
+        createMarksChannel()
+        showMarks()
 
         // v191: wakelock больше не берётся навсегда. Им управляет
         // updateMotionSensors: он нужен только тогда, когда мы реально
@@ -503,6 +511,7 @@ class StepService : Service(), SensorEventListener {
             ACTION_CAL_STOP -> finishCalibration()
             ACTION_CAL_DIST_START -> startDistCal(intent.getFloatExtra(EXTRA_METRES, 0f))
             ACTION_CAL_DIST_STOP -> finishDistCal()
+            ACTION_MARKS_DISMISSED -> onMarksDismissed()
             ACTION_SLOPE_START -> slopeStart()
             ACTION_SLOPE_CONFIRM -> slopeConfirm()
             ACTION_SLOPE_SKIP -> slopeSkip()
@@ -1089,6 +1098,7 @@ class StepService : Service(), SensorEventListener {
                 }
                 StepsState.steps.value = walkSteps + runSteps
                 slopeTick(walkSteps + runSteps)
+                marksTick(walkSteps + runSteps)
                 persistPrefs()
                 stepsSinceDbWrite += delta
                 if (stepsSinceDbWrite >= 25) { stepsSinceDbWrite = 0; persistDb() }
@@ -1540,6 +1550,10 @@ class StepService : Service(), SensorEventListener {
     }
 
     override fun onDestroy() {
+        // Панель меток живёт ровно столько, сколько идёт счёт.
+        runCatching {
+            getSystemService(NotificationManager::class.java).cancel(NOTIF_ID_MARKS)
+        }
         sensorManager.unregisterListener(this)
         runCatching { unregisterReceiver(screenReceiver) }
         logHwComparisonBlocking("стоп")
@@ -1604,6 +1618,7 @@ class StepService : Service(), SensorEventListener {
             else -> "ровно"
         }
         logEvent("Уклон: " + name + (if (fromShade) " (шторка)" else ""))
+        if (!marksHidden) showMarks()   // подсветить выбранную метку
         getSystemService(NotificationManager::class.java)
             .notify(NOTIF_ID, buildNotification(walkSteps + runSteps))
     }
@@ -1643,9 +1658,8 @@ class StepService : Service(), SensorEventListener {
                     }
                 )
             )
-            .addAction(inclineAction(TerrainState.Incline.UP, "▲ В гору", 11))
-            .addAction(inclineAction(TerrainState.Incline.FLAT, "━ Ровно", 12))
-            .addAction(inclineAction(TerrainState.Incline.DOWN, "▼ С горы", 13))
+            // v251: кнопки уклона переехали в отдельное уведомление -
+            // служебное отвечает только за "служба жива" и шаги.
             .build()
     }
 
@@ -1663,6 +1677,74 @@ class StepService : Service(), SensorEventListener {
      * Активная метка отмечена точкой - при узкой шторке текст обрезается,
      * а точка видна всегда.
      */
+    // ---- v251: метки уклона в собственном уведомлении ----
+
+    /** Отдельный канал. Служебное уведомление foreground service HyperOS
+     *  прячет на локскрине; обычное уведомление с importance DEFAULT -
+     *  показывает, как у любого другого приложения. Звук и вибрация
+     *  выключены: это тихая панель кнопок, а не оповещение. */
+    private fun createMarksChannel() {
+        val nm = getSystemService(NotificationManager::class.java)
+        val ch = NotificationChannel(
+            CHANNEL_MARKS, "Метки уклона", NotificationManager.IMPORTANCE_DEFAULT)
+        ch.description = "Кнопки «в гору / ровно / с горы» на экране блокировки"
+        ch.setSound(null, null)
+        ch.enableVibration(false)
+        ch.lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+        ch.setShowBadge(false)
+        nm.createNotificationChannel(ch)
+    }
+
+    private fun buildMarksNotification(): Notification {
+        val cur = when (TerrainState.incline.value) {
+            TerrainState.Incline.UP -> "сейчас: в гору"
+            TerrainState.Incline.DOWN -> "сейчас: с горы"
+            TerrainState.Incline.FLAT -> "сейчас: ровно"
+            else -> "уклон не отмечен"
+        }
+        val open = PendingIntent.getActivity(
+            this, 20, Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE)
+        // Смахнули - не спорим. Вернём, когда человек снова пойдёт.
+        val gone = PendingIntent.getForegroundService(
+            this, 21,
+            Intent(this, StepService::class.java).setAction(ACTION_MARKS_DISMISSED),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        return Notification.Builder(this, CHANNEL_MARKS)
+            .setContentTitle("Уклон")
+            .setContentText(cur)
+            .setSmallIcon(android.R.drawable.ic_menu_directions)
+            .setContentIntent(open)
+            .setDeleteIntent(gone)
+            .setOngoing(false)
+            .setOnlyAlertOnce(true)
+            .setVisibility(Notification.VISIBILITY_PUBLIC)
+            .addAction(inclineAction(TerrainState.Incline.UP, "▲ В гору", 11))
+            .addAction(inclineAction(TerrainState.Incline.FLAT, "━ Ровно", 12))
+            .addAction(inclineAction(TerrainState.Incline.DOWN, "▼ С горы", 13))
+            .build()
+    }
+
+    /** Показать панель меток. Тихо: setOnlyAlertOnce + канал без звука. */
+    private fun showMarks() {
+        marksHidden = false
+        getSystemService(NotificationManager::class.java)
+            .notify(NOTIF_ID_MARKS, buildMarksNotification())
+    }
+
+    /** Человек смахнул панель. Возвращаем не сразу и не по таймеру, а
+     *  когда он снова прошёл заметное расстояние: смахнул стоя - пусть
+     *  полежит, пошёл - метки снова под рукой. */
+    private fun onMarksDismissed() {
+        marksHidden = true
+        marksRepostAtSteps = walkSteps + runSteps + MARKS_REPOST_STEPS
+    }
+
+    private fun marksTick(total: Int) {
+        if (!marksHidden) return
+        if (total >= marksRepostAtSteps) showMarks()
+    }
+
     private fun inclineAction(
         v: TerrainState.Incline, title: String, req: Int
     ): Notification.Action {
@@ -1713,6 +1795,13 @@ class StepService : Service(), SensorEventListener {
         const val ACTION_CAL_STOP = "cal_stop"
         const val ACTION_CAL_DIST_START = "cal_dist_start"
         const val ACTION_CAL_DIST_STOP = "cal_dist_stop"
+        const val CHANNEL_MARKS = "stepcore_marks"
+        const val NOTIF_ID_MARKS = 2
+        const val ACTION_MARKS_DISMISSED = "marks_dismissed"
+        /** Через столько шагов после смахивания панель возвращается.
+         *  ~2 минуты ходьбы: достаточно, чтобы не мозолить, и мало,
+         *  чтобы метка была под рукой к следующему склону. */
+        const val MARKS_REPOST_STEPS = 200
         const val ACTION_SLOPE_START = "slope_start"
         const val ACTION_SLOPE_CONFIRM = "slope_confirm"
         const val ACTION_SLOPE_SKIP = "slope_skip"
