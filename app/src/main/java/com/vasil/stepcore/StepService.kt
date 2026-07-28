@@ -305,6 +305,12 @@ class StepService : Service(), SensorEventListener {
     // v251. Панель меток: смахнули - вернём, когда снова пойдёт.
     private var marksHidden = false
     private var marksRepostAtSteps = 0
+    // v259. Панель - инструмент для ходьбы, а не житель шторки.
+    // Появляется при движении, уходит в покое, перерисовывается только
+    // при реальном изменении текста.
+    private var marksShown = false
+    private var marksLastStepMs = 0L
+    private var marksLastText = ""
 
     private var slopeActive = false
     private var slopeStartSteps = 0
@@ -339,7 +345,15 @@ class StepService : Service(), SensorEventListener {
         // v251. Панель меток - отдельным обычным уведомлением, иначе
         // HyperOS прячет её на локскрине вместе со служебным.
         createMarksChannel()
-        showMarks()
+        // v259. При старте панель НЕ показываем: человек может просто
+        // включить счёт и заниматься своими делами. Появится, когда пойдёт.
+        marksLastStepMs = System.currentTimeMillis()
+        scope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(60_000L)
+                marksIdleCheck()
+            }
+        }
 
         // v191: wakelock больше не берётся навсегда. Им управляет
         // updateMotionSensors: он нужен только тогда, когда мы реально
@@ -1130,7 +1144,10 @@ class StepService : Service(), SensorEventListener {
                 persistPrefs()
                 stepsSinceDbWrite += delta
                 if (stepsSinceDbWrite >= 25) { stepsSinceDbWrite = 0; persistDb() }
-                if (walkSteps + runSteps - lastNotifiedSteps >= 10) {
+                // v259. Было каждые 10 шагов - это раз в 6 секунд на ходу.
+                // Каждый notify() система может показать заново, отсюда
+                // ощущение постоянных уведомлений.
+                if (walkSteps + runSteps - lastNotifiedSteps >= NOTIF_STEP_STRIDE) {
                     lastNotifiedSteps = walkSteps + runSteps
                     getSystemService(NotificationManager::class.java)
                         .notify(NOTIF_ID, buildNotification(walkSteps + runSteps))
@@ -1684,6 +1701,7 @@ class StepService : Service(), SensorEventListener {
             .setContentText("Шагов: " + steps + " · уклон: " + incName)
             .setSmallIcon(android.R.drawable.ic_menu_directions)
             .setContentIntent(pi)
+            .setOnlyAlertOnce(true)   // v259: не показывать заново на каждом обновлении
             .setOngoing(true)
             .setVisibility(Notification.VISIBILITY_PUBLIC)
             // Цвет всей полосы уведомления по текущей метке: покрасить
@@ -1828,8 +1846,30 @@ class StepService : Service(), SensorEventListener {
     /** Показать панель меток. Тихо: setOnlyAlertOnce + канал без звука. */
     private fun showMarks() {
         marksHidden = false
+        val txt = marksText()
+        if (marksShown && txt == marksLastText) return   // нечего перерисовывать
+        marksLastText = txt
+        marksShown = true
         getSystemService(NotificationManager::class.java)
             .notify(NOTIF_ID_MARKS, buildMarksNotification())
+    }
+
+    /** Текущая подпись панели - по ней решаем, нужно ли перерисовывать. */
+    private fun marksText(): String = when (TerrainState.incline.value) {
+        TerrainState.Incline.UP -> "сейчас: в гору"
+        TerrainState.Incline.DOWN -> "сейчас: с горы"
+        TerrainState.Incline.FLAT -> "сейчас: ровно"
+        else -> "уклон не отмечен"
+    }
+
+    /** Убрать панель: человек стоит, кнопки ему не нужны. */
+    private fun hideMarks() {
+        if (!marksShown) return
+        marksShown = false
+        marksLastText = ""
+        runCatching {
+            getSystemService(NotificationManager::class.java).cancel(NOTIF_ID_MARKS)
+        }
     }
 
     /** Человек смахнул панель. Возвращаем не сразу и не по таймеру, а
@@ -1850,10 +1890,29 @@ class StepService : Service(), SensorEventListener {
         slopeCancel()
     }
 
+    /** Вызывается на каждом обновлении счёта. Решает судьбу панели:
+     *  идёт человек - панель нужна, стоит - не нужна. Так шторка пуста,
+     *  пока ей нечего сказать. */
     private fun marksTick(total: Int) {
         slopeIdleCheck()
-        if (!marksHidden) return
-        if (total >= marksRepostAtSteps) showMarks()
+        if (slopeActive) return          // панель занята калибровкой
+        marksLastStepMs = System.currentTimeMillis()
+        if (marksHidden) {
+            // Смахнули - вернём, когда прошёл заметное расстояние.
+            if (total >= marksRepostAtSteps) { marksHidden = false; showMarks() }
+            return
+        }
+        showMarks()
+    }
+
+    /** Покой: панель уходит. Проверяется таймером, потому что в покое
+     *  шаговых событий нет и marksTick не позовут. */
+    private fun marksIdleCheck() {
+        if (slopeActive) return
+        if (!marksShown) return
+        if (marksLastStepMs <= 0L) return
+        if (System.currentTimeMillis() - marksLastStepMs < MARKS_IDLE_MS) return
+        hideMarks()
     }
 
     private fun inclineAction(
@@ -1913,6 +1972,12 @@ class StepService : Service(), SensorEventListener {
          *  ~2 минуты ходьбы: достаточно, чтобы не мозолить, и мало,
          *  чтобы метка была под рукой к следующему склону. */
         const val MARKS_REPOST_STEPS = 200
+        /** Столько без шагов - панель уходит из шторки. 6 минут: дольше
+         *  светофора и кофе, короче настоящей остановки. */
+        const val MARKS_IDLE_MS = 6 * 60 * 1000L
+        /** Через столько шагов перерисовываем служебное уведомление.
+         *  Было 10 - раз в 6 секунд на ходу, слишком часто. */
+        const val NOTIF_STEP_STRIDE = 40
         const val ACTION_SLOPE_START = "slope_start"
         const val ACTION_SLOPE_CONFIRM = "slope_confirm"
         const val ACTION_SLOPE_SKIP = "slope_skip"
