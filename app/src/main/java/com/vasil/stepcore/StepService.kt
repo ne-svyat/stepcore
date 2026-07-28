@@ -310,6 +310,9 @@ class StepService : Service(), SensorEventListener {
     private var slopeStartSteps = 0
     private var slopeStartMs = 0L
     private var slopeArmSteps = 0
+    // v258. Забытая калибровка опасна: автомат ждёт движения и однажды
+    // запишет чужой отрезок как эталон. Считаем время без активности.
+    private var slopeIdleSinceMs = 0L
     private val slopeWindows = ArrayList<Triple<String, Long, Long>>()
 
     override fun onCreate() {
@@ -784,10 +787,20 @@ class StepService : Service(), SensorEventListener {
 
     private fun slopeStart() {
         slopeActive = true
+        // Если человек вообще не пойдёт, шаговый хук не сработает -
+        // поэтому за простоем следит ещё и таймер.
+        scope.launch {
+            while (slopeActive) {
+                kotlinx.coroutines.delay(60_000L)
+                slopeIdleCheck()
+            }
+        }
         slopeWindows.clear()
         StepsState.slopeResult.value = ""
         StepsState.slopePhase.value = 0
+        slopeIdleSinceMs = System.currentTimeMillis()
         slopeArm()
+        refreshPanel()
     }
 
     /** Ждём, пока человек пойдёт: запись начнётся сама. */
@@ -801,6 +814,8 @@ class StepService : Service(), SensorEventListener {
      *  выключенным экраном. Здесь автомат и живёт. */
     private fun slopeTick(total: Int) {
         if (!slopeActive) return
+        // Есть движение - калибровка живая.
+        slopeIdleSinceMs = System.currentTimeMillis()
         when (StepsState.slopeStage.value) {
             "ARM" -> {
                 if (total - slopeArmSteps >= SLOPE_START_STEPS) {
@@ -809,11 +824,16 @@ class StepService : Service(), SensorEventListener {
                     StepsState.slopeStage.value = "REC"
                     StepsState.slopeSteps.value = total - slopeStartSteps
                     beep(1)
+                    refreshPanel()
                 }
             }
             "REC" -> {
                 val done = total - slopeStartSteps
+                val prev = StepsState.slopeSteps.value
                 StepsState.slopeSteps.value = done
+                // Панель обновляем редко: каждое уведомление - работа
+                // системы, а число шагов и так растёт плавно.
+                if (done / 10 != prev / 10) refreshPanel()
                 if (done >= SLOPE_MIN_STEPS) {
                     // Окно закрываем ЗДЕСЬ: пока человек достаёт телефон
                     // и идёт обратно, лишнее в замер не попадёт.
@@ -821,6 +841,7 @@ class StepService : Service(), SensorEventListener {
                     slopeWindows.add(Triple(lbl, slopeStartMs, System.currentTimeMillis()))
                     StepsState.slopeStage.value = "DONE"
                     beep(2)
+                    refreshPanel()
                 }
             }
         }
@@ -847,8 +868,10 @@ class StepService : Service(), SensorEventListener {
     private fun advanceSlopePhase() {
         val next = StepsState.slopePhase.value + 1
         StepsState.slopePhase.value = next
+        slopeIdleSinceMs = System.currentTimeMillis()
         if (next >= 3) { slopeFinish(); return }
         slopeArm()
+        refreshPanel()
     }
 
     private fun slopeCancel() {
@@ -857,6 +880,7 @@ class StepService : Service(), SensorEventListener {
         StepsState.slopePhase.value = -1
         StepsState.slopeStage.value = "ARM"
         beep(1, low = true)
+        if (!marksHidden) showMarks()   // вернуть обычную панель меток
     }
 
     /** Считаем якоря по окнам. Только чиповые строки: это карман,
@@ -911,6 +935,10 @@ class StepService : Service(), SensorEventListener {
             StepsState.slopeStage.value = "RESULT"
             StepsState.slopePhase.value = 3
             beep(3)
+            if (!marksHidden) showMarks()   // калибровка кончилась
+            android.widget.Toast.makeText(this@StepService,
+                "Калибровка уклона готова — открой SYNX или Калибровку",
+                android.widget.Toast.LENGTH_LONG).show()
         }
     }
 
@@ -1631,7 +1659,8 @@ class StepService : Service(), SensorEventListener {
             else -> "ровно"
         }
         logEvent("Уклон: " + name + (if (fromShade) " (шторка)" else ""))
-        if (!marksHidden) showMarks()   // подсветить выбранную метку
+        // Во время калибровки панель занята ею - не затираем.
+        if (!marksHidden && !slopeActive) showMarks()
         getSystemService(NotificationManager::class.java)
             .notify(NOTIF_ID, buildNotification(walkSteps + runSteps))
     }
@@ -1738,6 +1767,64 @@ class StepService : Service(), SensorEventListener {
             .build()
     }
 
+    /** Панель калибровки уклона. Живёт на том же уведомлении, что метки:
+     *  пока идёт калибровка, метки всё равно ставить нельзя, а место на
+     *  локскрине одно. Кнопки работают с заблокированного экрана - ради
+     *  этого всё и затевалось. */
+    private fun buildSlopeNotification(): Notification {
+        val phase = StepsState.slopePhase.value
+        val stage = StepsState.slopeStage.value
+        val steps = StepsState.slopeSteps.value
+        val name = when (phase) { 0 -> "в гору"; 1 -> "ровно"; else -> "с горы" }
+        val title = "Калибровка уклона · отрезок " + (phase + 1) + " из 3"
+        val body = when (stage) {
+            "ARM" -> "«" + name + "» — иди, запись начнётся сама"
+            "REC" -> "«" + name + "» — " + steps + " шагов из " + SLOPE_MIN_STEPS
+            "DONE" -> "«" + name + "» записан (" + steps + " шагов) — подтверди"
+            "CALC" -> "считаю якоря…"
+            else -> "«" + name + "»"
+        }
+        val open = PendingIntent.getActivity(
+            this, 30, Intent(this, SlopeCalActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE)
+        val b = Notification.Builder(this, CHANNEL_MARKS)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setStyle(Notification.BigTextStyle().bigText(body))
+            .setSmallIcon(android.R.drawable.ic_menu_directions)
+            .setContentIntent(open)
+            .setOngoing(true)      // калибровку не смахивают случайно
+            .setOnlyAlertOnce(true)
+            .setVisibility(Notification.VISIBILITY_PUBLIC)
+        if (stage == "DONE") {
+            b.addAction(slopeAction(ACTION_SLOPE_CONFIRM, "✓ Подтвердить", 31))
+        }
+        if (phase == 1 && stage == "ARM") {
+            b.addAction(slopeAction(ACTION_SLOPE_SKIP, "Пропустить ровно", 32))
+        }
+        b.addAction(slopeAction(ACTION_SLOPE_CANCEL, "Отмена", 33))
+        return b.build()
+    }
+
+    private fun slopeAction(action: String, title: String, req: Int):
+        Notification.Action {
+        val pi = PendingIntent.getForegroundService(
+            this, req,
+            Intent(this, StepService::class.java).setAction(action),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        return Notification.Action.Builder(
+            Icon.createWithResource(this, android.R.drawable.ic_menu_directions),
+            title, pi).build()
+    }
+
+    /** Обновить панель: во время калибровки показываем её, иначе метки. */
+    private fun refreshPanel() {
+        if (marksHidden && !slopeActive) return
+        val n = if (slopeActive || StepsState.slopeStage.value == "CALC")
+            buildSlopeNotification() else buildMarksNotification()
+        getSystemService(NotificationManager::class.java).notify(NOTIF_ID_MARKS, n)
+    }
+
     /** Показать панель меток. Тихо: setOnlyAlertOnce + канал без звука. */
     private fun showMarks() {
         marksHidden = false
@@ -1753,7 +1840,18 @@ class StepService : Service(), SensorEventListener {
         marksRepostAtSteps = walkSteps + runSteps + MARKS_REPOST_STEPS
     }
 
+    /** Простой калибровки: ни шагов, ни подтверждений. Отменяем сами -
+     *  кривой эталон хуже отсутствующего. */
+    private fun slopeIdleCheck() {
+        if (!slopeActive) return
+        if (slopeIdleSinceMs <= 0L) return
+        if (System.currentTimeMillis() - slopeIdleSinceMs < SLOPE_IDLE_MS) return
+        logEvent("Калибровка уклона отменена: долгий простой")
+        slopeCancel()
+    }
+
     private fun marksTick(total: Int) {
+        slopeIdleCheck()
         if (!marksHidden) return
         if (total >= marksRepostAtSteps) showMarks()
     }
@@ -1826,6 +1924,10 @@ class StepService : Service(), SensorEventListener {
         const val SLOPE_START_STEPS = 4
         /** На 40 шагах медиана уже устойчива, а отрезок найти реально. */
         const val SLOPE_MIN_STEPS = 40
+        /** Столько без шагов и подтверждений - калибровка отменяется.
+         *  15 минут: дольше человек на склоне не стоит, а забыть -
+         *  запросто. */
+        const val SLOPE_IDLE_MS = 15 * 60 * 1000L
         const val EXTRA_METRES = "metres"
         const val ACTION_DIAG_START = "diag_start"
         const val ACTION_DIAG_STOP = "diag_stop"
