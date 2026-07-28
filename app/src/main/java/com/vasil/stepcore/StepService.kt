@@ -522,6 +522,16 @@ class StepService : Service(), SensorEventListener {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // v260. КРИТИЧНО. Кнопки панели зовут startForegroundService(), а
+        // Android требует после КАЖДОГО такого вызова получить
+        // startForeground() в течение 5 секунд - даже если служба уже на
+        // переднем плане. Раньше мы просто обрабатывали действие и
+        // выходили, поэтому система убивала службу: нажатие метки в
+        // шторке ВЫКЛЮЧАЛО счёт шагов. Для работающей службы вызов
+        // идемпотентен - он лишь подтверждает её статус.
+        runCatching {
+            startForeground(NOTIF_ID, buildNotification(walkSteps + runSteps))
+        }
         when (intent?.action) {
             ACTION_CAL_WALK -> startCalibration("walk")
             ACTION_CAL_RUN -> startCalibration("run")

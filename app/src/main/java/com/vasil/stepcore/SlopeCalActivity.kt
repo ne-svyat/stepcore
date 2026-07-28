@@ -128,7 +128,7 @@ class SlopeCalActivity : AppCompatActivity() {
 
         if (phase < 0) {
             card.text = "Три отрезка на одном склоне"
-            frame(card, R.color.accent_teal, DoodleBorderDrawable.RIFT_NONE)
+            frame(card, R.color.accent_green, DoodleBorderDrawable.RIFT_NONE)
             hint.text = "Метки уклона копятся в разных условиях, поэтому «ровно» " +
                 "размазано и накрывает «в гору». Три отрезка подряд в одном месте " +
                 "убирают разницу условий — остаётся чистая разница уклона.\n\n" +
@@ -161,7 +161,7 @@ class SlopeCalActivity : AppCompatActivity() {
         }
         val color = when (phase) {
             0 -> R.color.accent_amber
-            1 -> R.color.accent_teal
+            1 -> R.color.accent_green
             else -> R.color.accent_blue
         }
         frame(card, color, rift)

@@ -55,7 +55,7 @@ class SplitActivity : AppCompatActivity() {
     private fun colorOf(cls: String) = when (cls) {
         "UP" -> ContextCompat.getColor(this, R.color.accent_amber)
         "DOWN" -> ContextCompat.getColor(this, R.color.accent_blue)
-        else -> ContextCompat.getColor(this, R.color.accent_teal)
+        else -> ContextCompat.getColor(this, R.color.accent_green)
     }
 
     private fun ru(cls: String) = when (cls) {
