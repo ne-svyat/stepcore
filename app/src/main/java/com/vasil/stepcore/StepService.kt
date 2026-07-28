@@ -299,6 +299,15 @@ class StepService : Service(), SensorEventListener {
     // а не из профиля - иначе в историю попадает чужое число.
     private var distCalStartMs = 0L
 
+    // v250. Калибровка уклона. Автомат здесь, а не в Activity: телефон
+    // уходит в карман, экран гаснет, и HyperOS морозит активность.
+    // Служба живёт всегда, поэтому отрезок не может "замереть".
+    private var slopeActive = false
+    private var slopeStartSteps = 0
+    private var slopeStartMs = 0L
+    private var slopeArmSteps = 0
+    private val slopeWindows = ArrayList<Triple<String, Long, Long>>()
+
     override fun onCreate() {
         super.onCreate()
         sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
@@ -494,6 +503,10 @@ class StepService : Service(), SensorEventListener {
             ACTION_CAL_STOP -> finishCalibration()
             ACTION_CAL_DIST_START -> startDistCal(intent.getFloatExtra(EXTRA_METRES, 0f))
             ACTION_CAL_DIST_STOP -> finishDistCal()
+            ACTION_SLOPE_START -> slopeStart()
+            ACTION_SLOPE_CONFIRM -> slopeConfirm()
+            ACTION_SLOPE_SKIP -> slopeSkip()
+            ACTION_SLOPE_CANCEL -> slopeCancel()
             ACTION_DIAG_START -> {
                 detector.diagRecording = true
                 StepsState.diagRecording.value = true
@@ -735,6 +748,163 @@ class StepService : Service(), SensorEventListener {
             "Калибровка дистанции: пройди ${metres.toInt()} м и нажми Готово"
     }
 
+    // ---- v250: калибровка уклона ----
+
+    /** Звук: вибрацию в кармане не слышно и не чувствуешь (проверено).
+     *  Канал будильника выбран специально - он звучит, даже когда
+     *  громкость уведомлений прикручена. */
+    private fun beep(times: Int, low: Boolean = false) {
+        scope.launch {
+            var tg: android.media.ToneGenerator? = null
+            try {
+                tg = android.media.ToneGenerator(
+                    android.media.AudioManager.STREAM_ALARM, 90)
+                val tone = if (low) android.media.ToneGenerator.TONE_PROP_NACK
+                    else android.media.ToneGenerator.TONE_PROP_BEEP
+                for (i in 0 until times) {
+                    tg.startTone(tone, if (low) 500 else 200)
+                    kotlinx.coroutines.delay(if (low) 600L else 320L)
+                }
+            } catch (e: Exception) {
+                // без звука калибровка всё равно работает
+            } finally {
+                runCatching { tg?.release() }
+            }
+        }
+    }
+
+    private fun slopeStart() {
+        slopeActive = true
+        slopeWindows.clear()
+        StepsState.slopeResult.value = ""
+        StepsState.slopePhase.value = 0
+        slopeArm()
+    }
+
+    /** Ждём, пока человек пойдёт: запись начнётся сама. */
+    private fun slopeArm() {
+        StepsState.slopeStage.value = "ARM"
+        StepsState.slopeSteps.value = 0
+        slopeArmSteps = walkSteps + runSteps
+    }
+
+    /** Вызывается при каждом обновлении счёта чипом - в том числе с
+     *  выключенным экраном. Здесь автомат и живёт. */
+    private fun slopeTick(total: Int) {
+        if (!slopeActive) return
+        when (StepsState.slopeStage.value) {
+            "ARM" -> {
+                if (total - slopeArmSteps >= SLOPE_START_STEPS) {
+                    slopeStartSteps = slopeArmSteps
+                    slopeStartMs = System.currentTimeMillis()
+                    StepsState.slopeStage.value = "REC"
+                    StepsState.slopeSteps.value = total - slopeStartSteps
+                    beep(1)
+                }
+            }
+            "REC" -> {
+                val done = total - slopeStartSteps
+                StepsState.slopeSteps.value = done
+                if (done >= SLOPE_MIN_STEPS) {
+                    // Окно закрываем ЗДЕСЬ: пока человек достаёт телефон
+                    // и идёт обратно, лишнее в замер не попадёт.
+                    val lbl = slopeLabelOf(StepsState.slopePhase.value)
+                    slopeWindows.add(Triple(lbl, slopeStartMs, System.currentTimeMillis()))
+                    StepsState.slopeStage.value = "DONE"
+                    beep(2)
+                }
+            }
+        }
+    }
+
+    private fun slopeLabelOf(phase: Int) = when (phase) {
+        0 -> "UP"; 1 -> "FLAT"; else -> "DOWN"
+    }
+
+    /** Человек подтвердил отрезок - идём к следующему. */
+    private fun slopeConfirm() {
+        if (!slopeActive) return
+        if (StepsState.slopeStage.value != "DONE") return
+        advanceSlopePhase()
+    }
+
+    /** Пропустить ровный участок: на склоне его может не быть. */
+    private fun slopeSkip() {
+        if (!slopeActive) return
+        if (StepsState.slopePhase.value != 1) return
+        advanceSlopePhase()
+    }
+
+    private fun advanceSlopePhase() {
+        val next = StepsState.slopePhase.value + 1
+        StepsState.slopePhase.value = next
+        if (next >= 3) { slopeFinish(); return }
+        slopeArm()
+    }
+
+    private fun slopeCancel() {
+        slopeActive = false
+        slopeWindows.clear()
+        StepsState.slopePhase.value = -1
+        StepsState.slopeStage.value = "ARM"
+        beep(1, low = true)
+    }
+
+    /** Считаем якоря по окнам. Только чиповые строки: это карман,
+     *  где уклон и читается. */
+    private fun slopeFinish() {
+        slopeActive = false
+        StepsState.slopeStage.value = "CALC"
+        val wins = ArrayList(slopeWindows)
+        scope.launch {
+            val dao = AppDb.get(this@StepService).dao()
+            val med = HashMap<String, Float>()
+            val cnt = HashMap<String, Int>()
+            for ((lbl, from, to) in wins) {
+                val a = dao.samplesBetween(from, to)
+                    .filter { it.sampleSource == 1 }
+                    .mapNotNull { it.accP90 ?: it.accRms }
+                    .sorted()
+                cnt[lbl] = a.size
+                if (a.isNotEmpty()) med[lbl] = a[a.size / 2]
+            }
+            val up = med["UP"]; val down = med["DOWN"]; val flat = med["FLAT"]
+            val sb = StringBuilder()
+            for (k in listOf("UP", "FLAT", "DOWN")) {
+                val ru = when (k) { "UP" -> "в гору"; "FLAT" -> "ровно"; else -> "с горы" }
+                val v = med[k]
+                if (v == null && k == "FLAT" && cnt[k] == null) continue
+                sb.append(ru).append(": ")
+                  .append(if (v == null) "нет признаков"
+                          else String.format(java.util.Locale.US, "%.2f", v))
+                  .append("  (строк ").append(cnt[k] ?: 0).append(")\n")
+            }
+            if (up == null || down == null) {
+                sb.append("\nНужна пара в гору/с горы. Признаков не хватило — ")
+                sb.append("телефон был в руке или сбор при выключенном экране выключен.")
+            } else if (up >= down) {
+                sb.append("\nПорядок не сошёлся: в гору должно быть МЯГЧЕ, чем с горы. ")
+                sb.append("Якоря не сохраняю — неверная опора хуже её отсутствия.")
+            } else {
+                val pr = getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                pr.putFloat("slope_anchor_up", up)
+                pr.putFloat("slope_anchor_down", down)
+                if (flat != null && flat > up && flat < down)
+                    pr.putFloat("slope_anchor_flat", flat)
+                pr.putLong("slope_anchor_time", System.currentTimeMillis()).apply()
+                sb.append("\nПорядок сошёлся ✓  зазор ")
+                  .append(String.format(java.util.Locale.US, "%.2f", down - up))
+                sb.append("\nЯкоря сохранены.")
+                if (flat != null && (flat <= up || flat >= down))
+                    sb.append("\n«Ровно» выпало из порядка и не сохранено.")
+            }
+            StepsState.slopeResult.value = sb.toString()
+            StepsState.slopeStage.value = "RESULT"
+            StepsState.slopePhase.value = 3
+            beep(3)
+        }
+    }
+
     private fun finishDistCal() {
         if (!distCalActive) return
         distCalActive = false
@@ -918,6 +1088,7 @@ class StepService : Service(), SensorEventListener {
                     }
                 }
                 StepsState.steps.value = walkSteps + runSteps
+                slopeTick(walkSteps + runSteps)
                 persistPrefs()
                 stepsSinceDbWrite += delta
                 if (stepsSinceDbWrite >= 25) { stepsSinceDbWrite = 0; persistDb() }
@@ -1542,6 +1713,14 @@ class StepService : Service(), SensorEventListener {
         const val ACTION_CAL_STOP = "cal_stop"
         const val ACTION_CAL_DIST_START = "cal_dist_start"
         const val ACTION_CAL_DIST_STOP = "cal_dist_stop"
+        const val ACTION_SLOPE_START = "slope_start"
+        const val ACTION_SLOPE_CONFIRM = "slope_confirm"
+        const val ACTION_SLOPE_SKIP = "slope_skip"
+        const val ACTION_SLOPE_CANCEL = "slope_cancel"
+        /** Столько шагов подряд считаем началом движения. */
+        const val SLOPE_START_STEPS = 4
+        /** На 40 шагах медиана уже устойчива, а отрезок найти реально. */
+        const val SLOPE_MIN_STEPS = 40
         const val EXTRA_METRES = "metres"
         const val ACTION_DIAG_START = "diag_start"
         const val ACTION_DIAG_STOP = "diag_stop"

@@ -17,4 +17,13 @@ object StepsState {
     /** L1.1: собирать ли признаки при выключенном экране (окнами).
      *  По умолчанию выключено: цена по батарее ещё не измерена. */
     val bgAccel = MutableStateFlow(false)
+
+    /** v250. Калибровка уклона живёт в СЛУЖБЕ: в Activity автомат
+     *  замерзал, как только телефон уходил в карман и гас экран.
+     *  phase: -1 не идёт, 0 в гору, 1 ровно, 2 с горы, 3 готово.
+     *  stage: ARM ждём движения, REC пишем, DONE ждём подтверждения. */
+    val slopePhase = MutableStateFlow(-1)
+    val slopeStage = MutableStateFlow("ARM")
+    val slopeSteps = MutableStateFlow(0)
+    val slopeResult = MutableStateFlow("")
 }
