@@ -25,6 +25,8 @@ class SplitActivity : AppCompatActivity() {
 
     private var sessionStart = 0L
     private var sessionEnd = 0L
+    private var sessionId = 0L
+    private var sessionLabel = ""
     private var dens = 1f
     private lateinit var root: LinearLayout
 
@@ -33,6 +35,8 @@ class SplitActivity : AppCompatActivity() {
         dens = resources.displayMetrics.density
         sessionStart = intent.getLongExtra("startMs", 0L)
         sessionEnd = intent.getLongExtra("endMs", 0L)
+        sessionId = intent.getLongExtra("sessionId", 0L)
+        sessionLabel = intent.getStringExtra("label") ?: ""
 
         val scroll = android.widget.ScrollView(this)
         root = LinearLayout(this)
@@ -216,8 +220,9 @@ class SplitActivity : AppCompatActivity() {
                 lifecycleScope.launch {
                     doSplit(samples, sp.index, lCls, rCls)
                     Toast.makeText(this@SplitActivity,
-                        "Разрезано: " + ru(lCls) + " + " + ru(rCls),
-                        Toast.LENGTH_SHORT).show()
+                        "Сохранено: две сессии — " + ru(lCls) + " и " + ru(rCls),
+                        Toast.LENGTH_LONG).show()
+                    setResult(RESULT_OK)
                     finish()
                 }
             }
@@ -236,7 +241,30 @@ class SplitActivity : AppCompatActivity() {
         root.addView(v)
     }
 
+    /** Подтвердить метку прямо здесь. Раньше отсюда можно было только
+     *  выйти, и ответ на вопрос приходилось давать заново из SYNX. */
+    private fun confirmButton() {
+        if (sessionId <= 0L || sessionLabel == "" || sessionLabel == "NONE") return
+        val v = TextView(this)
+        v.text = "✓ Оставить как есть: «" + ru(sessionLabel) + "»"
+        v.gravity = Gravity.CENTER
+        v.textSize = 16f
+        v.setTextColor(colorOf(sessionLabel))
+        v.setPadding(0, (18 * dens).toInt(), 0, (12 * dens).toInt())
+        v.setOnClickListener {
+            lifecycleScope.launch {
+                AppDb.get(this@SplitActivity).dao().setSessionConfirm(sessionId, 1)
+                Toast.makeText(this@SplitActivity,
+                    "Подтверждено: " + ru(sessionLabel), Toast.LENGTH_SHORT).show()
+                setResult(RESULT_OK)
+                finish()
+            }
+        }
+        root.addView(v)
+    }
+
     private fun closeButton(label: String = "Понятно, закрыть") {
+        confirmButton()
         val v = TextView(this)
         v.text = label
         v.gravity = Gravity.CENTER

@@ -576,7 +576,13 @@ class SynxActivity : AppCompatActivity() {
     }
 
     private fun askMode(s: SessionRecord) {
-        val modes = arrayOf("Ходьба", "Бег", "Машина", "Покой")
+        // Вариант «покой» убран: в сессии ЕСТЬ шаги, покоем она быть не может -
+        // это был мёртвый вариант. Вместо него честное "Не помню".
+        // Иконки, чтобы читалось с одного взгляда.
+        val modes = arrayOf<CharSequence>(
+            "🚶  Ходьба", "🏃  Бег",
+            "🚗  Машина или транспорт", "❓  Не помню")
+        val codes = arrayOf("WALK", "RUN", "TRANSPORT", "")
         // Полная дата обязательна: по одному времени невозможно понять, какой
         // это был день, и легко ответить не про ту прогулку.
         lifecycleScope.launch {
@@ -584,7 +590,14 @@ class SynxActivity : AppCompatActivity() {
             AlertDialog.Builder(this@SynxActivity)
                 .setCustomTitle(head)
                 .setItems(modes) { _, which ->
-                    journal("SYNX режим: " + modes[which] + " (" + anchor(s) + ")")
+                    val code = codes[which]
+                    // Побочная польза: ответ человека - проверка детектора.
+                    // Расхождение помечаем, чтобы потом можно было найти.
+                    val det = if (s.runShare > s.walkShare) "RUN" else "WALK"
+                    val mismatch = code != "" && code != det
+                    journal("SYNX режим: " + modes[which] +
+                        (if (mismatch) "  (детектор считал " + det + ")" else "") +
+                        " (" + anchor(s) + ")")
                     askIncline(s)
                 }
                 .show()
@@ -644,8 +657,11 @@ class SynxActivity : AppCompatActivity() {
             }
             val note = confidenceNote(verdict, margin)
             val brk = labelBreakdown(s)
-            val head = dayHeader(s, headText(s, guess, brk, note))
-            showInclineDialog(s, guess, head)
+            val headTv = dayHeader(s, headText(s, guess, brk, note))
+            // Подкрасить упоминание класса в тексте вопроса: тот же цвет,
+            // что у кнопок и в шторке.
+            if (guess != "") tintLabelWords(headTv)
+            showInclineDialog(s, guess, headTv)
         }
     }
 
@@ -658,6 +674,9 @@ class SynxActivity : AppCompatActivity() {
         return head + (if (guess != "" && guess != s.label)
             "Помечена «" + labelRu(s.label) + "», но по признакам похоже на «" +
                 labelRu(guess) + "». Что было на самом деле?" + tail
+        else if (s.label == "NONE" && guess != "")
+            "Уклон не отмечен, а по признакам похоже на «" +
+                labelRu(guess) + "». Так и было?" + tail
         else if (s.label == "NONE")
             "Уклон не отмечен. Она была ровной?"
         else if (s.label == "FLAT")
@@ -686,8 +705,10 @@ class SynxActivity : AppCompatActivity() {
     private fun showInclineDialog(s: SessionRecord, guess: String, headView: View) {
         // Агент не согласен с меткой -> спрашиваем, что было на самом деле.
         if (guess != "" && guess != s.label) {
-            // Агент не согласен с меткой. Спрашиваем правду и СОХРАНЯЕМ её:
-            // раньше правильная метка терялась, оставался только "дефект".
+            // Агент не согласен с меткой - или метки не было вовсе, а он
+            // что-то предполагает. И там, и там нужен полный выбор:
+            // раньше на неотмеченной спрашивалось "она была ровной?", и
+            // сказать "это был подъём" было негде.
             askTruth(s, guess, headView)
             return
         }
@@ -760,19 +781,47 @@ class SynxActivity : AppCompatActivity() {
 
     /** Открыть экран разбора по шагам: там можно увидеть точку разлома,
      *  объяснение словами и разрезать сессию на две с разными метками. */
+    /** Разбор открывается ЗА РЕЗУЛЬТАТОМ: что бы человек там ни сделал -
+     *  подтвердил метку или разрезал - опрос продолжается сам. Раньше
+     *  выход из разбора выкидывал в SYNX и всё приходилось начинать
+     *  заново; проверять сессии переставало иметь смысл. */
     private fun openSplit(s: SessionRecord) {
         val i = android.content.Intent(this, SplitActivity::class.java)
         i.putExtra("startMs", s.startMs)
         i.putExtra("endMs", s.endMs)
-        startActivity(i)
+        i.putExtra("sessionId", s.id)
+        i.putExtra("label", s.label)
+        splitLauncher.launch(i)
+    }
+
+    /** Возврат из разбора: если сессия обработана, идём к следующему
+     *  вопросу, не заставляя человека заходить в SYNX заново. */
+    private val splitLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+    ) { res ->
+        if (res.resultCode != RESULT_OK) return@registerForActivityResult
+        askedInVisit++
+        lifecycleScope.launch {
+            val dao = AppDb.get(this@SynxActivity).dao()
+            if (askedInVisit < MAX_ASK_PER_VISIT) {
+                val next = nextCandidate(dao)
+                if (next != null) { offerNext(next); return@launch }
+            }
+            Toast.makeText(this@SynxActivity, "Записал, спасибо",
+                Toast.LENGTH_SHORT).show()
+        }
     }
 
     /** СЛЕПОЙ вопрос: человек не видит вердикта агента. Предсказание
      *  уже сделано и спрятано; после ответа сверяем. Это единственная
      *  честная мера правоты - подсказанный вопрос меряет согласие. */
     private fun blindAsk(s: SessionRecord, hidden: String, headView: View) {
-        val opts = arrayOf("В гору", "Ровно", "С горы", "Не помню")
         val codes = arrayOf("UP", "FLAT", "DOWN", "")
+        val opts = arrayOf<CharSequence>(
+            labelColored("UP", "▲  В гору"),
+            labelColored("FLAT", "━  Ровно"),
+            labelColored("DOWN", "▼  С горы"),
+            "❓  Не помню")
         AlertDialog.Builder(this)
             .setCustomTitle(headView)
             .setItems(opts) { _, which ->
@@ -819,8 +868,12 @@ class SynxActivity : AppCompatActivity() {
      *  ложится рядом в userLabel и становится истиной для показа и
      *  обучения. Это то же правило, что у ручной правки (v218). */
     private fun askTruth(s: SessionRecord, guess: String, headView: View?) {
-        val opts = arrayOf("В гору", "Ровно", "С горы", "Не помню")
         val codes = arrayOf("UP", "FLAT", "DOWN", "")
+        val opts = arrayOf<CharSequence>(
+            labelColored("UP", "▲  В гору"),
+            labelColored("FLAT", "━  Ровно"),
+            labelColored("DOWN", "▼  С горы"),
+            "❓  Не помню")
         val b = AlertDialog.Builder(this)
         if (headView != null) b.setCustomTitle(headView)
         else b.setTitle("А что было на самом деле?")
@@ -1018,6 +1071,53 @@ class SynxActivity : AppCompatActivity() {
         val dfTime = java.text.SimpleDateFormat("HH:mm", java.util.Locale("ru"))
         return dfTime.format(java.util.Date(s.startMs)) + "–" +
             dfTime.format(java.util.Date(s.endMs))
+    }
+
+    /** Цвет класса - тот же, что на главном экране и в шторке.
+     *  Один смысл должен иметь один цвет, иначе интерфейс врёт. */
+    /** Красит слова «в гору», «ровно», «с горы» в тексте заголовка.
+     *  dayHeader возвращает контейнер - ищем в нём текстовые поля. */
+    private fun tintLabelWords(v: View) {
+        val words = mapOf("в гору" to "UP", "ровно" to "FLAT", "с горы" to "DOWN")
+        fun walk(x: View) {
+            if (x is android.view.ViewGroup) {
+                for (i in 0 until x.childCount) walk(x.getChildAt(i))
+                return
+            }
+            if (x !is TextView) return
+            val src = x.text?.toString() ?: return
+            val sp = android.text.SpannableString(src)
+            var painted = false
+            for ((w, cls) in words) {
+                var from = src.indexOf(w)
+                while (from >= 0) {
+                    sp.setSpan(android.text.style.ForegroundColorSpan(labelColor(cls)),
+                        from, from + w.length,
+                        android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    painted = true
+                    from = src.indexOf(w, from + w.length)
+                }
+            }
+            if (painted) x.text = sp
+        }
+        walk(v)
+    }
+
+    private fun labelColor(l: String): Int = androidx.core.content.ContextCompat
+        .getColor(this, when (l) {
+            "UP" -> R.color.accent_amber
+            "DOWN" -> R.color.accent_blue
+            "FLAT" -> R.color.accent_green
+            else -> R.color.text_dim
+        })
+
+    /** Подпись класса в его цвете: глазу есть за что зацепиться. */
+    private fun labelColored(l: String, text: String? = null): CharSequence {
+        val t = text ?: labelRu(l)
+        val sp = android.text.SpannableString(t)
+        sp.setSpan(android.text.style.ForegroundColorSpan(labelColor(l)),
+            0, t.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+        return sp
     }
 
     private fun labelRu(l: String) = when (l) {
