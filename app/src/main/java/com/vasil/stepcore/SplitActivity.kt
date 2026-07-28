@@ -1,131 +1,263 @@
 package com.vasil.stepcore
 
-import android.app.Activity
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.Paint
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 
 /**
- * Разбор сессии по шагам: показывает амплитуду каждого образца, найденную
- * точку разлома и объяснение словами; даёт разрезать сессию на две с разными
- * метками. Высота дня пересчитается сама (карта берёт метки сессий).
+ * Разбор сессии по шагам.
+ *
+ * Задача экрана - не предложить разрез, а дать ПОНЯТЬ. Поэтому здесь:
+ * лента шагов в цветах классов, личные пороги словами и цифрами, и несколько
+ * вариантов разлома на выбор. Решение принимает человек, зная основания.
  */
 class SplitActivity : AppCompatActivity() {
 
     private var sessionStart = 0L
     private var sessionEnd = 0L
+    private var dens = 1f
+    private lateinit var root: LinearLayout
 
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
+        dens = resources.displayMetrics.density
         sessionStart = intent.getLongExtra("startMs", 0L)
         sessionEnd = intent.getLongExtra("endMs", 0L)
 
-        val root = LinearLayout(this)
+        val scroll = android.widget.ScrollView(this)
+        root = LinearLayout(this)
         root.orientation = LinearLayout.VERTICAL
-        val pad = (16 * resources.displayMetrics.density).toInt()
+        val pad = (16 * dens).toInt()
         root.setPadding(pad, pad, pad, pad)
-        root.setBackgroundColor(Color.parseColor("#0d0d0d"))
-        setContentView(root)
+        scroll.setBackgroundColor(ContextCompat.getColor(this, R.color.bg))
+        scroll.addView(root)
+        setContentView(scroll)
 
         val title = TextView(this)
         title.text = "Разбор по шагам"
-        title.textSize = 20f
-        title.setTextColor(Color.WHITE)
+        title.textSize = 22f
+        title.setTextColor(ContextCompat.getColor(this, R.color.text_main))
         root.addView(title)
 
-        lifecycleScope.launch { build(root) }
+        lifecycleScope.launch { build() }
     }
 
-    private suspend fun build(root: LinearLayout) {
+    private fun colorOf(cls: String) = when (cls) {
+        "UP" -> ContextCompat.getColor(this, R.color.accent_amber)
+        "DOWN" -> ContextCompat.getColor(this, R.color.accent_blue)
+        else -> ContextCompat.getColor(this, R.color.accent_teal)
+    }
+
+    private fun ru(cls: String) = when (cls) {
+        "UP" -> "в гору"; "DOWN" -> "с горы"; else -> "ровно"
+    }
+
+    private suspend fun build() {
         val dao = AppDb.get(this).dao()
-        val samples = dao.samplesBetween(sessionStart, sessionEnd)
-            .sortedBy { it.timeMs }
-        // амплитуда: у чиповых строк из accP90, у детекторных из amp
+        val samples = dao.samplesBetween(sessionStart, sessionEnd).sortedBy { it.timeMs }
         val amps = samples.map {
             if (it.sampleSource == 1) (it.accP90 ?: it.accRms ?: 0f) else it.amp
         }
         if (amps.size < 6) {
-            addText(root, "Мало образцов для разбора (нужно ≥6, есть ${amps.size}).")
-            addCloseButton(root)
-            return
+            text("Мало образцов для разбора: " + amps.size + " (нужно от 6).")
+            closeButton(); return
         }
-        // v236. Уклон читается только когда телефон в кармане: там
-        // амплитуда 6-8, а в руке 1.7-4.2 и разница подъём/спуск тонет.
-        // Тот же порог, что у агента (POCKET_MIN).
         val chipShare = samples.count { it.sampleSource == 1 }.toFloat() / samples.size
         if (chipShare < InclineAgent.POCKET_MIN) {
-            addView(root, ChartView(this, amps, null))
-            addText(root, "Телефон был в основном в руке — уклон по такой " +
-                "записи не читается (амплитуда сглажена). Разрезать не берусь: " +
-                "это была бы догадка, а не измерение.")
-            addCloseButton(root)
-            return
-        }
-        val split = SplitFinder.find(amps)
-        addView(root, ChartView(this, amps, split?.index))
-
-        if (split == null) {
-            addText(root, "Сессия выглядит однородной — амплитуда не прыгает. " +
-                "Резать не нужно: это один участок.")
-            addCloseButton(root)
-            return
+            text("Телефон был в основном в руке. Амплитуда там сглажена, уклон " +
+                "по ней не читается — разрезать не берусь, это была бы догадка.")
+            closeButton(); return
         }
 
-        val (lLabel, lPhrase) = SplitFinder.explain(
-            split.leftMean, split.leftMean - split.rightMean)
-        val (rLabel, rPhrase) = SplitFinder.explain(
-            split.rightMean, split.rightMean - split.leftMean)
-        addText(root, "Первые ${split.index} шагов — $lPhrase.")
-        addText(root, "Дальше ${amps.size - split.index} шагов — $rPhrase.")
-        addText(root, "\nЕсли похоже на правду — можно разрезать здесь. Первой " +
-            "части дам метку «${labelRu(lLabel)}», второй «${labelRu(rLabel)}».")
+        // Личные пороги: измеренные калибровкой уклона - лучше выведенных.
+        val pr = getSharedPreferences(StepService.PREFS, MODE_PRIVATE)
+        val aUp = pr.getFloat("slope_anchor_up", 0f)
+        val aDown = pr.getFloat("slope_anchor_down", 0f)
+        val aFlat = pr.getFloat("slope_anchor_flat", 0f)
+        val anchors = if (aUp > 0f && aDown > aUp) {
+            val flat = if (aFlat > aUp && aFlat < aDown) aFlat else (aUp + aDown) / 2f
+            SplitFinder.Anchors(aUp, flat, aDown, true)
+        } else SplitFinder.fallbackAnchors(amps)
 
-        val cut = Button(this)
-        cut.text = "✂ Разрезать здесь"
-        cut.setOnClickListener {
-            lifecycleScope.launch {
-                doSplit(samples, split.index, lLabel, rLabel)
-                Toast.makeText(this@SplitActivity,
-                    "Разрезано: ${labelRu(lLabel)} + ${labelRu(rLabel)}",
-                    Toast.LENGTH_SHORT).show()
-                finish()
-            }
+        val classes = amps.map { SplitFinder.classify(it, anchors) }
+        addBand(amps, classes, null)
+
+        // Легенда: ответ на "как отличить шаги"
+        legend(anchors)
+
+        // Состав отрезка в шагах
+        val cnt = classes.groupingBy { it }.eachCount()
+        val parts = listOf("UP", "FLAT", "DOWN").filter { (cnt[it] ?: 0) > 0 }
+            .joinToString(" · ") { ru(it) + " " + (cnt[it] ?: 0) }
+        text("Всего образцов: " + amps.size + "   (" + parts + ")\n" +
+            "Один образец пишется примерно раз в 20 шагов.")
+
+        val cands = SplitFinder.candidates(amps)
+        if (cands.isEmpty()) {
+            text("Резких границ внутри нет — отрезок однородный. Резать нечего: " +
+                "это один участок.")
+            closeButton(); return
         }
-        root.addView(cut)
-        // v241. Явный выход: свайп назад раньше выкидывал на главный
-        // экран, что сбивало. Кнопка закрывает разбор предсказуемо.
-        val keep = Button(this)
-        keep.text = "Оставить как есть"
-        keep.setOnClickListener { finish() }
-        root.addView(keep)
+
+        text(if (cands.size == 1) "Нашёл одну границу:" else
+            "Нашёл " + cands.size + " возможные границы — выбери подходящую:")
+
+        for ((i, sp) in cands.withIndex()) {
+            addVariant(i + 1, sp, amps, classes, anchors, samples)
+        }
+        closeButton("Оставить как есть")
     }
 
-    /** Заменяет одну сессию на две по точке разлома. Каждая половина - своя
-     *  сессия со своей меткой (в userLabel, исходные метки образцов не трогаем
-     *  - прошлое неизменно). */
+    /** Лента шагов: каждый образец - блок в цвете своего класса. */
+    private fun addBand(amps: List<Float>, classes: List<String>, cutAt: Int?) {
+        val v = BandView(this, classes.map { colorOf(it) }, cutAt,
+            ContextCompat.getColor(this, R.color.text_main))
+        val lp = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, (44 * dens).toInt())
+        lp.topMargin = (14 * dens).toInt()
+        root.addView(v, lp)
+    }
+
+    private fun legend(a: SplitFinder.Anchors) {
+        val t = TextView(this)
+        val src = if (a.measured) "измерено твоей калибровкой уклона"
+            else "выведено из этой прогулки (калибровки уклона ещё не было)"
+        t.text = "Как отличаются шаги — " + src + ":\n" +
+            "  ▲ в гору — шаг мягче, амплитуда до " +
+            String.format(java.util.Locale.US, "%.1f", a.upFlat) + "\n" +
+            "  ━ ровно — между " +
+            String.format(java.util.Locale.US, "%.1f", a.upFlat) + " и " +
+            String.format(java.util.Locale.US, "%.1f", a.flatDown) + "\n" +
+            "  ▼ с горы — приземление жёстче, от " +
+            String.format(java.util.Locale.US, "%.1f", a.flatDown) +
+            (if (a.measured) "" else
+                "\n\nЭто оценка. Пройди калибровку уклона — пороги станут измеренными.")
+        t.textSize = 14f
+        t.setTextColor(ContextCompat.getColor(this, R.color.text_dim))
+        t.setLineSpacing(3f * dens, 1f)
+        t.setPadding(0, (12 * dens).toInt(), 0, 0)
+        root.addView(t)
+    }
+
+    /** Карточка одного варианта разреза: что слева, что справа, чем режем. */
+    private fun addVariant(
+        num: Int, sp: SplitFinder.Split, amps: List<Float>,
+        classes: List<String>, a: SplitFinder.Anchors, samples: List<TerrainSample>
+    ) {
+        val lCls = SplitFinder.classify(sp.leftMean, a)
+        val rCls = SplitFinder.classify(sp.rightMean, a)
+        val card = LinearLayout(this)
+        card.orientation = LinearLayout.VERTICAL
+        val cp = (14 * dens).toInt()
+        card.setPadding(cp, cp, cp, cp)
+        card.background = DoodleBorderDrawable(
+            ContextCompat.getColor(this, R.color.accent_violet),
+            ContextCompat.getColor(this, R.color.surface),
+            640L + num, dens, DoodleBorderDrawable.MAT_ROCK,
+            DoodleBorderDrawable.RIFT_NONE)
+        val lp = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        lp.topMargin = (16 * dens).toInt()
+
+        val head = TextView(this)
+        head.text = "Вариант " + num
+        head.textSize = 16f
+        head.setTextColor(ContextCompat.getColor(this, R.color.text_main))
+        card.addView(head)
+
+        // мини-лента с отметкой этого разреза
+        val band = BandView(this, classes.map { colorOf(it) }, sp.index,
+            ContextCompat.getColor(this, R.color.text_main))
+        val blp = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, (28 * dens).toInt())
+        blp.topMargin = (10 * dens).toInt()
+        card.addView(band, blp)
+
+        val body = TextView(this)
+        body.text =
+            "Слева " + sp.index + " образцов — «" + ru(lCls) + "», амплитуда " +
+                String.format(java.util.Locale.US, "%.1f", sp.leftMean) + "\n" +
+            "Справа " + (amps.size - sp.index) + " образцов — «" + ru(rCls) +
+                "», амплитуда " +
+                String.format(java.util.Locale.US, "%.1f", sp.rightMean) + "\n" +
+            "Перепад на границе: " +
+                String.format(java.util.Locale.US, "%.1f", sp.gap)
+        body.textSize = 15f
+        body.setTextColor(ContextCompat.getColor(this, R.color.text_main))
+        body.setLineSpacing(2f * dens, 1f)
+        body.setPadding(0, (10 * dens).toInt(), 0, 0)
+        card.addView(body)
+
+        if (lCls == rCls) {
+            val warn = TextView(this)
+            warn.text = "Обе части попадают в один класс — резать смысла нет."
+            warn.textSize = 14f
+            warn.setTextColor(ContextCompat.getColor(this, R.color.text_dim))
+            warn.setPadding(0, (8 * dens).toInt(), 0, 0)
+            card.addView(warn)
+        } else {
+            val btn = TextView(this)
+            btn.text = "✂ Разрезать: «" + ru(lCls) + "» + «" + ru(rCls) + "»"
+            btn.gravity = Gravity.CENTER
+            btn.textSize = 16f
+            btn.setTextColor(ContextCompat.getColor(this, R.color.accent_teal))
+            btn.setPadding(0, (14 * dens).toInt(), 0, (10 * dens).toInt())
+            btn.setOnClickListener {
+                lifecycleScope.launch {
+                    doSplit(samples, sp.index, lCls, rCls)
+                    Toast.makeText(this@SplitActivity,
+                        "Разрезано: " + ru(lCls) + " + " + ru(rCls),
+                        Toast.LENGTH_SHORT).show()
+                    finish()
+                }
+            }
+            card.addView(btn)
+        }
+        root.addView(card, lp)
+    }
+
+    private fun text(t: String) {
+        val v = TextView(this)
+        v.text = t
+        v.textSize = 15f
+        v.setTextColor(ContextCompat.getColor(this, R.color.text_main))
+        v.setLineSpacing(3f * dens, 1f)
+        v.setPadding(0, (14 * dens).toInt(), 0, 0)
+        root.addView(v)
+    }
+
+    private fun closeButton(label: String = "Понятно, закрыть") {
+        val v = TextView(this)
+        v.text = label
+        v.gravity = Gravity.CENTER
+        v.textSize = 16f
+        v.setTextColor(ContextCompat.getColor(this, R.color.text_dim))
+        v.setPadding(0, (22 * dens).toInt(), 0, (14 * dens).toInt())
+        v.setOnClickListener { finish() }
+        root.addView(v)
+    }
+
+    /** Заменяет сессию на две половины. Корпус не трогаем: прошлое неизменно,
+     *  метка живёт на сессии. */
     private suspend fun doSplit(
         samples: List<TerrainSample>, at: Int, lLabel: String, rLabel: String
     ) {
         val dao = AppDb.get(this).dao()
-        val left = samples.subList(0, at)
-        val right = samples.subList(at, samples.size)
-        // найти исходную сессию, чтобы удалить и не задвоить
         val existing = dao.sessionsAround(sessionStart - 1000, sessionStart + 1000)
             .firstOrNull { it.startMs == sessionStart }
         if (existing != null) dao.deleteSessionById(existing.id)
-        insertHalf(dao, left, lLabel)
-        insertHalf(dao, right, rLabel)
+        insertHalf(dao, samples.subList(0, at), lLabel)
+        insertHalf(dao, samples.subList(at, samples.size), rLabel)
     }
 
     private suspend fun insertHalf(
@@ -147,78 +279,34 @@ class SplitActivity : AppCompatActivity() {
             ampMed = amps[amps.size / 2],
             chipShare = chip,
             featureVersion = part.first().featureVersion,
-            confirmState = 1,          // разрез = осознанный ответ человека
+            confirmState = 1,
             userLabel = label,
             builtFromMaxTimeMs = part.last().timeMs
         ))
     }
 
-    private fun addCloseButton(root: LinearLayout) {
-        val b = Button(this)
-        b.text = "Понятно, закрыть"
-        b.setOnClickListener { finish() }
-        root.addView(b)
-    }
-
-    private fun labelRu(l: String) = when (l) {
-        "UP" -> "в гору"; "DOWN" -> "с горы"; "FLAT" -> "ровно"; else -> l
-    }
-
-    private fun addText(root: LinearLayout, t: String) {
-        val tv = TextView(this)
-        tv.text = t
-        tv.textSize = 15f
-        tv.setTextColor(Color.parseColor("#dddddd"))
-        val m = (8 * resources.displayMetrics.density).toInt()
-        (tv.layoutParams ?: LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT)).also {
-            tv.layoutParams = it
-        }
-        tv.setPadding(0, m, 0, 0)
-        root.addView(tv)
-    }
-
-    private fun addView(root: LinearLayout, v: View) {
-        val h = (160 * resources.displayMetrics.density).toInt()
-        val lp = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, h)
-        val m = (12 * resources.displayMetrics.density).toInt()
-        lp.topMargin = m
-        root.addView(v, lp)
-    }
-
-    /** Мини-график амплитуды по шагам с вертикалью на точке разлома. */
-    private class ChartView(
+    /** Лента: по блоку на образец, цвет = класс шага. Структура отрезка
+     *  видна сразу, без чтения цифр. */
+    private class BandView(
         ctx: android.content.Context,
-        val amps: List<Float>,
-        val splitAt: Int?
+        val colors: List<Int>,
+        val cutAt: Int?,
+        val cutColor: Int
     ) : View(ctx) {
-        val line = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#4a86e8"); strokeWidth = 4f
-            style = Paint.Style.STROKE
-        }
-        val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#4a86e8"); style = Paint.Style.FILL
-        }
-        val cut = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#ffad47"); strokeWidth = 3f
-        }
+        private val p = Paint(Paint.ANTI_ALIAS_FLAG)
         override fun onDraw(c: Canvas) {
-            if (amps.isEmpty()) return
+            if (colors.isEmpty()) return
             val w = width.toFloat(); val h = height.toFloat()
-            val pad = 20f
-            val lo = amps.min(); val hi = amps.max()
-            val span = (hi - lo).coerceAtLeast(0.1f)
-            fun px(i: Int) = pad + (w - 2 * pad) * i / (amps.size - 1).coerceAtLeast(1)
-            fun py(v: Float) = h - pad - (h - 2 * pad) * (v - lo) / span
-            for (i in 0 until amps.size - 1) {
-                c.drawLine(px(i), py(amps[i]), px(i + 1), py(amps[i + 1]), line)
+            val bw = w / colors.size
+            for (i in colors.indices) {
+                p.color = colors[i]
+                c.drawRect(i * bw, 0f, (i + 1) * bw - 1f, h, p)
             }
-            for (i in amps.indices) c.drawCircle(px(i), py(amps[i]), 5f, dot)
-            if (splitAt != null && splitAt in 1 until amps.size) {
-                val x = (px(splitAt - 1) + px(splitAt)) / 2f
-                c.drawLine(x, pad, x, h - pad, cut)
+            val cut = cutAt
+            if (cut != null && cut in 1 until colors.size) {
+                p.color = cutColor
+                val x = cut * bw
+                c.drawRect(x - 2f, 0f, x + 2f, h, p)
             }
         }
     }

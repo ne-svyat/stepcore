@@ -31,6 +31,68 @@ object SplitFinder {
     // Края записи - всегда разгон/затухание, там не режем.
     private const val EDGE_SKIP = 2
 
+    /** Личные пороги уклона. Берутся из калибровки уклона (три отрезка
+     *  на одном склоне): там условия совпадают, поэтому границы честные.
+     *  Если якорей нет - строим от медианы самой прогулки, и об этом
+     *  надо сказать человеку прямо. */
+    data class Anchors(
+        val up: Float, val flat: Float, val down: Float, val measured: Boolean
+    ) {
+        /** Границы между классами - середины между якорями. */
+        val upFlat: Float get() = (up + flat) / 2f
+        val flatDown: Float get() = (flat + down) / 2f
+    }
+
+    /** Якоря от медианы прогулки, когда измеренных нет. Опирается на
+     *  измеренный зазор корпуса: в гору 6.44, ровно 6.93, с горы 7.79,
+     *  то есть примерно медиана -0.5 / медиана / медиана +0.85. */
+    fun fallbackAnchors(amps: List<Float>): Anchors {
+        val v = amps.sorted()
+        val med = if (v.isEmpty()) 0f else v[v.size / 2]
+        return Anchors(med - 0.5f, med, med + 0.85f, false)
+    }
+
+    /** Класс одного шага по его амплитуде. */
+    fun classify(amp: Float, a: Anchors): String = when {
+        amp <= a.upFlat -> "UP"
+        amp >= a.flatDown -> "DOWN"
+        else -> "FLAT"
+    }
+
+    /** До трёх осмысленных точек разлома, лучшая первой. Человек должен
+     *  выбирать из вариантов, а не принимать единственное предложение. */
+    fun candidates(amps: List<Float>, limit: Int = 3): List<Split> {
+        val n = amps.size
+        if (n < MIN_SIDE * 2) return emptyList()
+        val loK = maxOf(MIN_SIDE, EDGE_SKIP + 1)
+        val hiK = minOf(n - MIN_SIDE, n - EDGE_SKIP - 1)
+        if (loK > hiK) return emptyList()
+        val spread = (amps.max() - amps.min()).coerceAtLeast(0.1f)
+        val found = ArrayList<Pair<Float, Split>>()
+        for (k in loK..hiK) {
+            var ls = 0f; for (i in 0 until k) ls += amps[i]
+            var rs = 0f; for (i in k until n) rs += amps[i]
+            val lm = ls / k
+            val rm = rs / (n - k)
+            val gap = kotlin.math.abs(lm - rm)
+            if (gap < MIN_ABS_GAP) continue
+            if (gap / spread < SIGNIF) continue
+            val jump = kotlin.math.abs(amps[k] - amps[k - 1])
+            if (jump < gap * JUMP_RATIO) continue
+            val balance = 1f - kotlin.math.abs(k - n / 2f) / (n / 2f)
+            found.add((gap * (0.5f + 0.5f * balance)) to Split(k, gap, lm, rm))
+        }
+        // Близкие точки - это одна и та же граница; оставляем лучшую.
+        val sorted = found.sortedByDescending { it.first }
+        val out = ArrayList<Split>()
+        for ((_, sp) in sorted) {
+            if (out.any { kotlin.math.abs(it.index - sp.index) < MIN_SIDE }) continue
+            out.add(sp)
+            if (out.size >= limit) break
+        }
+        return out
+    }
+
     fun find(amps: List<Float>): Split? {
         val n = amps.size
         if (n < MIN_SIDE * 2) return null
