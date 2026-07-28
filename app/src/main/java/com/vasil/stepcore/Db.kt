@@ -348,9 +348,6 @@ interface StepDao {
         "ORDER BY timeMs ASC")
     suspend fun samplesWithHeading(): List<TerrainSample>
 
-    @Query("SELECT COUNT(*) FROM terrain_samples")
-    suspend fun countSamples(): Int
-
     // v218: правка метки. Заодно подтверждение - человек ответил осознанно.
     @Query("UPDATE sessions SET userLabel = :label, confirmState = 1 WHERE id = :id")
     suspend fun setUserLabel(id: Long, label: String)
