@@ -75,6 +75,132 @@ class SynxActivity : AppCompatActivity() {
 
     /** Экспорт ВСЕХ сессий в CSV (в буфер). Все, не только надёжные: для
      *  разбора нужна полная картина, включая короткие уклонные. */
+    /** Диагностика курса: есть ли на чём строить понимание "вернулся тем
+     *  же путём". Только читает. Вывод делает человек. */
+    private suspend fun headingReport() {
+        val dao = AppDb.get(this).dao()
+        val all = dao.countSamples()
+        val hs = dao.samplesWithHeading()
+        val sb = StringBuilder("StepCore — диагностика курса\n\n")
+        sb.append("Образцов всего: ").append(all).append("\n")
+        sb.append("С курсом: ").append(hs.size)
+        if (all > 0) sb.append("  (").append(hs.size * 100 / all).append("%)")
+        sb.append("\n")
+        if (hs.isEmpty()) {
+            sb.append("\nКурса нет. Он пишется с v213 — нужно походить, ")
+            sb.append("чтобы накопился.")
+            deliver(sb.toString()); return
+        }
+        // Точность компаса: 3 высокая, 0 ненадёжная
+        val acc = IntArray(4)
+        for (x in hs) { val a = x.headingAcc ?: 0; if (a in 0..3) acc[a]++ }
+        sb.append("Точность компаса: высокая ").append(acc[3])
+          .append(", средняя ").append(acc[2])
+          .append(", низкая ").append(acc[1])
+          .append(", ненадёжная ").append(acc[0]).append("\n")
+        val good = acc[3] + acc[2]
+        sb.append("Годных (средняя и выше): ").append(good)
+          .append("  (").append(if (hs.isEmpty()) 0 else good * 100 / hs.size)
+          .append("%)\n")
+
+        // Группируем по отрезкам между большими паузами
+        val segs = ArrayList<HeadingDiag.Seg>()
+        var cur = ArrayList<TerrainSample>()
+        fun flush() {
+            if (cur.size < 3) { cur = ArrayList(); return }
+            val vals = cur.mapNotNull { it.headingDeg }
+            if (vals.size < 3) { cur = ArrayList(); return }
+            val accs = cur.mapNotNull { it.headingAcc }.sorted()
+            segs.add(HeadingDiag.Seg(
+                cur.first().label, cur.first().timeMs, vals.size,
+                HeadingDiag.circularMedian(vals),
+                HeadingDiag.circularSpread(vals),
+                if (accs.isEmpty()) 0 else accs[accs.size / 2]))
+            cur = ArrayList()
+        }
+        for (x in hs) {
+            if (cur.isNotEmpty() &&
+                x.timeMs - cur.last().timeMs > SEG_GAP_MS) flush()
+            cur.add(x)
+        }
+        flush()
+        sb.append("Отрезков с курсом: ").append(segs.size).append("\n\n")
+
+        if (segs.isEmpty()) {
+            sb.append("Отрезков не набралось — курса пока мало.")
+            deliver(sb.toString()); return
+        }
+        // Устойчивость: если разброс внутри отрезка велик, поворот тела
+        // утонет в шуме и строить на курсе нечего.
+        val spreads = segs.map { it.spread }.sorted()
+        val medSpread = spreads[spreads.size / 2]
+        sb.append("Разброс курса внутри отрезка: медиана ")
+          .append(medSpread.toInt()).append("°")
+          .append(if (medSpread <= 30f) "  — курс держится"
+                  else "  — курс гуляет, поворот утонет в шуме").append("\n")
+
+        // Развороты между соседними отрезками
+        var rev = 0; var pairs = 0
+        val lines = StringBuilder()
+        val fmt = java.text.SimpleDateFormat("dd.MM HH:mm", java.util.Locale("ru"))
+        for (i in 1 until segs.size) {
+            val a = segs[i - 1]; val b = segs[i]
+            if (b.startMs - a.startMs > PAIR_GAP_MS) continue
+            pairs++
+            val d = HeadingDiag.angleDiff(a.headMed, b.headMed)
+            val isRev = HeadingDiag.isReversal(a.headMed, b.headMed)
+            if (isRev) rev++
+            if (lines.length < 1200) {
+                lines.append("  ").append(fmt.format(java.util.Date(a.startMs)))
+                  .append("  ").append(labelRu(a.label)).append(" ")
+                  .append(a.headMed.toInt()).append("° → ")
+                  .append(labelRu(b.label)).append(" ")
+                  .append(b.headMed.toInt()).append("°   смена ")
+                  .append(d.toInt()).append("°")
+                  .append(if (isRev) "  ↩ разворот" else "").append("\n")
+            }
+        }
+        sb.append("Соседних пар: ").append(pairs)
+          .append(", похоже на разворот: ").append(rev)
+        if (pairs > 0) sb.append("  (").append(rev * 100 / pairs).append("%)")
+        sb.append("\n\n").append(lines)
+        sb.append("\nЧто это значит:\n")
+        sb.append("Разворот на ~180° — прямая улика «иду обратно». Если таких\n")
+        sb.append("пар много и разброс курса мал, на курсе можно строить\n")
+        sb.append("понимание маршрута. Если мало — компас в кармане не тянет,\n")
+        sb.append("и честнее это признать, чем городить догадки.\n")
+        deliver(sb.toString())
+    }
+
+    /** Отчёт в буфер и файлом: буфер обрезает длинное. */
+    private fun deliver(text: String) {
+        var saved: String? = null
+        try {
+            val fname = "stepcore_heading_" + System.currentTimeMillis() + ".txt"
+            val cv = android.content.ContentValues().apply {
+                put(android.provider.MediaStore.Downloads.DISPLAY_NAME, fname)
+                put(android.provider.MediaStore.Downloads.MIME_TYPE, "text/plain")
+            }
+            val uri = contentResolver.insert(
+                android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv)
+            if (uri != null) {
+                contentResolver.openOutputStream(uri)?.use {
+                    it.write(text.toByteArray()); it.flush()
+                }
+                saved = fname
+            }
+        } catch (e: Exception) { saved = null }
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE)
+            as android.content.ClipboardManager
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("StepCore heading", text))
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle(if (saved != null) "Курс — отчёт (файл + буфер)"
+                      else "Курс — отчёт (буфер)")
+            .setMessage(text)
+            .setPositiveButton("Ок", null)
+            .show()
+    }
+
     private suspend fun exportCorpusSynx() {
         val dao = AppDb.get(this).dao()
         val list = dao.allSessionsForMap()
@@ -290,6 +416,9 @@ class SynxActivity : AppCompatActivity() {
         lifecycleScope.launch { refreshCorpusSynx(corpusText) }
         findViewById<TextView>(R.id.synxExportButton).setOnClickListener {
             lifecycleScope.launch { exportCorpusSynx() }
+        }
+        findViewById<TextView>(R.id.synxHeadingButton).setOnClickListener {
+            lifecycleScope.launch { headingReport() }
         }
                 learnSwitch.isChecked = prefs.getBoolean(KEY_LEARN, false)
         learnSwitch.setOnCheckedChangeListener { _, checked ->
@@ -857,6 +986,10 @@ class SynxActivity : AppCompatActivity() {
         // контрольной доли (каждая пятая уходит человеку).
         private const val AUTO_BATCH = 40
         private const val KEY_ASK_COUNT = "ia_ask_count"
+        /** Разрыв, после которого образцы считаются другим отрезком. */
+        private const val SEG_GAP_MS = 3 * 60 * 1000L
+        /** Пары дальше этого не сравниваем: другая прогулка. */
+        private const val PAIR_GAP_MS = 30 * 60 * 1000L
         private const val KEY_AUTO_SEEN = "auto_label_seen"
         private const val KEY_SNOOZE = "learn_snooze_until"
     }

@@ -343,6 +343,14 @@ interface StepDao {
     @Query("SELECT COUNT(*) FROM sessions WHERE confirmState = 4")
     suspend fun countAutoLabeled(): Int
 
+    // v254: всё, где есть курс - для диагностики магнитометра.
+    @Query("SELECT * FROM terrain_samples WHERE headingDeg IS NOT NULL " +
+        "ORDER BY timeMs ASC")
+    suspend fun samplesWithHeading(): List<TerrainSample>
+
+    @Query("SELECT COUNT(*) FROM terrain_samples")
+    suspend fun countSamples(): Int
+
     // v218: правка метки. Заодно подтверждение - человек ответил осознанно.
     @Query("UPDATE sessions SET userLabel = :label, confirmState = 1 WHERE id = :id")
     suspend fun setUserLabel(id: Long, label: String)
