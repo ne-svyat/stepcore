@@ -1851,16 +1851,6 @@ class StepService : Service(), SensorEventListener {
         marksRepostAtSteps = walkSteps + runSteps + MARKS_REPOST_STEPS
     }
 
-    /** Простой калибровки: ни шагов, ни подтверждений. Отменяем сами -
-     *  кривой эталон хуже отсутствующего. */
-    private fun slopeIdleCheck() {
-        if (!slopeActive) return
-        if (slopeIdleSinceMs <= 0L) return
-        if (System.currentTimeMillis() - slopeIdleSinceMs < SLOPE_IDLE_MS) return
-        logEvent("Калибровка уклона отменена: долгий простой")
-        slopeCancel()
-    }
-
     /** Вызывается на каждом обновлении счёта. Решает судьбу панели:
      *  идёт человек - панель нужна, стоит - не нужна. Так шторка пуста,
      *  пока ей нечего сказать. */
