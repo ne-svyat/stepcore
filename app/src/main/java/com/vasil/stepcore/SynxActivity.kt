@@ -102,6 +102,13 @@ class SynxActivity : AppCompatActivity() {
         sb.append("Годных (средняя и выше): ").append(good)
           .append("  (").append(if (hs.isEmpty()) 0 else good * 100 / hs.size)
           .append("%)\n")
+        val noHead = all - hs.size
+        if (noHead > 0) {
+            sb.append("Без курса: ").append(noHead)
+              .append(" — это строки, записанные, пока акселерометр спал\n")
+              .append("(в фоне он работает 12 с из 60). С v257 допуск курса\n")
+              .append("поднят до минуты, и таких строк станет заметно меньше.\n")
+        }
 
         // Группируем по отрезкам между большими паузами
         val segs = ArrayList<HeadingDiag.Seg>()
@@ -189,7 +196,13 @@ class SynxActivity : AppCompatActivity() {
             val hit = flipRev + sameNo
             sb.append("  Согласие: ").append(hit).append("/").append(marked)
               .append(" = ").append(hit * 100 / marked).append("%\n")
-            sb.append(if (hit * 100 / marked >= 70)
+            // v257. Вердикт на трёх парах - та же ошибка, что "5 из 5 =
+            // 100%". Пока пар мало, не выносим приговор ни в одну сторону.
+            sb.append(if (marked < HYPO_MIN_PAIRS)
+                "  → ВЫВОДОВ ПОКА НЕТ: пар всего " + marked + ", нужно от " +
+                    HYPO_MIN_PAIRS + ".\n" +
+                "     Нужны прогулки, где подъём и спуск отмечены подряд.\n"
+            else if (hit * 100 / marked >= 70)
                 "  → связь есть: на курсе можно строить контекст.\n"
             else
                 "  → связи не видно: разворот и смена уклона живут отдельно.\n")
@@ -1027,6 +1040,9 @@ class SynxActivity : AppCompatActivity() {
         private const val SEG_GAP_MS = 3 * 60 * 1000L
         /** Пары дальше этого не сравниваем: другая прогулка. */
         private const val PAIR_GAP_MS = 30 * 60 * 1000L
+        /** Меньше этого числа пар вывод не делаем: на малом n любое
+         *  число выглядит убедительно и врёт. */
+        private const val HYPO_MIN_PAIRS = 12
         private const val KEY_AUTO_SEEN = "auto_label_seen"
         private const val KEY_SNOOZE = "learn_snooze_until"
     }

@@ -1423,12 +1423,25 @@ class StepService : Service(), SensorEventListener {
             intervalMs = interval,
             gyro = detector.gyroRms,
             featureVersion = FeatureCollector.FEATURE_VERSION,
-            // Протухший курс хуже отсутствующего: 15 с - тот же порог, что у
-            // остальных сенсоров. Не свежий -> пишем null, а не старое число.
+            // v257. У КУРСА свой порог свежести. Измерено: курс был лишь у
+            // 55% образцов - ровно там, где работал акселерометр. Датчик
+            // поворота включается вместе с ним, а в фоне тот живёт 12 с из
+            // 60. Чиповые строки пишутся весь цикл, и к ним курс приходил
+            // протухшим. Из-за этого на горе (карман, экран гаснет, строки
+            // чиповые) курса не было именно на размеченных подъёмах.
+            //
+            // Почему 60 с безопасно: курс меняется МЕДЛЕННО, человек не
+            // крутится вокруг оси, и азимут минутной давности всё ещё
+            // говорит, куда он идёт. Амплитуде такой допуск не годится -
+            // она меняется каждый шаг, поэтому её порог не трогаем.
+            // Держать датчик дольше не стали: расход батареи важнее
+            // лишней точности там, где её всё равно не требуется.
             headingDeg = if (headingAtMs > 0L &&
-                SystemClock.elapsedRealtime() - headingAtMs <= 15_000L) headingDeg else null,
+                SystemClock.elapsedRealtime() - headingAtMs <= HEADING_STALE_MS)
+                headingDeg else null,
             headingAcc = if (headingAtMs > 0L &&
-                SystemClock.elapsedRealtime() - headingAtMs <= 15_000L) headingAcc else null,
+                SystemClock.elapsedRealtime() - headingAtMs <= HEADING_STALE_MS)
+                headingAcc else null,
             pitchDeg = fx.pitchDeg,
             rollDeg = fx.rollDeg,
             gyroX = fx.gyroX,
@@ -1807,6 +1820,9 @@ class StepService : Service(), SensorEventListener {
         const val ACTION_SLOPE_SKIP = "slope_skip"
         const val ACTION_SLOPE_CANCEL = "slope_cancel"
         /** Столько шагов подряд считаем началом движения. */
+        /** Порог свежести КУРСА. Больше общего (15 с), потому что курс
+         *  меняется медленно, а duty-цикл акселерометра - 12 с из 60. */
+        const val HEADING_STALE_MS = 60_000L
         const val SLOPE_START_STEPS = 4
         /** На 40 шагах медиана уже устойчива, а отрезок найти реально. */
         const val SLOPE_MIN_STEPS = 40
