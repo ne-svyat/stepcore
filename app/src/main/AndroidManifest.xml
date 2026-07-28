@@ -80,6 +80,7 @@
             android:screenOrientation="portrait" />
         <activity android:name=".SplitActivity" android:exported="false" />
         <activity android:name=".SlopeCalActivity" android:exported="false" />
+        <activity android:name=".PermissionsActivity" android:exported="false" />
 
     </application>
 </manifest>

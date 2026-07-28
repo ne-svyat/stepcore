@@ -86,6 +86,9 @@ class MainActivity : AppCompatActivity() {
 
     private var goal = 10000
 
+    private lateinit var healthPlate: TextView
+    private var healthAnim: android.animation.ValueAnimator? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -236,6 +239,18 @@ class MainActivity : AppCompatActivity() {
         val inclineFlatBtn = findViewById<TextView>(R.id.inclineFlatButton)
         val inclineDownBtn = findViewById<TextView>(R.id.inclineDownButton)
         val inclineNoneBtn = findViewById<TextView>(R.id.inclineNoneButton)
+        // v252. Плита появляется ТОЛЬКО когда система что-то блокирует.
+        // Постоянная кнопка "Разрешения" примелькается за неделю; плита-
+        // проблема заметна именно тогда, когда есть проблема.
+        healthPlate = findViewById(R.id.healthPlate)
+        healthPlate.background = DoodleBorderDrawable(
+            ContextCompat.getColor(this, R.color.accent_amber),
+            ContextCompat.getColor(this, R.color.surface),
+            931L, resources.displayMetrics.density,
+            DoodleBorderDrawable.MAT_ROCK, DoodleBorderDrawable.RIFT_NONE)
+        healthPlate.setOnClickListener {
+            startActivity(Intent(this, PermissionsActivity::class.java))
+        }
         val inclineLabel = findViewById<TextView>(R.id.inclineLabel)
         // v219. Блок кнопок сворачивается: на главном экране он нужен не
         // всегда, а место занимает. Состояние запоминается - кто ставит
@@ -931,12 +946,37 @@ class MainActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
+        healthAnim?.cancel(); healthAnim = null
         // Экран не виден - смена реплик полностью останавливается.
         quipHandler.removeCallbacks(quipTick)
     }
 
+    /** Плита видна, только если система что-то блокирует. Переливается,
+     *  чтобы её заметили: тот же язык, что у зовущей кнопки Старт. */
+    private fun refreshHealthPlate() {
+        val bad = runCatching { SystemHealth.problems(this) }.getOrDefault(0)
+        if (bad <= 0) {
+            healthPlate.visibility = View.GONE
+            healthAnim?.cancel(); healthAnim = null
+            return
+        }
+        healthPlate.text = if (bad == 1) "Система мешает работать — нажми"
+            else "Система мешает работать (" + bad + ") — нажми"
+        healthPlate.visibility = View.VISIBLE
+        if (healthAnim == null) {
+            val a = android.animation.ValueAnimator.ofFloat(0.5f, 1f)
+            a.duration = 1100L
+            a.repeatMode = android.animation.ValueAnimator.REVERSE
+            a.repeatCount = android.animation.ValueAnimator.INFINITE
+            a.addUpdateListener { healthPlate.alpha = it.animatedValue as Float }
+            a.start()
+            healthAnim = a
+        }
+    }
+
     override fun onResume() {
         super.onResume()
+        refreshHealthPlate()
         quipHandler.removeCallbacks(quipTick)
         showQuip()
         quipHandler.postDelayed(quipTick, (15_000..60_000).random().toLong())

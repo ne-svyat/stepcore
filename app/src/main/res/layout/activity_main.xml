@@ -206,6 +206,21 @@
             android:layout_marginTop="4dp" />
 
         <TextView
+            android:id="@+id/healthPlate"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:visibility="gone"
+            android:text="Система мешает работать — нажми"
+            android:textColor="@color/accent_amber_bright"
+            android:textSize="16sp"
+            android:paddingTop="14dp"
+            android:paddingBottom="14dp"
+            android:layout_marginTop="10dp"
+            android:layout_marginLeft="8dp"
+            android:layout_marginRight="8dp" />
+
+        <TextView
             android:id="@+id/inclineLabel"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
