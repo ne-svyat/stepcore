@@ -139,36 +139,73 @@ class SynxActivity : AppCompatActivity() {
           .append(if (medSpread <= 30f) "  — курс держится"
                   else "  — курс гуляет, поворот утонет в шуме").append("\n")
 
-        // Развороты между соседними отрезками
+        // Развороты между соседними отрезками.
+        // ГЛАВНЫЙ ВОПРОС: совпадает ли разворот со сменой уклона?
+        // Развернулся на склоне - подъём стал спуском. Если совпадает,
+        // курс даёт контекст вместо догадок по похожести объёмов.
         var rev = 0; var pairs = 0
-        val lines = StringBuilder()
+        // четыре случая для проверки гипотезы (только размеченные пары)
+        var flipRev = 0; var flipNo = 0; var sameRev = 0; var sameNo = 0
+        val recent = ArrayList<String>()
         val fmt = java.text.SimpleDateFormat("dd.MM HH:mm", java.util.Locale("ru"))
-        for (i in 1 until segs.size) {
-            val a = segs[i - 1]; val b = segs[i]
+        for (idx in 1 until segs.size) {
+            val a = segs[idx - 1]; val b = segs[idx]
             if (b.startMs - a.startMs > PAIR_GAP_MS) continue
             pairs++
             val d = HeadingDiag.angleDiff(a.headMed, b.headMed)
             val isRev = HeadingDiag.isReversal(a.headMed, b.headMed)
             if (isRev) rev++
-            if (lines.length < 1200) {
-                lines.append("  ").append(fmt.format(java.util.Date(a.startMs)))
-                  .append("  ").append(labelRu(a.label)).append(" ")
-                  .append(a.headMed.toInt()).append("° → ")
-                  .append(labelRu(b.label)).append(" ")
-                  .append(b.headMed.toInt()).append("°   смена ")
-                  .append(d.toInt()).append("°")
-                  .append(if (isRev) "  ↩ разворот" else "").append("\n")
+            val bothMarked = (a.label == "UP" || a.label == "DOWN") &&
+                (b.label == "UP" || b.label == "DOWN")
+            if (bothMarked) {
+                val flipped = a.label != b.label
+                if (flipped && isRev) flipRev++
+                else if (flipped) flipNo++
+                else if (isRev) sameRev++
+                else sameNo++
             }
+            recent.add("  " + fmt.format(java.util.Date(a.startMs)) + "  " +
+                labelRu(a.label) + " " + a.headMed.toInt() + "° → " +
+                labelRu(b.label) + " " + b.headMed.toInt() + "°   смена " +
+                d.toInt() + "°" + (if (isRev) "  ↩ разворот" else ""))
         }
         sb.append("Соседних пар: ").append(pairs)
           .append(", похоже на разворот: ").append(rev)
         if (pairs > 0) sb.append("  (").append(rev * 100 / pairs).append("%)")
-        sb.append("\n\n").append(lines)
+        sb.append("\n\n")
+
+        // Сводка по гипотезе
+        val marked = flipRev + flipNo + sameRev + sameNo
+        sb.append("ГИПОТЕЗА: разворот = смена уклона\n")
+        if (marked == 0) {
+            sb.append("  Размеченных пар подряд пока нет — гипотезу не на чем\n")
+            sb.append("  проверить. Нужны прогулки, где отмечены и подъём,\n")
+            sb.append("  и спуск подряд.\n")
+        } else {
+            sb.append("  метка сменилась + разворот:  ").append(flipRev).append("\n")
+            sb.append("  метка сменилась, разворота нет: ").append(flipNo).append("\n")
+            sb.append("  метка та же, но разворот:    ").append(sameRev).append("\n")
+            sb.append("  метка та же, разворота нет:  ").append(sameNo).append("\n")
+            val hit = flipRev + sameNo
+            sb.append("  Согласие: ").append(hit).append("/").append(marked)
+              .append(" = ").append(hit * 100 / marked).append("%\n")
+            sb.append(if (hit * 100 / marked >= 70)
+                "  → связь есть: на курсе можно строить контекст.\n"
+            else
+                "  → связи не видно: разворот и смена уклона живут отдельно.\n")
+        }
+
+        // СВЕЖИЕ пары, а не самые старые: в старых днях меток ещё не было.
+        sb.append("\nПоследние пары:\n")
+        val from = maxOf(0, recent.size - 22)
+        for (idx in recent.size - 1 downTo from) sb.append(recent[idx]).append("\n")
+
         sb.append("\nЧто это значит:\n")
-        sb.append("Разворот на ~180° — прямая улика «иду обратно». Если таких\n")
-        sb.append("пар много и разброс курса мал, на курсе можно строить\n")
-        sb.append("понимание маршрута. Если мало — компас в кармане не тянет,\n")
-        sb.append("и честнее это признать, чем городить догадки.\n")
+        sb.append("Развороты редки сами по себе: за прогулку туда-обратно он\n")
+        sb.append("один, а отрезков много. Поэтому важен не процент разворотов,\n")
+        sb.append("а СОГЛАСИЕ выше: совпадает ли разворот со сменой уклона.\n")
+        sb.append("Разброс курса внутри отрезка должен быть заметно меньше\n")
+        sb.append("разворота — тогда сигнал не тонет в шуме.\n")
         deliver(sb.toString())
     }
 
