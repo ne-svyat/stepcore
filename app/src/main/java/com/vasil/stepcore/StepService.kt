@@ -319,7 +319,7 @@ class StepService : Service(), SensorEventListener {
     // v258. Забытая калибровка опасна: автомат ждёт движения и однажды
     // запишет чужой отрезок как эталон. Считаем время без активности.
     private var slopeIdleSinceMs = 0L
-    private val slopeWindows = ArrayList<Triple<String, Long, Long>>()
+    private var slopeEndMs = 0L
 
     override fun onCreate() {
         super.onCreate()
@@ -539,9 +539,9 @@ class StepService : Service(), SensorEventListener {
             ACTION_CAL_DIST_START -> startDistCal(intent.getFloatExtra(EXTRA_METRES, 0f))
             ACTION_CAL_DIST_STOP -> finishDistCal()
             ACTION_MARKS_DISMISSED -> onMarksDismissed()
-            ACTION_SLOPE_START -> slopeStart()
+            ACTION_SLOPE_PICK ->
+                slopeStart(intent.getStringExtra(EXTRA_SLOPE_TARGET) ?: "")
             ACTION_SLOPE_CONFIRM -> slopeConfirm()
-            ACTION_SLOPE_SKIP -> slopeSkip()
             ACTION_SLOPE_CANCEL -> slopeCancel()
             ACTION_DIAG_START -> {
                 detector.diagRecording = true
@@ -809,36 +809,34 @@ class StepService : Service(), SensorEventListener {
         }
     }
 
-    private fun slopeStart() {
+    /** Начать замер ОДНОГО класса. Очереди больше нет: гора не обязана
+     *  давать подъём, ровное и спуск подряд. */
+    private fun slopeStart(target: String) {
+        if (target != "UP" && target != "FLAT" && target != "DOWN") return
         slopeActive = true
-        // Если человек вообще не пойдёт, шаговый хук не сработает -
-        // поэтому за простоем следит ещё и таймер.
+        StepsState.slopeTarget.value = target
+        StepsState.slopeResult.value = ""
+        slopeIdleSinceMs = System.currentTimeMillis()
+        slopeArm()
+        refreshPanel()
         scope.launch {
             while (slopeActive) {
                 kotlinx.coroutines.delay(60_000L)
                 slopeIdleCheck()
             }
         }
-        slopeWindows.clear()
-        StepsState.slopeResult.value = ""
-        StepsState.slopePhase.value = 0
-        slopeIdleSinceMs = System.currentTimeMillis()
-        slopeArm()
-        refreshPanel()
     }
 
-    /** Ждём, пока человек пойдёт: запись начнётся сама. */
     private fun slopeArm() {
         StepsState.slopeStage.value = "ARM"
         StepsState.slopeSteps.value = 0
         slopeArmSteps = walkSteps + runSteps
     }
 
-    /** Вызывается при каждом обновлении счёта чипом - в том числе с
-     *  выключенным экраном. Здесь автомат и живёт. */
+    /** Автомат живёт в службе: телефон в кармане, экран гаснет, а
+     *  активность HyperOS замораживает. */
     private fun slopeTick(total: Int) {
         if (!slopeActive) return
-        // Есть движение - калибровка живая.
         slopeIdleSinceMs = System.currentTimeMillis()
         when (StepsState.slopeStage.value) {
             "ARM" -> {
@@ -855,14 +853,11 @@ class StepService : Service(), SensorEventListener {
                 val done = total - slopeStartSteps
                 val prev = StepsState.slopeSteps.value
                 StepsState.slopeSteps.value = done
-                // Панель обновляем редко: каждое уведомление - работа
-                // системы, а число шагов и так растёт плавно.
                 if (done / 10 != prev / 10) refreshPanel()
                 if (done >= SLOPE_MIN_STEPS) {
-                    // Окно закрываем ЗДЕСЬ: пока человек достаёт телефон
-                    // и идёт обратно, лишнее в замер не попадёт.
-                    val lbl = slopeLabelOf(StepsState.slopePhase.value)
-                    slopeWindows.add(Triple(lbl, slopeStartMs, System.currentTimeMillis()))
+                    // Окно закрываем здесь: пока человек достаёт телефон и
+                    // идёт обратно, лишнее в замер не попадёт.
+                    slopeEndMs = System.currentTimeMillis()
                     StepsState.slopeStage.value = "DONE"
                     beep(2)
                     refreshPanel()
@@ -871,99 +866,69 @@ class StepService : Service(), SensorEventListener {
         }
     }
 
-    private fun slopeLabelOf(phase: Int) = when (phase) {
-        0 -> "UP"; 1 -> "FLAT"; else -> "DOWN"
-    }
-
-    /** Человек подтвердил отрезок - идём к следующему. */
+    /** Подтверждение: считаем медиану окна и сохраняем ЭТОТ якорь.
+     *  Остальные не трогаем - каждый живёт сам по себе. */
     private fun slopeConfirm() {
         if (!slopeActive) return
         if (StepsState.slopeStage.value != "DONE") return
-        advanceSlopePhase()
-    }
-
-    /** Пропустить ровный участок: на склоне его может не быть. */
-    private fun slopeSkip() {
-        if (!slopeActive) return
-        if (StepsState.slopePhase.value != 1) return
-        advanceSlopePhase()
-    }
-
-    private fun advanceSlopePhase() {
-        val next = StepsState.slopePhase.value + 1
-        StepsState.slopePhase.value = next
-        slopeIdleSinceMs = System.currentTimeMillis()
-        if (next >= 3) { slopeFinish(); return }
-        slopeArm()
+        val target = StepsState.slopeTarget.value
+        val from = slopeStartMs; val to = slopeEndMs
+        slopeActive = false
+        StepsState.slopeStage.value = "CALC"
         refreshPanel()
+        scope.launch {
+            val a = AppDb.get(this@StepService).dao().samplesBetween(from, to)
+                .filter { it.sampleSource == 1 }
+                .mapNotNull { it.accP90 ?: it.accRms }
+                .sorted()
+            val msg: String
+            if (a.size < 3) {
+                msg = "Признаков не хватило (" + a.size + " строк). Обычно это " +
+                    "значит, что телефон был в руке или сбор при выключенном " +
+                    "экране отключён."
+            } else {
+                val med = a[a.size / 2]
+                getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                    .putFloat("slope_anchor_" + target.lowercase(), med)
+                    .putLong("slope_anchor_" + target.lowercase() + "_ms",
+                        System.currentTimeMillis())
+                    .apply()
+                msg = "Записано: " + slopeRu(target) + " = " +
+                    String.format(java.util.Locale.US, "%.2f", med) +
+                    "  (строк " + a.size + ")"
+                logEvent("Калибровка уклона: " + slopeRu(target) + " = " +
+                    String.format(java.util.Locale.US, "%.2f", med))
+            }
+            StepsState.slopeResult.value = msg
+            StepsState.slopeStage.value = "RESULT"
+            StepsState.slopeTarget.value = ""
+            beep(3)
+            if (!marksHidden) showMarks()
+            android.widget.Toast.makeText(this@StepService, msg,
+                android.widget.Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun slopeRu(t: String) = when (t) {
+        "UP" -> "в гору"; "DOWN" -> "с горы"; else -> "ровно"
     }
 
     private fun slopeCancel() {
         slopeActive = false
-        slopeWindows.clear()
-        StepsState.slopePhase.value = -1
+        StepsState.slopeTarget.value = ""
         StepsState.slopeStage.value = "ARM"
         beep(1, low = true)
-        if (!marksHidden) showMarks()   // вернуть обычную панель меток
+        if (!marksHidden) showMarks()
     }
 
-    /** Считаем якоря по окнам. Только чиповые строки: это карман,
-     *  где уклон и читается. */
-    private fun slopeFinish() {
-        slopeActive = false
-        StepsState.slopeStage.value = "CALC"
-        val wins = ArrayList(slopeWindows)
-        scope.launch {
-            val dao = AppDb.get(this@StepService).dao()
-            val med = HashMap<String, Float>()
-            val cnt = HashMap<String, Int>()
-            for ((lbl, from, to) in wins) {
-                val a = dao.samplesBetween(from, to)
-                    .filter { it.sampleSource == 1 }
-                    .mapNotNull { it.accP90 ?: it.accRms }
-                    .sorted()
-                cnt[lbl] = a.size
-                if (a.isNotEmpty()) med[lbl] = a[a.size / 2]
-            }
-            val up = med["UP"]; val down = med["DOWN"]; val flat = med["FLAT"]
-            val sb = StringBuilder()
-            for (k in listOf("UP", "FLAT", "DOWN")) {
-                val ru = when (k) { "UP" -> "в гору"; "FLAT" -> "ровно"; else -> "с горы" }
-                val v = med[k]
-                if (v == null && k == "FLAT" && cnt[k] == null) continue
-                sb.append(ru).append(": ")
-                  .append(if (v == null) "нет признаков"
-                          else String.format(java.util.Locale.US, "%.2f", v))
-                  .append("  (строк ").append(cnt[k] ?: 0).append(")\n")
-            }
-            if (up == null || down == null) {
-                sb.append("\nНужна пара в гору/с горы. Признаков не хватило — ")
-                sb.append("телефон был в руке или сбор при выключенном экране выключен.")
-            } else if (up >= down) {
-                sb.append("\nПорядок не сошёлся: в гору должно быть МЯГЧЕ, чем с горы. ")
-                sb.append("Якоря не сохраняю — неверная опора хуже её отсутствия.")
-            } else {
-                val pr = getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-                pr.putFloat("slope_anchor_up", up)
-                pr.putFloat("slope_anchor_down", down)
-                if (flat != null && flat > up && flat < down)
-                    pr.putFloat("slope_anchor_flat", flat)
-                pr.putLong("slope_anchor_time", System.currentTimeMillis()).apply()
-                sb.append("\nПорядок сошёлся ✓  зазор ")
-                  .append(String.format(java.util.Locale.US, "%.2f", down - up))
-                sb.append("\nЯкоря сохранены.")
-                if (flat != null && (flat <= up || flat >= down))
-                    sb.append("\n«Ровно» выпало из порядка и не сохранено.")
-            }
-            StepsState.slopeResult.value = sb.toString()
-            StepsState.slopeStage.value = "RESULT"
-            StepsState.slopePhase.value = 3
-            beep(3)
-            if (!marksHidden) showMarks()   // калибровка кончилась
-            android.widget.Toast.makeText(this@StepService,
-                "Калибровка уклона готова — открой SYNX или Калибровку",
-                android.widget.Toast.LENGTH_LONG).show()
-        }
+    /** Простой: ни шагов, ни подтверждений. Отменяем сами - кривой
+     *  эталон хуже отсутствующего. */
+    private fun slopeIdleCheck() {
+        if (!slopeActive) return
+        if (slopeIdleSinceMs <= 0L) return
+        if (System.currentTimeMillis() - slopeIdleSinceMs < SLOPE_IDLE_MS) return
+        logEvent("Калибровка уклона отменена: долгий простой")
+        slopeCancel()
     }
 
     private fun finishDistCal() {
@@ -1800,11 +1765,10 @@ class StepService : Service(), SensorEventListener {
      *  локскрине одно. Кнопки работают с заблокированного экрана - ради
      *  этого всё и затевалось. */
     private fun buildSlopeNotification(): Notification {
-        val phase = StepsState.slopePhase.value
         val stage = StepsState.slopeStage.value
         val steps = StepsState.slopeSteps.value
-        val name = when (phase) { 0 -> "в гору"; 1 -> "ровно"; else -> "с горы" }
-        val title = "Калибровка уклона · отрезок " + (phase + 1) + " из 3"
+        val name = slopeRu(StepsState.slopeTarget.value)
+        val title = "Калибровка уклона · " + name
         val body = when (stage) {
             "ARM" -> "«" + name + "» — иди, запись начнётся сама"
             "REC" -> "«" + name + "» — " + steps + " шагов из " + SLOPE_MIN_STEPS
@@ -1826,9 +1790,6 @@ class StepService : Service(), SensorEventListener {
             .setVisibility(Notification.VISIBILITY_PUBLIC)
         if (stage == "DONE") {
             b.addAction(slopeAction(ACTION_SLOPE_CONFIRM, "✓ Подтвердить", 31))
-        }
-        if (phase == 1 && stage == "ARM") {
-            b.addAction(slopeAction(ACTION_SLOPE_SKIP, "Пропустить ровно", 32))
         }
         b.addAction(slopeAction(ACTION_SLOPE_CANCEL, "Отмена", 33))
         return b.build()
@@ -1988,9 +1949,9 @@ class StepService : Service(), SensorEventListener {
         /** Через столько шагов перерисовываем служебное уведомление.
          *  Было 10 - раз в 6 секунд на ходу, слишком часто. */
         const val NOTIF_STEP_STRIDE = 40
-        const val ACTION_SLOPE_START = "slope_start"
+        const val ACTION_SLOPE_PICK = "slope_pick"
+        const val EXTRA_SLOPE_TARGET = "slope_target"
         const val ACTION_SLOPE_CONFIRM = "slope_confirm"
-        const val ACTION_SLOPE_SKIP = "slope_skip"
         const val ACTION_SLOPE_CANCEL = "slope_cancel"
         /** Столько шагов подряд считаем началом движения. */
         /** Порог свежести КУРСА. Больше общего (15 с), потому что курс

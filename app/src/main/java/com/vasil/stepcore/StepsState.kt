@@ -26,4 +26,8 @@ object StepsState {
     val slopeStage = MutableStateFlow("ARM")
     val slopeSteps = MutableStateFlow(0)
     val slopeResult = MutableStateFlow("")
+    /** v262. Какой класс записывается прямо сейчас: UP / FLAT / DOWN.
+     *  Пусто - калибровка не идёт. Очередь отменена: рельеф не обязан
+     *  давать все три отрезка подряд и в нужном порядке. */
+    val slopeTarget = MutableStateFlow("")
 }

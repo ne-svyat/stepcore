@@ -15,71 +15,38 @@ import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.launch
 
 /**
- * Калибровка уклона - ЭКРАН. Вся логика в StepService: телефон уходит в
- * карман, экран гаснет, и HyperOS морозит активность. Служба не мёрзнет.
+ * Калибровка уклона: три САМОСТОЯТЕЛЬНЫХ замера.
  *
- * Экран только показывает состояние и шлёт команды. Обратная связь на ходу -
- * ЗВУКОМ из службы: вибрацию в кармане не слышно.
+ * Раньше требовалась очередь в гору -> ровно -> с горы за один заход, и это
+ * не сходилось с рельефом: ровного участка на склоне может не быть, спуск
+ * бывает в другом месте, а прерваться нельзя. Теперь каждый класс пишется
+ * отдельно, в любом порядке и в любой день; пара в гору + с горы уже даёт
+ * опору, "ровно" - по возможности.
+ *
+ * Логика в службе: телефон уходит в карман, экран гаснет, а активность
+ * HyperOS замораживает.
  */
 class SlopeCalActivity : AppCompatActivity() {
 
-    private lateinit var card: TextView
-    private lateinit var hint: TextView
-    private lateinit var btnMain: TextView
-    private lateinit var btnSkip: TextView
+    private lateinit var root: LinearLayout
     private var dens = 1f
-
-    private val titles = listOf("В ГОРУ", "РОВНО", "С ГОРЫ")
+    private val order = listOf("UP", "FLAT", "DOWN")
 
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
         dens = resources.displayMetrics.density
-        val root = LinearLayout(this)
+        val scroll = android.widget.ScrollView(this)
+        root = LinearLayout(this)
         root.orientation = LinearLayout.VERTICAL
         val pad = (18 * dens).toInt()
         root.setPadding(pad, pad, pad, pad)
-        root.setBackgroundColor(ContextCompat.getColor(this, R.color.bg))
-        setContentView(root)
-
-        val title = TextView(this)
-        title.text = "Калибровка уклона"
-        title.textSize = 22f
-        title.setTextColor(ContextCompat.getColor(this, R.color.text_main))
-        root.addView(title)
-
-        card = TextView(this)
-        card.textSize = 17f
-        card.gravity = Gravity.CENTER
-        card.setTextColor(ContextCompat.getColor(this, R.color.text_main))
-        val cp = (20 * dens).toInt()
-        card.setPadding(cp, cp, cp, cp)
-        val lp = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        lp.topMargin = (16 * dens).toInt()
-        root.addView(card, lp)
-
-        hint = TextView(this)
-        hint.textSize = 14f
-        hint.setTextColor(ContextCompat.getColor(this, R.color.text_dim))
-        hint.setLineSpacing(3f * dens, 1f)
-        hint.setPadding(0, (14 * dens).toInt(), 0, 0)
-        root.addView(hint)
-
-        btnMain = mkButton(root, R.color.accent_teal)
-        btnSkip = mkButton(root, R.color.accent_amber)
-
-        val cancel = TextView(this)
-        cancel.text = "Отменить и закрыть"
-        cancel.gravity = Gravity.CENTER
-        cancel.textSize = 15f
-        cancel.setTextColor(ContextCompat.getColor(this, R.color.text_dim))
-        cancel.setPadding(0, (16 * dens).toInt(), 0, (12 * dens).toInt())
-        cancel.setOnClickListener { send(StepService.ACTION_SLOPE_CANCEL); finish() }
-        root.addView(cancel)
+        scroll.setBackgroundColor(ContextCompat.getColor(this, R.color.bg))
+        scroll.addView(root)
+        setContentView(scroll)
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                launch { StepsState.slopePhase.collect { render() } }
+                launch { StepsState.slopeTarget.collect { render() } }
                 launch { StepsState.slopeStage.collect { render() } }
                 launch { StepsState.slopeSteps.collect { render() } }
                 launch { StepsState.slopeResult.collect { render() } }
@@ -87,116 +54,201 @@ class SlopeCalActivity : AppCompatActivity() {
         }
     }
 
-    private fun mkButton(root: LinearLayout, colorRes: Int): TextView {
-        val b = TextView(this)
-        b.gravity = Gravity.CENTER
-        b.textSize = 17f
-        b.setTextColor(ContextCompat.getColor(this, colorRes))
-        b.setPadding(0, (14 * dens).toInt(), 0, (14 * dens).toInt())
-        val lp = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        lp.topMargin = (14 * dens).toInt()
-        root.addView(b, lp)
-        return b
+    private fun ru(t: String) = when (t) {
+        "UP" -> "в гору"; "DOWN" -> "с горы"; else -> "ровно"
     }
 
-    private fun send(action: String) {
-        startForegroundService(Intent(this, StepService::class.java).setAction(action))
+    private fun colorOf(t: String) = when (t) {
+        "UP" -> R.color.accent_amber
+        "DOWN" -> R.color.accent_blue
+        else -> R.color.accent_green
     }
 
-    private fun frame(v: TextView, colorRes: Int, rift: Int) {
-        v.background = DoodleBorderDrawable(
-            ContextCompat.getColor(this, colorRes),
-            ContextCompat.getColor(this, R.color.surface),
-            811L, dens, DoodleBorderDrawable.MAT_ROCK, rift)
+    private fun riftOf(t: String) = when (t) {
+        "UP" -> DoodleBorderDrawable.RIFT_UP
+        "DOWN" -> DoodleBorderDrawable.RIFT_DOWN
+        else -> DoodleBorderDrawable.RIFT_FLAT
+    }
+
+    private fun anchorOf(t: String): Pair<Float, Long>? {
+        val p = getSharedPreferences(StepService.PREFS, MODE_PRIVATE)
+        val v = p.getFloat("slope_anchor_" + t.lowercase(), 0f)
+        if (v <= 0f) return null
+        return v to p.getLong("slope_anchor_" + t.lowercase() + "_ms", 0L)
+    }
+
+    private fun send(action: String, target: String? = null) {
+        val i = Intent(this, StepService::class.java).setAction(action)
+        if (target != null) i.putExtra(StepService.EXTRA_SLOPE_TARGET, target)
+        startForegroundService(i)
     }
 
     private fun render() {
-        val phase = StepsState.slopePhase.value
-        val stage = StepsState.slopeStage.value
-        val steps = StepsState.slopeSteps.value
-        btnSkip.visibility = View.GONE
+        root.removeAllViews()
+        val title = TextView(this)
+        title.text = "Калибровка уклона"
+        title.textSize = 22f
+        title.setTextColor(ContextCompat.getColor(this, R.color.text_main))
+        root.addView(title)
 
         if (!StepsState.serviceRunning.value) {
-            card.text = "Сначала запусти счёт шагов\nна главном экране"
-            frame(card, R.color.accent_amber, DoodleBorderDrawable.RIFT_NONE)
-            hint.text = "Калибровка считает шаги чипом — без работающего счёта измерять нечего."
-            btnMain.text = "Закрыть"
-            btnMain.setOnClickListener { finish() }
+            note("Сначала запусти счёт шагов на главном экране — калибровка " +
+                "считает шаги чипом.")
+            close()
             return
         }
 
-        if (phase < 0) {
-            card.text = "Три отрезка на одном склоне"
-            frame(card, R.color.accent_green, DoodleBorderDrawable.RIFT_NONE)
-            hint.text = "Метки уклона копятся в разных условиях, поэтому «ровно» " +
-                "размазано и накрывает «в гору». Три отрезка подряд в одном месте " +
-                "убирают разницу условий — остаётся чистая разница уклона.\n\n" +
-                "Телефон в карман: в руке амплитуда сглажена, уклон не читается.\n" +
-                "Сигналы — ЗВУКОМ: один сигнал «пошёл», два «хватит, подтверди».\n" +
-                "Ровный участок можно пропустить, если на склоне его нет."
-            btnMain.text = "Начать"
-            btnMain.setOnClickListener { send(StepService.ACTION_SLOPE_START) }
+        val target = StepsState.slopeTarget.value
+        if (target != "") { renderRecording(target); return }
+
+        note("Каждый отрезок записывается отдельно. Порядок любой, между " +
+            "замерами хоть неделя. Нужны хотя бы «в гору» и «с горы» — " +
+            "ровный участок на склоне бывает не всегда.\n\n" +
+            "Телефон в карман: в руке амплитуда сглажена и уклон не читается. " +
+            "На ходу всё слышно: один сигнал — пошёл, два — хватит, подтверди.")
+
+        for (t in order) card(t)
+        verdict()
+
+        val res = StepsState.slopeResult.value
+        if (res != "") note(res)
+        close()
+    }
+
+    private fun renderRecording(t: String) {
+        val stage = StepsState.slopeStage.value
+        val steps = StepsState.slopeSteps.value
+        val card = TextView(this)
+        card.gravity = Gravity.CENTER
+        card.textSize = 17f
+        card.setTextColor(ContextCompat.getColor(this, R.color.text_main))
+        val cp = (20 * dens).toInt()
+        card.setPadding(cp, cp, cp, cp)
+        card.background = DoodleBorderDrawable(
+            ContextCompat.getColor(this, colorOf(t)),
+            ContextCompat.getColor(this, R.color.surface),
+            811L, dens, DoodleBorderDrawable.MAT_ROCK, riftOf(t))
+        card.text = when (stage) {
+            "ARM" -> "Записываю «" + ru(t) + "»\n\nПоложи в карман и иди"
+            "REC" -> "Записываю «" + ru(t) + "»\n\n" + steps + " шагов" +
+                (if (steps < StepService.SLOPE_MIN_STEPS)
+                    "\nнужно ещё " + (StepService.SLOPE_MIN_STEPS - steps) else "\nхватит")
+            "DONE" -> "Отрезок «" + ru(t) + "» записан\n\n" + steps + " шагов"
+            else -> "Считаю…"
+        }
+        add(card)
+
+        note(when (stage) {
+            "ARM" -> "Запись начнётся сама — услышишь один сигнал."
+            "REC" -> "Два сигнала прозвучат сами, когда наберётся " +
+                StepService.SLOPE_MIN_STEPS + " шагов. Телефон доставать не нужно."
+            "DONE" -> "Замер закрыт в момент сигнала — обратная дорога в него " +
+                "не попадёт."
+            else -> ""
+        })
+
+        if (stage == "DONE") {
+            button("✓ Подтвердить «" + ru(t) + "»", colorOf(t)) {
+                send(StepService.ACTION_SLOPE_CONFIRM)
+            }
+        }
+        button("Отменить замер", R.color.text_dim) {
+            send(StepService.ACTION_SLOPE_CANCEL)
+        }
+        close()
+    }
+
+    private fun card(t: String) {
+        val a = anchorOf(t)
+        val v = TextView(this)
+        v.textSize = 16f
+        v.setTextColor(ContextCompat.getColor(this, R.color.text_main))
+        val cp = (16 * dens).toInt()
+        v.setPadding(cp, cp, cp, cp)
+        v.background = DoodleBorderDrawable(
+            ContextCompat.getColor(this, colorOf(t)),
+            ContextCompat.getColor(this, R.color.surface),
+            700L + t.length, dens, DoodleBorderDrawable.MAT_ROCK, riftOf(t))
+        v.text = if (a == null)
+            ru(t).replaceFirstChar { it.uppercase() } + "\nне записано — нажми, чтобы записать"
+        else {
+            val fmt = java.text.SimpleDateFormat("dd.MM HH:mm", java.util.Locale("ru"))
+            ru(t).replaceFirstChar { it.uppercase() } + "\nамплитуда " +
+                String.format(java.util.Locale.US, "%.2f", a.first) +
+                "   ·   " + fmt.format(java.util.Date(a.second)) +
+                "\nнажми, чтобы перезаписать"
+        }
+        v.setOnClickListener { send(StepService.ACTION_SLOPE_PICK, t) }
+        add(v)
+    }
+
+    /** Вердикт по тому, что уже собрано. Пара в гору + с горы - минимум. */
+    private fun verdict() {
+        val up = anchorOf("UP")?.first
+        val down = anchorOf("DOWN")?.first
+        val flat = anchorOf("FLAT")?.first
+        if (up == null || down == null) {
+            note("Пока нет пары «в гору» + «с горы» — по ней и строится опора. " +
+                "Запиши оба, можно в разные дни.")
             return
         }
-
-        if (phase >= 3 || stage == "RESULT" || stage == "CALC") {
-            card.text = if (stage == "CALC") "Считаю…"
-                else StepsState.slopeResult.value.ifEmpty { "Готово" }
-            frame(card, R.color.accent_violet, DoodleBorderDrawable.RIFT_NONE)
-            hint.text = if (stage == "CALC") "" else
-                "Якоря измерены на одном склоне, поэтому условия совпадают. " +
-                "Повтори в другой день — если зазор устойчив, научим агента " +
-                "различать и «ровно»."
-            btnMain.text = "Закрыть"
-            btnMain.setOnClickListener { finish() }
+        if (up >= down) {
+            note("Порядок не сошёлся: «в гору» должно быть МЯГЧЕ, чем «с горы», " +
+                "а вышло наоборот. Скорее всего отрезки прошли в разных местах " +
+                "или телефон лежал по-разному. Перезапиши один из них.")
             return
         }
+        val sb = StringBuilder("Порядок сошёлся ✓  зазор " +
+            String.format(java.util.Locale.US, "%.2f", down - up))
+        if (flat != null) {
+            sb.append(if (flat > up && flat < down)
+                "\n«Ровно» встало между ними — три класса разделены."
+            else
+                "\n«Ровно» выпало из порядка: в разборе оно учитываться не будет.")
+        } else {
+            sb.append("\n«Ровно» не записано — разбор будет считать его серединой.")
+        }
+        sb.append("\n\nЭти числа уже работают в разборе отрезков.")
+        note(sb.toString())
+    }
 
-        val t = titles[phase]
-        val rift = when (phase) {
-            0 -> DoodleBorderDrawable.RIFT_UP
-            1 -> DoodleBorderDrawable.RIFT_FLAT
-            else -> DoodleBorderDrawable.RIFT_DOWN
-        }
-        val color = when (phase) {
-            0 -> R.color.accent_amber
-            1 -> R.color.accent_green
-            else -> R.color.accent_blue
-        }
-        frame(card, color, rift)
+    private fun add(v: View) {
+        val lp = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        lp.topMargin = (14 * dens).toInt()
+        root.addView(v, lp)
+    }
 
-        when (stage) {
-            "ARM" -> {
-                card.text = "Отрезок ${phase + 1} из 3\n\n$t\n\nПоложи в карман и иди"
-                hint.text = "Запись начнётся сама — услышишь один сигнал. " +
-                    "Когда наберётся ${StepService.SLOPE_MIN_STEPS} шагов, " +
-                    "прозвучат два: доставай телефон и подтверждай.\n\n" +
-                    "Экран может гаснуть — счёт идёт в службе."
-                btnMain.text = "Ждём начала движения…"
-                btnMain.setOnClickListener { }
-                if (phase == 1) {
-                    btnSkip.visibility = View.VISIBLE
-                    btnSkip.text = "Пропустить «ровно» (нет ровного участка)"
-                    btnSkip.setOnClickListener { send(StepService.ACTION_SLOPE_SKIP) }
-                }
-            }
-            "REC" -> {
-                val need = StepService.SLOPE_MIN_STEPS - steps
-                card.text = "Идёт запись\n\n$t\n\n$steps шагов" +
-                    (if (need > 0) "\nнужно ещё $need" else "\nхватит")
-                hint.text = "Иди спокойно. Два сигнала прозвучат сами, когда наберётся " +
-                    "нужное число шагов. Телефон доставать не нужно."
-                btnMain.text = "Идёт запись…"
-                btnMain.setOnClickListener { }
-            }
-            "DONE" -> {
-                card.text = "Отрезок записан\n\n$t\n\n$steps шагов"
-                hint.text = "Замер закрыт в момент сигнала — обратная дорога в него " +
-                    "не попадёт. Подтверди, и перейдём к следующему отрезку."
-                btnMain.text = "Подтвердить и дальше"
-                btnMain.setOnClickListener { send(StepService.ACTION_SLOPE_CONFIRM) }
-            }
-        }
+    private fun note(t: String) {
+        if (t == "") return
+        val v = TextView(this)
+        v.text = t
+        v.textSize = 14f
+        v.setTextColor(ContextCompat.getColor(this, R.color.text_dim))
+        v.setLineSpacing(3f * dens, 1f)
+        v.setPadding(0, (14 * dens).toInt(), 0, 0)
+        root.addView(v)
+    }
+
+    private fun button(label: String, colorRes: Int, onClick: () -> Unit) {
+        val v = TextView(this)
+        v.text = label
+        v.gravity = Gravity.CENTER
+        v.textSize = 17f
+        v.setTextColor(ContextCompat.getColor(this, colorRes))
+        v.setPadding(0, (16 * dens).toInt(), 0, (14 * dens).toInt())
+        v.setOnClickListener { onClick() }
+        root.addView(v)
+    }
+
+    private fun close() {
+        val v = TextView(this)
+        v.text = "Закрыть"
+        v.gravity = Gravity.CENTER
+        v.textSize = 16f
+        v.setTextColor(ContextCompat.getColor(this, R.color.text_dim))
+        v.setPadding(0, (20 * dens).toInt(), 0, (12 * dens).toInt())
+        v.setOnClickListener { finish() }
+        root.addView(v)
     }
 }
