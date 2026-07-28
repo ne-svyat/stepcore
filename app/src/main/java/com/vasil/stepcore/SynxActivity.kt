@@ -50,11 +50,24 @@ class SynxActivity : AppCompatActivity() {
             val lb = InclineAgent.wilsonLower(ok, n)
             return ok.toString() + "/" + n + " = " +
                 String.format(java.util.Locale.US, "%.0f", lb * 100) + "%" +
-                (if (lb >= InclineAgent.AUTO_TRUST) "  ✓ авто" else "")
+                ""
+        }
+        val bUpOk = pr.getInt("ia_bup_ok", 0); val bUpN = pr.getInt("ia_bup_n", 0)
+        val bDnOk = pr.getInt("ia_bdown_ok", 0); val bDnN = pr.getInt("ia_bdown_n", 0)
+        fun stBlind(ok: Int, n: Int): String {
+            if (n == 0) return "проверок ещё не было"
+            val lb = InclineAgent.wilsonLower(ok, n)
+            return ok.toString() + "/" + n + " = " +
+                String.format(java.util.Locale.US, "%.0f", lb * 100) + "%" +
+                (if (n < InclineAgent.BLIND_MIN)
+                    "  (нужно " + InclineAgent.BLIND_MIN + " проверок)"
+                 else if (lb >= InclineAgent.AUTO_TRUST) "  ✓ авто" else "")
         }
         view.text = "Корпус: " + total + " образцов" +
-            "\n  автометка: в гору " + st(upOk, upN) +
-            "\n              с горы " + st(dnOk, dnN) +
+            "\n  вслепую: в гору " + stBlind(bUpOk, bUpN) +
+            "\n           с горы " + stBlind(bDnOk, bDnN) +
+            "\n  с подсказкой: в гору " + st(upOk, upN) +
+            "\n                с горы " + st(dnOk, dnN) +
             (if (autoCnt > 0) "\n  агент разметил сам: " + autoCnt else "") +
             "\n  ровно " + flat + " · в гору " + up + " · с горы " + down +
             "\n  от детектора " + (total - chip) + " · от чипа " + chip
@@ -170,8 +183,12 @@ class SynxActivity : AppCompatActivity() {
         val prefs = getSharedPreferences(StepService.PREFS, MODE_PRIVATE)
         val upOk = prefs.getInt("ia_up_ok", 0); val upN = prefs.getInt("ia_up_n", 0)
         val dnOk = prefs.getInt("ia_down_ok", 0); val dnN = prefs.getInt("ia_down_n", 0)
-        val upTrusted = InclineAgent.trusted(upOk, upN)
-        val dnTrusted = InclineAgent.trusted(dnOk, dnN)
+        // v249. Право даёт только СЛЕПОЙ счёт: подсказанный меряет
+        // согласие человека с собственной меткой, а не правоту агента.
+        val bUpOk = prefs.getInt("ia_bup_ok", 0); val bUpN = prefs.getInt("ia_bup_n", 0)
+        val bDnOk = prefs.getInt("ia_bdown_ok", 0); val bDnN = prefs.getInt("ia_bdown_n", 0)
+        val upTrusted = InclineAgent.trustedBlind(bUpOk, bUpN)
+        val dnTrusted = InclineAgent.trustedBlind(bDnOk, bDnN)
         if (!upTrusted && !dnTrusted) return
 
         var seen = prefs.getInt(KEY_AUTO_SEEN, 0)
@@ -411,11 +428,13 @@ class SynxActivity : AppCompatActivity() {
 
     private fun askIncline(s: SessionRecord) {
         lifecycleScope.launch {
-            // Агент говорит только про уже отмеченный уклон: отличить "ровно"
-            // от "в гору" по амплитуде нельзя (диапазоны перекрываются).
+            // v249. Агент говорит и про НЕотмеченные сессии: именно там он
+            // приносит новое знание ("ты забыл отметить, тут был подъём"),
+            // а не штампует уже проставленное. На FLAT молчит по-прежнему:
+            // "ровно" от "в гору" по амплитуде не отделяется.
             var verdict = InclineAgent.Verdict.NO_BASIS
             var margin = 0f
-            if (s.label != "FLAT" && s.label != "NONE") {
+            if (s.label != "FLAT") {
                 val dao = AppDb.get(this@SynxActivity).dao()
                 val near = dao.sessionsAround(
                     s.startMs - InclineAgent.WALK_GAP_MS,
@@ -431,6 +450,18 @@ class SynxActivity : AppCompatActivity() {
                 InclineAgent.Verdict.UP -> "UP"
                 InclineAgent.Verdict.DOWN -> "DOWN"
                 else -> ""
+            }
+            // v249. Каждый N-й вопрос - слепой: без подсказки и без
+            // объяснений агента. Только так измеряется правота, а не
+            // согласие под наводящим вопросом.
+            val prefs = getSharedPreferences(StepService.PREFS, MODE_PRIVATE)
+            val asked = prefs.getInt(KEY_ASK_COUNT, 0) + 1
+            prefs.edit().putInt(KEY_ASK_COUNT, asked).apply()
+            val blind = guess != "" && asked % InclineAgent.BLIND_EVERY == 0
+            if (blind) {
+                val head = dayHeader(s, headText(s, "", labelBreakdown(s), ""))
+                blindAsk(s, guess, head)
+                return@launch
             }
             val note = confidenceNote(verdict, margin)
             val brk = labelBreakdown(s)
@@ -555,6 +586,53 @@ class SynxActivity : AppCompatActivity() {
         i.putExtra("startMs", s.startMs)
         i.putExtra("endMs", s.endMs)
         startActivity(i)
+    }
+
+    /** СЛЕПОЙ вопрос: человек не видит вердикта агента. Предсказание
+     *  уже сделано и спрятано; после ответа сверяем. Это единственная
+     *  честная мера правоты - подсказанный вопрос меряет согласие. */
+    private fun blindAsk(s: SessionRecord, hidden: String, headView: View) {
+        val opts = arrayOf("В гору", "Ровно", "С горы", "Не помню")
+        val codes = arrayOf("UP", "FLAT", "DOWN", "")
+        AlertDialog.Builder(this)
+            .setCustomTitle(headView)
+            .setItems(opts) { _, which ->
+                val truth = codes[which]
+                if (truth == "") { recordAnswer(s, 3, "не подтверждено (слепой)"); return@setItems }
+                scoreBlind(hidden, truth)
+                scoreAgent(hidden, truth)
+                lifecycleScope.launch {
+                    val dao = AppDb.get(this@SynxActivity).dao()
+                    if (truth == s.label) dao.setSessionConfirm(s.id, 1)
+                    else dao.setUserLabel(s.id, truth)
+                    val hit = if (hidden == truth) "угадал" else "промах"
+                    journal("SYNX слепая проверка: человек «" + labelRu(truth) +
+                        "», агент «" + labelRu(hidden) + "» — " + hit +
+                        " (" + anchor(s) + ")")
+                    askedInVisit++
+                    if (askedInVisit < MAX_ASK_PER_VISIT) {
+                        val next = nextCandidate(dao)
+                        if (next != null) { offerNext(next); return@launch }
+                    }
+                    Toast.makeText(this@SynxActivity,
+                        if (hidden == truth) "Совпало — агент был прав"
+                        else "Не совпало — это ценнее всего",
+                        Toast.LENGTH_SHORT).show()
+                }
+            }
+            .show()
+    }
+
+    /** Слепой счёт ведётся отдельно: только он даёт право на автометку. */
+    private fun scoreBlind(guess: String, truth: String) {
+        if (truth != "UP" && truth != "DOWN") return
+        val prefs = getSharedPreferences(StepService.PREFS, MODE_PRIVATE)
+        val kk = "ia_b" + truth.lowercase() + "_ok"
+        val nk = "ia_b" + truth.lowercase() + "_n"
+        prefs.edit()
+            .putInt(kk, prefs.getInt(kk, 0) + (if (guess == truth) 1 else 0))
+            .putInt(nk, prefs.getInt(nk, 0) + 1)
+            .apply()
     }
 
     /** Спрашивает, каким был уклон на самом деле, и СОХРАНЯЕТ ответ.
@@ -778,6 +856,7 @@ class SynxActivity : AppCompatActivity() {
         // v244. Сколько сессий разбираем за один заход и счётчик для
         // контрольной доли (каждая пятая уходит человеку).
         private const val AUTO_BATCH = 40
+        private const val KEY_ASK_COUNT = "ia_ask_count"
         private const val KEY_AUTO_SEEN = "auto_label_seen"
         private const val KEY_SNOOZE = "learn_snooze_until"
     }

@@ -336,7 +336,7 @@ interface StepDao {
     // v244: кандидаты на автометку - надёжные уклонные, ещё не тронутые.
     // Порядок от старых к свежим: сначала разбираем накопившееся.
     @Query("SELECT * FROM sessions WHERE reliable = 1 AND confirmState = 0 " +
-        "AND label != 'FLAT' AND label != 'NONE' ORDER BY endMs ASC LIMIT :limit")
+        "AND label != 'FLAT' ORDER BY endMs ASC LIMIT :limit")
     suspend fun autoLabelCandidates(limit: Int): List<SessionRecord>
 
     // v244: сколько сессий проставлено автоматически (для показа).
