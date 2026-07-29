@@ -70,12 +70,16 @@ class SlopeCalActivity : AppCompatActivity() {
         else -> DoodleBorderDrawable.RIFT_FLAT
     }
 
-    private fun anchorOf(t: String): Pair<Float, Long>? {
+    /** Чтение якоря защищено: если ключ когда-то сохранили другим типом,
+     *  getFloat кидает ClassCastException и уносит весь экран. */
+    private fun anchorOf(t: String): Pair<Float, Long>? = runCatching {
         val p = getSharedPreferences(StepService.PREFS, MODE_PRIVATE)
         val v = p.getFloat("slope_anchor_" + t.lowercase(), 0f)
-        if (v <= 0f) return null
-        return v to p.getLong("slope_anchor_" + t.lowercase() + "_ms", 0L)
-    }
+        if (v <= 0f) return@runCatching null
+        v to runCatching {
+            p.getLong("slope_anchor_" + t.lowercase() + "_ms", 0L)
+        }.getOrDefault(0L)
+    }.getOrNull()
 
     private fun send(action: String, target: String? = null) {
         val i = Intent(this, StepService::class.java).setAction(action)
@@ -83,7 +87,20 @@ class SlopeCalActivity : AppCompatActivity() {
         startForegroundService(i)
     }
 
+    /** Экран не имеет права падать: показать ошибку честнее, чем
+     *  вылететь. Текст пригодится, чтобы понять причину. */
     private fun render() {
+        try { renderInner() } catch (t: Throwable) {
+            root.removeAllViews()
+            val at = t.stackTrace.firstOrNull { it.className.contains("stepcore") }
+            note("Сбой экрана: " + t.javaClass.simpleName + " " +
+                (t.message ?: "") +
+                (if (at == null) "" else "\n" + at.fileName + ":" + at.lineNumber))
+            close()
+        }
+    }
+
+    private fun renderInner() {
         root.removeAllViews()
         val title = TextView(this)
         title.text = "Калибровка уклона"

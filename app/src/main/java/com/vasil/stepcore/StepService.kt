@@ -351,7 +351,7 @@ class StepService : Service(), SensorEventListener {
         scope.launch {
             while (true) {
                 kotlinx.coroutines.delay(60_000L)
-                marksIdleCheck()
+                guard("покой панели") { marksIdleCheck() }
             }
         }
 
@@ -532,28 +532,33 @@ class StepService : Service(), SensorEventListener {
         runCatching {
             startForeground(NOTIF_ID, buildNotification(walkSteps + runSteps))
         }
-        when (intent?.action) {
-            ACTION_CAL_WALK -> startCalibration("walk")
-            ACTION_CAL_RUN -> startCalibration("run")
-            ACTION_CAL_STOP -> finishCalibration()
-            ACTION_CAL_DIST_START -> startDistCal(intent.getFloatExtra(EXTRA_METRES, 0f))
-            ACTION_CAL_DIST_STOP -> finishDistCal()
-            ACTION_MARKS_DISMISSED -> onMarksDismissed()
-            ACTION_SLOPE_PICK ->
-                slopeStart(intent.getStringExtra(EXTRA_SLOPE_TARGET) ?: "")
-            ACTION_SLOPE_CONFIRM -> slopeConfirm()
-            ACTION_SLOPE_CANCEL -> slopeCancel()
-            ACTION_DIAG_START -> {
-                detector.diagRecording = true
-                StepsState.diagRecording.value = true
-                StepsState.calibrationState.value = "Диагностика пишется — делай тест"
+        // v265. Ни одна команда не имеет права уронить службу: счёт шагов -
+        // фундамент, всё остальное надстройка. Раньше исключение внутри
+        // обработчика убивало службу целиком, и счётчик обнулялся.
+        guard("команда " + (intent?.action ?: "пусто")) {
+            when (intent?.action) {
+                ACTION_CAL_WALK -> startCalibration("walk")
+                ACTION_CAL_RUN -> startCalibration("run")
+                ACTION_CAL_STOP -> finishCalibration()
+                ACTION_CAL_DIST_START -> startDistCal(intent.getFloatExtra(EXTRA_METRES, 0f))
+                ACTION_CAL_DIST_STOP -> finishDistCal()
+                ACTION_MARKS_DISMISSED -> onMarksDismissed()
+                ACTION_SLOPE_PICK ->
+                    slopeStart(intent.getStringExtra(EXTRA_SLOPE_TARGET) ?: "")
+                ACTION_SLOPE_CONFIRM -> slopeConfirm()
+                ACTION_SLOPE_CANCEL -> slopeCancel()
+                ACTION_DIAG_START -> {
+                    detector.diagRecording = true
+                    StepsState.diagRecording.value = true
+                    StepsState.calibrationState.value = "Диагностика пишется — делай тест"
+                }
+                ACTION_DIAG_STOP -> finishDiag()
+                ACTION_RECONCILE -> logHwComparison("сейчас")
+                ACTION_INCLINE_UP -> applyIncline(TerrainState.Incline.UP, true)
+                ACTION_INCLINE_FLAT -> applyIncline(TerrainState.Incline.FLAT, true)
+                ACTION_INCLINE_DOWN -> applyIncline(TerrainState.Incline.DOWN, true)
+                ACTION_INCLINE_NONE -> applyIncline(TerrainState.Incline.NONE, false)
             }
-            ACTION_DIAG_STOP -> finishDiag()
-            ACTION_RECONCILE -> logHwComparison("сейчас")
-            ACTION_INCLINE_UP -> applyIncline(TerrainState.Incline.UP, true)
-            ACTION_INCLINE_FLAT -> applyIncline(TerrainState.Incline.FLAT, true)
-            ACTION_INCLINE_DOWN -> applyIncline(TerrainState.Incline.DOWN, true)
-            ACTION_INCLINE_NONE -> applyIncline(TerrainState.Incline.NONE, false)
         }
         return START_STICKY
     }
@@ -822,7 +827,7 @@ class StepService : Service(), SensorEventListener {
         scope.launch {
             while (slopeActive) {
                 kotlinx.coroutines.delay(60_000L)
-                slopeIdleCheck()
+                guard("простой калибровки") { slopeIdleCheck() }
             }
         }
     }
@@ -1285,6 +1290,25 @@ class StepService : Service(), SensorEventListener {
                     else -> m
                 }
             )
+        }
+    }
+
+    /** Выполнить и не дать упасть. Причина пишется в журнал: логи с
+     *  телефона снимать неудобно, а в Истории видно сразу. */
+    private fun guard(what: String, body: () -> Unit) {
+        try {
+            body()
+        } catch (t: Throwable) {
+            val at = t.stackTrace.firstOrNull { it.className.contains("stepcore") }
+            val where = if (at == null) "" else
+                " @ " + at.fileName + ":" + at.lineNumber
+            val msg = "СБОЙ (" + what + "): " +
+                t.javaClass.simpleName + " " + (t.message ?: "") + where
+            runCatching { logEvent(msg) }
+            runCatching {
+                android.widget.Toast.makeText(this, msg,
+                    android.widget.Toast.LENGTH_LONG).show()
+            }
         }
     }
 
@@ -1809,9 +1833,13 @@ class StepService : Service(), SensorEventListener {
     /** Обновить панель: во время калибровки показываем её, иначе метки. */
     private fun refreshPanel() {
         if (marksHidden && !slopeActive) return
-        val n = if (slopeActive || StepsState.slopeStage.value == "CALC")
-            buildSlopeNotification() else buildMarksNotification()
-        getSystemService(NotificationManager::class.java).notify(NOTIF_ID_MARKS, n)
+        // Оформление панели не стоит того, чтобы из-за него умирал счёт.
+        guard("панель") {
+            val n = if (slopeActive || StepsState.slopeStage.value == "CALC")
+                buildSlopeNotification() else buildMarksNotification()
+            getSystemService(NotificationManager::class.java)
+                .notify(NOTIF_ID_MARKS, n)
+        }
     }
 
     /** Показать панель меток. Тихо: setOnlyAlertOnce + канал без звука. */
@@ -1821,8 +1849,10 @@ class StepService : Service(), SensorEventListener {
         if (marksShown && txt == marksLastText) return   // нечего перерисовывать
         marksLastText = txt
         marksShown = true
-        getSystemService(NotificationManager::class.java)
-            .notify(NOTIF_ID_MARKS, buildMarksNotification())
+        guard("панель меток") {
+            getSystemService(NotificationManager::class.java)
+                .notify(NOTIF_ID_MARKS, buildMarksNotification())
+        }
     }
 
     /** Текущая подпись панели - по ней решаем, нужно ли перерисовывать. */
