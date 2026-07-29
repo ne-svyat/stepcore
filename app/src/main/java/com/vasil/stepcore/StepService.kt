@@ -956,7 +956,7 @@ class StepService : Service(), SensorEventListener {
             StepsState.slopeStage.value = "RESULT"
             StepsState.slopeTarget.value = ""
             beep(3)
-            if (!marksHidden) showMarks()
+            endSlopePanel()
             toastMain(msg)
         }
     }
@@ -972,7 +972,7 @@ class StepService : Service(), SensorEventListener {
         beep(1, low = true)
         logEvent("Калибровка уклона остановлена: " + msg)
         toastMain(msg)
-        if (!marksHidden) showMarks()
+        endSlopePanel()
     }
 
     private fun slopeRu(t: String) = when (t) {
@@ -985,7 +985,7 @@ class StepService : Service(), SensorEventListener {
         StepsState.slopeStage.value = "ARM"
         updateMotionSensors()   // вернуть обычный режим сбора
         beep(1, low = true)
-        if (!marksHidden) showMarks()
+        endSlopePanel()
     }
 
     /** Простой: ни шагов, ни подтверждений. Отменяем сами - кривой
@@ -1940,6 +1940,25 @@ class StepService : Service(), SensorEventListener {
         }
     }
 
+    /** Единственный выход из режима калибровки для шторки.
+     *  Панель калибровки несмахиваемая, поэтому оставить её нельзя ни
+     *  при каких обстоятельствах: либо на её место встают метки, либо
+     *  уведомление снимается совсем. Раньше при смахнутых метках она
+     *  висела в шторке навсегда. */
+    private fun endSlopePanel() {
+        if (marksHidden) {
+            runCatching {
+                getSystemService(NotificationManager::class.java)
+                    .cancel(NOTIF_ID_MARKS)
+            }
+            marksShown = false
+            marksLastText = ""
+        } else {
+            marksLastText = ""   // заставить перерисовать поверх калибровки
+            showMarks()
+        }
+    }
+
     /** Показать панель меток. Тихо: setOnlyAlertOnce + канал без звука. */
     private fun showMarks() {
         marksHidden = false
@@ -2091,7 +2110,6 @@ class StepService : Service(), SensorEventListener {
          *  так со сбором, ждать дальше бессмысленно. При частоте 1/5
          *  первая строка обязана прийти к пятому шагу. */
         const val SLOPE_DRY_STEPS = 25
-        const val SLOPE_MIN_STEPS = 40
         /** Столько без шагов и подтверждений - калибровка отменяется.
          *  15 минут: дольше человек на склоне не стоит, а забыть -
          *  запросто. */
