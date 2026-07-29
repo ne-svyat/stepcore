@@ -781,7 +781,11 @@ class StepService : Service(), SensorEventListener {
             if (kind == "walk") CalibrationRegistry.Kind.WALK_TEMPO
             else CalibrationRegistry.Kind.RUN_TEMPO)
         StepsState.calibrationState.value =
-            "Готово: твой ${if (kind == "walk") "шаг" else "бег"} = $median мс/шаг " +
+            // v270. Было "твой шаг = 562 мс/шаг" - читается как ДЛИНА шага,
+            // хотя это темп. Длина лежит рядом в сантиметрах, и человек
+            // решил, что она изменилась.
+            "Готово: твой темп ${if (kind == "walk") "ходьбы" else "бега"} = " +
+            "$median мс между шагами " +
             "по ${n + 1} шагам · разброс $spreadPct% · диапазон $lo-$hi"
     }
 
