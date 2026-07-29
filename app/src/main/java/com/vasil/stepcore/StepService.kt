@@ -332,6 +332,8 @@ class StepService : Service(), SensorEventListener {
     // быть в строках. Плотность у Markus: ~1 строка на 30 шагов, то есть
     // прежние 40 шагов давали всего 1-2 строки.
     private var slopeRows = 0
+    // Строки, пришедшие от детектора: признак того, что телефон в руке.
+    private var slopeHandRows = 0
 
     override fun onCreate() {
         super.onCreate()
@@ -807,6 +809,15 @@ class StepService : Service(), SensorEventListener {
      *  Канал будильника выбран специально - он звучит, даже когда
      *  громкость уведомлений прикручена. */
     private fun beep(times: Int, low: Boolean = false) {
+        // Вибрация вместе со звуком: если телефон в кармане и громкость
+        // прикручена, останется хотя бы один канал.
+        runCatching {
+            val pat = ArrayList<Long>()
+            pat.add(0L)
+            for (i in 0 until times) { pat.add(220L); pat.add(260L) }
+            vibrator.vibrate(android.os.VibrationEffect.createWaveform(
+                pat.toLongArray(), -1))
+        }
         scope.launch {
             var tg: android.media.ToneGenerator? = null
             try {
@@ -814,9 +825,11 @@ class StepService : Service(), SensorEventListener {
                     android.media.AudioManager.STREAM_ALARM, 90)
                 val tone = if (low) android.media.ToneGenerator.TONE_PROP_NACK
                     else android.media.ToneGenerator.TONE_PROP_BEEP
+                // v269. В кармане короткий писк не слышно: тон длиннее и
+                // повторяется, вибрация идёт одновременно.
                 for (i in 0 until times) {
-                    tg.startTone(tone, if (low) 500 else 200)
-                    kotlinx.coroutines.delay(if (low) 600L else 320L)
+                    tg.startTone(tone, if (low) 700 else 450)
+                    kotlinx.coroutines.delay(if (low) 850L else 600L)
                 }
             } catch (e: Exception) {
                 // без звука калибровка всё равно работает
@@ -849,6 +862,7 @@ class StepService : Service(), SensorEventListener {
         StepsState.slopeStage.value = "ARM"
         StepsState.slopeSteps.value = 0
         slopeRows = 0
+        slopeHandRows = 0
         StepsState.slopeRows.value = 0
         slopeArmSteps = walkSteps + runSteps
     }
@@ -876,8 +890,16 @@ class StepService : Service(), SensorEventListener {
                 if (done / 10 != prev / 10) refreshPanel()
                 // Признаки идут? Если шаги есть, а строк нет - смысла
                 // ждать нет, честнее сказать сразу.
+                // Строки идут от детектора - телефон в руке. Тянуть замер
+                // бессмысленно: в руке амплитуда сглажена.
+                if (slopeRows == 0 && slopeHandRows >= 2) {
+                    slopeStop("Телефон в руке — уклон так не измеряется. " +
+                        "Убери телефон в карман и начни отрезок заново.")
+                    return
+                }
                 if (slopeRows == 0 && done >= SLOPE_DRY_STEPS) {
-                    slopeDryStop()
+                    slopeStop("Признаки не пишутся: проверь тумблер сбора " +
+                        "при выключенном экране в SYNX. Замер остановлен.")
                     return
                 }
                 if (slopeRows >= SLOPE_MIN_ROWS) {
@@ -937,16 +959,14 @@ class StepService : Service(), SensorEventListener {
 
     /** Шаги идут, а признаков нет: телефон в руке или выключен сбор при
      *  погашенном экране. Молчать до конца замера нечестно. */
-    private fun slopeDryStop() {
-        val msg = "Признаки не пишутся: телефон в руке или выключен " +
-            "сбор при выключенном экране (тумблер в SYNX). Замер остановлен."
+    private fun slopeStop(msg: String) {
         slopeActive = false
         StepsState.slopeTarget.value = ""
         StepsState.slopeStage.value = "RESULT"
         updateMotionSensors()   // вернуть обычный режим сбора
         StepsState.slopeResult.value = msg
         beep(1, low = true)
-        logEvent("Калибровка уклона: признаки не пишутся, замер остановлен")
+        logEvent("Калибровка уклона остановлена: " + msg)
         toastMain(msg)
         if (!marksHidden) showMarks()
     }
@@ -1249,7 +1269,13 @@ class StepService : Service(), SensorEventListener {
                     features.onStep(detector.smoothedAmp, detector.lastIntervalMs, timeMs)
                     // Сегмент 3: прореженный сбор помеченного корпуса уклона.
                     samplesSinceStep += added
-                    if (samplesSinceStep >= terrainSampleEvery) {
+                    // v269. Во время замера уклона частят ОБА канала.
+                    // Раньше ускорен был только чиповый, а он молчит,
+                    // пока детектор ведёт шаги - замер не кончался.
+                    val every = if (slopeActive &&
+                        StepsState.slopeStage.value == "REC") SLOPE_SAMPLE_EVERY
+                        else terrainSampleEvery
+                    if (samplesSinceStep >= every) {
                         samplesSinceStep = 0
                         val sm = detector.mode
                         if (sm == StepDetector.Mode.WALK || sm == StepDetector.Mode.RUN) {
@@ -1502,9 +1528,15 @@ class StepService : Service(), SensorEventListener {
         // v267. Замер уклона ждёт именно строки признаков: считаем их
         // здесь, в точке записи. Берём только чиповые - это карман, где
         // уклон и читается.
-        if (slopeActive && StepsState.slopeStage.value == "REC" && source == 1) {
-            slopeRows++
-            StepsState.slopeRows.value = slopeRows
+        if (slopeActive && StepsState.slopeStage.value == "REC") {
+            // Чиповые строки - карман, там уклон и читается. Детекторные -
+            // телефон в руке: амплитуда сглажена, для уклона негодна.
+            if (source == 1) {
+                slopeRows++
+                StepsState.slopeRows.value = slopeRows
+            } else {
+                slopeHandRows++
+            }
         }
         // v186: часы для проверки протухания обязаны совпадать с теми, по
         // которым коллектор получает отсчёты. Внутрь идёт

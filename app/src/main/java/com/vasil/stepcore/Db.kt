@@ -271,6 +271,12 @@ interface StepDao {
     @Query("SELECT COUNT(*) FROM terrain_samples")
     suspend fun countSamples(): Int
 
+    // v269: ровные карманные строки - из них берётся якорь "ровно".
+    // Отдельно ходить по ровному незачем: этих данных в корпусе сотни.
+    @Query("SELECT * FROM terrain_samples WHERE label = 'FLAT' " +
+        "AND sampleSource = 1 ORDER BY timeMs DESC LIMIT 400")
+    suspend fun flatPocketSamples(): List<TerrainSample>
+
     /** L1: сколько образцов уже собрано в расширенной схеме. */
     /** v188: срез корпуса для экрана. Схема не меняется - только чтение. */
     @Query("SELECT COUNT(*) FROM terrain_samples WHERE featureVersion >= 3")

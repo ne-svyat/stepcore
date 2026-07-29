@@ -30,7 +30,9 @@ class SlopeCalActivity : AppCompatActivity() {
 
     private lateinit var root: LinearLayout
     private var dens = 1f
-    private val order = listOf("UP", "FLAT", "DOWN")
+    // v269. "Ровно" руками не измеряем: этих строк в корпусе сотни, и
+    // якорь берётся оттуда. Вручную нужны только подъём и спуск.
+    private val order = listOf("UP", "DOWN")
 
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
@@ -108,6 +110,13 @@ class SlopeCalActivity : AppCompatActivity() {
         title.textSize = 22f
         title.setTextColor(ContextCompat.getColor(this, R.color.text_main))
         root.addView(title)
+        // Та же каменная шапка, что на остальных экранах: интерфейс
+        // должен говорить одним языком.
+        val scene = DoodleSceneView(this)
+        val slp = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, (76 * dens).toInt())
+        slp.topMargin = (6 * dens).toInt()
+        root.addView(scene, slp)
 
         if (!StepsState.serviceRunning.value) {
             note("Сначала запусти счёт шагов на главном экране — калибровка " +
@@ -119,14 +128,15 @@ class SlopeCalActivity : AppCompatActivity() {
         val target = StepsState.slopeTarget.value
         if (target != "") { renderRecording(target); return }
 
-        note("Каждый отрезок записывается отдельно. Порядок любой, между " +
-            "замерами хоть неделя. Нужны хотя бы «в гору» и «с горы» — " +
-            "ровный участок на склоне бывает не всегда.\n\n" +
+        note("Руками измеряются только «в гору» и «с горы» — их из корпуса " +
+            "не взять. «Ровно» считается само из накопленных данных.\n\n" +
+            "Порядок любой, между замерами хоть неделя.\n\n" +
             "Телефон в карман: в руке амплитуда сглажена и уклон не читается. " +
             "На ходу всё слышно: один сигнал — пошёл, два — хватит, подтверди.\n" +
             "Один отрезок — примерно 40-50 шагов.")
 
         for (t in order) card(t)
+        flatFromCorpus()
         verdict()
 
         val res = StepsState.slopeResult.value
@@ -210,6 +220,7 @@ class SlopeCalActivity : AppCompatActivity() {
         val up = anchorOf("UP")?.first
         val down = anchorOf("DOWN")?.first
         val flat = anchorOf("FLAT")?.first
+        // "Ровно" не измеряется руками - см. flatFromCorpus()
         if (up == null || down == null) {
             note("Пока нет пары «в гору» + «с горы» — по ней и строится опора. " +
                 "Запиши оба, можно в разные дни.")
@@ -233,6 +244,38 @@ class SlopeCalActivity : AppCompatActivity() {
         }
         sb.append("\n\nЭти числа уже работают в разборе отрезков.")
         note(sb.toString())
+    }
+
+    /** Якорь "ровно" считается из корпуса и сохраняется сам. Отдельная
+     *  прогулка по ровному не нужна: этих строк накоплены сотни, и они
+     *  собраны в тех же условиях - телефон в кармане. */
+    private fun flatFromCorpus() {
+        val v = TextView(this)
+        v.textSize = 15f
+        v.setTextColor(ContextCompat.getColor(this, R.color.text_dim))
+        v.setPadding(0, (14 * dens).toInt(), 0, 0)
+        v.text = "Ровно: считаю из корпуса…"
+        root.addView(v)
+        lifecycleScope.launch {
+            val a = runCatching {
+                AppDb.get(this@SlopeCalActivity).dao().flatPocketSamples()
+                    .mapNotNull { it.accP90 ?: it.accRms }
+                    .sorted()
+            }.getOrDefault(emptyList())
+            if (a.size < 20) {
+                v.text = "Ровно: в корпусе пока мало ровных карманных строк (" +
+                    a.size + "). Наберётся с прогулками — руками ходить не надо."
+                return@launch
+            }
+            val med = a[a.size / 2]
+            getSharedPreferences(StepService.PREFS, MODE_PRIVATE).edit()
+                .putFloat("slope_anchor_flat", med)
+                .putLong("slope_anchor_flat_ms", System.currentTimeMillis())
+                .apply()
+            v.text = "Ровно: " +
+                String.format(java.util.Locale.US, "%.2f", med) +
+                "  — взято из корпуса (" + a.size + " строк), ходить не нужно"
+        }
     }
 
     private fun add(v: View) {
