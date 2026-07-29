@@ -29,6 +29,7 @@ class ProfileActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_profile)
+        UiKit.screenTitle(this, UiKit.ACCENT_INPUT)
         // V14.3: дудл-стиль — лагерь в шапке, рамки "от руки" на карточках.
         findViewById<DoodleSceneView>(R.id.doodleHeader).setScene(DoodleSceneView.PROFILE)
         DoodleUi.frame(findViewById(R.id.dataContainer), R.color.accent_violet, R.color.surface, 201L, DoodleBorderDrawable.MAT_ROPE)
@@ -140,13 +141,13 @@ class ProfileActivity : AppCompatActivity() {
             val km = Stats.distanceKm(this@ProfileActivity, totalWalk, totalRun)
 
             box.addView(UiKit.statCard(this@ProfileActivity, "Всего пройдено",
-                "$total шагов", "ходьба $totalWalk · бег $totalRun", R.color.accent_red))
+                "$total шагов", "ходьба $totalWalk · бег $totalRun", UiKit.ACCENT_INPUT))
             if (km > 0) box.addView(UiKit.statCard(this@ProfileActivity, "Дистанция",
-                "${"%.1f".format(km)} км", "оценка", R.color.accent_blue))
+                "${"%.1f".format(km)} км", "оценка", UiKit.ACCENT_INPUT))
             box.addView(UiKit.statCard(this@ProfileActivity, "Дней с данными",
-                "${days.size}", "среднее $avg шагов/день", R.color.accent_blue))
+                "${days.size}", "среднее $avg шагов/день", UiKit.ACCENT_INPUT))
             box.addView(UiKit.statCard(this@ProfileActivity, "Лучший день",
-                "${best.walkSteps + best.runSteps} шагов", best.date, R.color.accent_red))
+                "${best.walkSteps + best.runSteps} шагов", best.date, UiKit.ACCENT_INPUT))
         }
     }
 

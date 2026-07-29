@@ -47,6 +47,7 @@ class CalibrationActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_calibration)
+        UiKit.screenTitle(this, UiKit.ACCENT_MEASURE)
         // V14.3: дудл-стиль.
         findViewById<DoodleSceneView>(R.id.doodleHeader).setScene(DoodleSceneView.CALIBRATION)
         DoodleUi.frame(findViewById(R.id.calCard), R.color.accent_violet, R.color.surface, 401L, DoodleBorderDrawable.MAT_MECH)

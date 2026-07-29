@@ -28,6 +28,7 @@ class TimelineActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_timeline)
+        UiKit.screenTitle(this, UiKit.ACCENT_TIME)
         // V14.3: дудл-стиль.
         findViewById<DoodleSceneView>(R.id.doodleHeader).setScene(DoodleSceneView.TIMELINE)
         DoodleUi.frame(findViewById(R.id.timelineSummary), R.color.accent_blue, R.color.surface, 301L, DoodleBorderDrawable.MAT_ICE)

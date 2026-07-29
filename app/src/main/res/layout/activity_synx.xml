@@ -7,14 +7,15 @@
         <com.vasil.stepcore.SynxOrbView android:id="@+id/synxHeroOrb"
             android:layout_width="220dp" android:layout_height="220dp" android:layout_marginTop="24dp" />
         <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:text="SYNX" android:textColor="@color/text_main" android:textSize="42sp"
+            android:id="@+id/screenTitle"
+            android:text="SYNX" android:textColor="@color/text_main" android:textSize="33sp"
             android:textStyle="bold" android:letterSpacing="0.15" android:layout_marginTop="16dp" />
         <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:text="Synaptic Nexus" android:textColor="@color/accent_teal"
+            android:text="Synaptic Nexus" android:textColor="@color/accent_amber"
             android:textSize="16sp" android:layout_marginTop="2dp" />
         <TextView android:id="@+id/synxStatus"
             android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:text="…" android:textColor="@color/accent_teal"
+            android:text="…" android:textColor="@color/accent_amber_bright"
             android:textSize="15sp" android:gravity="center"
             android:lineSpacingExtra="3dp" android:layout_marginTop="18dp" />
         <TextView android:id="@+id/dayProfileButton"

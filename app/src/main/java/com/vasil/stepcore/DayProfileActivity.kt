@@ -67,6 +67,7 @@ class DayProfileActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_day_profile)
+        UiKit.screenTitle(this, UiKit.ACCENT_TIME)
         val d = resources.displayMetrics.density
         findViewById<LinearLayout>(R.id.chartPlate).background = DoodleBorderDrawable(
             ContextCompat.getColor(this, R.color.axis_dim),

@@ -11,12 +11,13 @@
         android:padding="20dp">
 
         <TextView
+            android:id="@+id/screenTitle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="TIMELINE"
-            android:textColor="@color/accent_red"
+            android:textColor="@color/text_main"
             android:textSize="33sp"
-                    android:textStyle="bold"
+            android:textStyle="bold"
             android:letterSpacing="0.05" />
 
         <com.vasil.stepcore.DoodleSceneView

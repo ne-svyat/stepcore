@@ -433,6 +433,7 @@ class SynxActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_synx)
+        UiKit.screenTitle(this, UiKit.ACCENT_LEARN)
         val orb = findViewById<SynxOrbView>(R.id.synxHeroOrb)
         val status = findViewById<TextView>(R.id.synxStatus)
         val learnSwitch = findViewById<SwitchCompat>(R.id.learnSwitch)

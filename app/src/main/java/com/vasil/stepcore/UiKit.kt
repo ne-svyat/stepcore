@@ -10,9 +10,35 @@ import androidx.core.content.ContextCompat
 object UiKit {
     fun dp(c: Context, v: Int) = (v * c.resources.displayMetrics.density).toInt()
 
-    fun sectionTitle(c: Context, text: String): TextView = TextView(c).apply {
+    // --- V272 «Каркас»: один акцент на экран ---
+    // Смысл, а не вкус. До v272 каждый экран красился как придётся
+    // (Калибровка синий+фиолетовый, Уклон янтарный+синий+зелёный,
+    // заголовки секций красные везде) - отсюда ощущение разнобоя.
+    // Правило: экран выбирает акцент ОДИН раз, и его берут шапка,
+    // заголовки секций и карточки этого экрана.
+    val ACCENT_HERO    = R.color.accent_red     // главный экран, герой
+    val ACCENT_MEASURE = R.color.accent_blue    // измерение (калибровки)
+    val ACCENT_DATA    = R.color.accent_teal    // данные (аналитика, история)
+    val ACCENT_TIME    = R.color.accent_violet  // время (timeline, карта дня)
+    val ACCENT_LEARN   = R.color.accent_amber   // обучение (SYNX, разрезка)
+    val ACCENT_INPUT   = R.color.accent_green   // ввод/действие (профиль)
+
+    /**
+     * Единая шапка экрана. Размер и трекинг заданы здесь, а не в разметке,
+     * чтобы новый экран не мог завести свой 31sp или 42sp.
+     */
+    fun screenTitle(a: android.app.Activity, accentRes: Int) {
+        val t = a.findViewById<TextView>(R.id.screenTitle) ?: return
+        t.setTextColor(ContextCompat.getColor(a, accentRes))
+        t.textSize = TITLE_SP
+        t.letterSpacing = 0.05f
+    }
+
+    private const val TITLE_SP = 33f
+
+    fun sectionTitle(c: Context, text: String, accentRes: Int = R.color.accent_red): TextView = TextView(c).apply {
         this.text = text
-        setTextColor(ContextCompat.getColor(c, R.color.accent_red))
+        setTextColor(ContextCompat.getColor(c, accentRes))
         textSize = 19f
         letterSpacing = 0.08f
         val lp = LinearLayout.LayoutParams(

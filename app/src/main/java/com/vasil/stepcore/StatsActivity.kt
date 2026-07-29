@@ -49,6 +49,7 @@ class StatsActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_stats)
+        UiKit.screenTitle(this, UiKit.ACCENT_DATA)
         // V14.3: дудл-стиль (карточки статистики идут из UiKit — они уже в рамках).
         findViewById<DoodleSceneView>(R.id.doodleHeader).setScene(DoodleSceneView.STATS)
         val root = findViewById<LinearLayout>(R.id.statsRoot)
@@ -103,15 +104,15 @@ class StatsActivity : AppCompatActivity() {
                 val best = byMonth.maxByOrNull { it.value }
 
                 root.addView(UiKit.statCard(this@StatsActivity, "Шагов за год",
-                    "$total", "ходьба $w · бег $r", R.color.accent_red))
+                    "$total", "ходьба $w · бег $r", UiKit.ACCENT_DATA))
                 if (km > 0) root.addView(UiKit.statCard(this@StatsActivity, "Пройдено",
-                    "${"%.1f".format(km)} км", "оценка", R.color.accent_blue))
+                    "${"%.1f".format(km)} км", "оценка", UiKit.ACCENT_DATA))
                 root.addView(UiKit.statCard(this@StatsActivity, "В движении",
-                    "${"%.0f".format(hours)} ч", "оценка по шагам", R.color.accent_blue))
+                    "${"%.0f".format(hours)} ч", "оценка по шагам", UiKit.ACCENT_DATA))
                 if (best != null) root.addView(UiKit.statCard(this@StatsActivity, "Самый активный месяц",
-                    monthName(best.key), "${best.value} шагов", R.color.accent_red))
+                    monthName(best.key), "${best.value} шагов", UiKit.ACCENT_DATA))
                 root.addView(UiKit.statCard(this@StatsActivity, "Среднее в день",
-                    "$avg шагов", "${yearDays.size} дней с данными", R.color.accent_blue))
+                    "$avg шагов", "${yearDays.size} дней с данными", UiKit.ACCENT_DATA))
             }
         }
     }
@@ -280,7 +281,7 @@ class StatsActivity : AppCompatActivity() {
 
     private fun sectionTitle(text: String): TextView = TextView(this).apply {
         this.text = text
-        setTextColor(ContextCompat.getColor(this@StatsActivity, R.color.accent_red))
+        setTextColor(ContextCompat.getColor(this@StatsActivity, UiKit.ACCENT_DATA))
         textSize = 15f
         letterSpacing = 0.08f
         val lp = LinearLayout.LayoutParams(

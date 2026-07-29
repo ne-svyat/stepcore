@@ -229,6 +229,7 @@ class HistoryActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_history)
+        UiKit.screenTitle(this, UiKit.ACCENT_DATA)
         // V14.4: своя сцена — архивные тетради, нейтральный серый.
         findViewById<DoodleSceneView>(R.id.doodleHeader).setScene(DoodleSceneView.HISTORY)
 

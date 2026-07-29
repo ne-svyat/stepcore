@@ -14,6 +14,16 @@
             android:padding="16dp"
             android:paddingBottom="80dp">
 
+            <TextView
+                android:id="@+id/screenTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="ИСТОРИЯ"
+                android:textColor="@color/text_main"
+                android:textSize="33sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.05" />
+
             <com.vasil.stepcore.DoodleSceneView
             android:id="@+id/doodleHeader"
             android:layout_width="match_parent"
