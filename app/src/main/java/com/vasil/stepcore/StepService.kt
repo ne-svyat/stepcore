@@ -909,8 +909,7 @@ class StepService : Service(), SensorEventListener {
             StepsState.slopeTarget.value = ""
             beep(3)
             if (!marksHidden) showMarks()
-            android.widget.Toast.makeText(this@StepService, msg,
-                android.widget.Toast.LENGTH_LONG).show()
+            toastMain(msg)
         }
     }
 
@@ -1293,6 +1292,24 @@ class StepService : Service(), SensorEventListener {
         }
     }
 
+    /** Показать сообщение ИЗ ЛЮБОГО потока.
+     *  Toast работает только в главном потоке, а служба считает и пишет
+     *  в базу на Dispatchers.IO. Прямой вызов оттуда роняет службу:
+     *  "Can't toast on a thread that has not called Looper.prepare()" -
+     *  именно это убивало счёт при подтверждении калибровки. */
+    private fun toastMain(text: String) {
+        try {
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                runCatching {
+                    android.widget.Toast.makeText(
+                        this, text, android.widget.Toast.LENGTH_LONG).show()
+                }
+            }
+        } catch (t: Throwable) {
+            // Сообщение не важнее счёта: молча пропускаем.
+        }
+    }
+
     /** Выполнить и не дать упасть. Причина пишется в журнал: логи с
      *  телефона снимать неудобно, а в Истории видно сразу. */
     private fun guard(what: String, body: () -> Unit) {
@@ -1305,10 +1322,7 @@ class StepService : Service(), SensorEventListener {
             val msg = "СБОЙ (" + what + "): " +
                 t.javaClass.simpleName + " " + (t.message ?: "") + where
             runCatching { logEvent(msg) }
-            runCatching {
-                android.widget.Toast.makeText(this, msg,
-                    android.widget.Toast.LENGTH_LONG).show()
-            }
+            toastMain(msg)
         }
     }
 
