@@ -2,3 +2,4 @@
 # установщики релизов лежат в ~/sc_scripts
 /v*.sh
 out_v*.sh
+out_v*.sh
