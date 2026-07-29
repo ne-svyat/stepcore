@@ -231,6 +231,10 @@ class StepService : Service(), SensorEventListener {
     private fun inBgWindow(): Boolean {
         val now = SystemClock.elapsedRealtime()
         if (now < labelWindowUntilElapsed) return true
+        // v268. Пока идёт замер уклона - непрерывно. Duty-цикл экономит
+        // батарею при круглосуточном сборе; в двухминутном замере он
+        // только протухляет признаки и растягивает калибровку.
+        if (slopeActive) return true
         return StepsState.bgAccel.value && now % BG_PERIOD_MS < BG_WINDOW_MS
     }
 
@@ -259,7 +263,11 @@ class StepService : Service(), SensorEventListener {
      * 10 шагов) заведомо меньше цены непонятой прогулки.
      */
     private fun chipSampleEvery(): Int =
-        if (StepsState.detailLog.value) 10 else terrainSampleEvery
+        // v268. Во время замера уклона экономить нечего: это две минуты
+        // по явной команде человека, а не круглосуточный сбор. Частые
+        // строки дают нужные 8 признаков за ~40 шагов вместо 250.
+        if (slopeActive && StepsState.slopeStage.value == "REC") SLOPE_SAMPLE_EVERY
+        else if (StepsState.detailLog.value) 10 else terrainSampleEvery
 
     // почасовой аккумулятор (батчится в БД вместе с persistDb)
     private var pendKey = ""
@@ -827,6 +835,7 @@ class StepService : Service(), SensorEventListener {
         StepsState.slopeResult.value = ""
         slopeIdleSinceMs = System.currentTimeMillis()
         slopeArm()
+        updateMotionSensors()   // включить акселерометр на время замера
         refreshPanel()
         scope.launch {
             while (slopeActive) {
@@ -892,6 +901,7 @@ class StepService : Service(), SensorEventListener {
         val from = slopeStartMs; val to = slopeEndMs
         slopeActive = false
         StepsState.slopeStage.value = "CALC"
+        updateMotionSensors()   // вернуть обычный режим сбора
         refreshPanel()
         scope.launch {
             val a = AppDb.get(this@StepService).dao().samplesBetween(from, to)
@@ -933,6 +943,7 @@ class StepService : Service(), SensorEventListener {
         slopeActive = false
         StepsState.slopeTarget.value = ""
         StepsState.slopeStage.value = "RESULT"
+        updateMotionSensors()   // вернуть обычный режим сбора
         StepsState.slopeResult.value = msg
         beep(1, low = true)
         logEvent("Калибровка уклона: признаки не пишутся, замер остановлен")
@@ -948,6 +959,7 @@ class StepService : Service(), SensorEventListener {
         slopeActive = false
         StepsState.slopeTarget.value = ""
         StepsState.slopeStage.value = "ARM"
+        updateMotionSensors()   // вернуть обычный режим сбора
         beep(1, low = true)
         if (!marksHidden) showMarks()
     }
@@ -2033,10 +2045,16 @@ class StepService : Service(), SensorEventListener {
          *  Плотность у этого пользователя ~1 строка на 30 шагов, то есть
          *  8 строк - примерно 2 минуты ходьбы. Прежний порог в 40 шагов
          *  давал 1-2 строки и калибровка не сходилась. */
+        /** Как часто пишем строку признаков ВО ВРЕМЯ замера уклона.
+         *  Обычный режим - раз в 20 шагов, ради батареи при сборе весь
+         *  день. В замере это давало 8 строк лишь к 250 шагам. Раз в 5
+         *  шагов - те же 8 строк за ~40, как в калибровке длины шага. */
+        const val SLOPE_SAMPLE_EVERY = 5
         const val SLOPE_MIN_ROWS = 8
         /** Если за столько шагов не пришло ни одной строки - что-то не
-         *  так со сбором, ждать дальше бессмысленно. */
-        const val SLOPE_DRY_STEPS = 150
+         *  так со сбором, ждать дальше бессмысленно. При частоте 1/5
+         *  первая строка обязана прийти к пятому шагу. */
+        const val SLOPE_DRY_STEPS = 25
         const val SLOPE_MIN_STEPS = 40
         /** Столько без шагов и подтверждений - калибровка отменяется.
          *  15 минут: дольше человек на склоне не стоит, а забыть -
