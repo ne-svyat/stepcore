@@ -320,6 +320,10 @@ class StepService : Service(), SensorEventListener {
     // запишет чужой отрезок как эталон. Считаем время без активности.
     private var slopeIdleSinceMs = 0L
     private var slopeEndMs = 0L
+    // v267. Медиана считается по СТРОКАМ корпуса, поэтому и порог должен
+    // быть в строках. Плотность у Markus: ~1 строка на 30 шагов, то есть
+    // прежние 40 шагов давали всего 1-2 строки.
+    private var slopeRows = 0
 
     override fun onCreate() {
         super.onCreate()
@@ -835,6 +839,8 @@ class StepService : Service(), SensorEventListener {
     private fun slopeArm() {
         StepsState.slopeStage.value = "ARM"
         StepsState.slopeSteps.value = 0
+        slopeRows = 0
+        StepsState.slopeRows.value = 0
         slopeArmSteps = walkSteps + runSteps
     }
 
@@ -859,7 +865,13 @@ class StepService : Service(), SensorEventListener {
                 val prev = StepsState.slopeSteps.value
                 StepsState.slopeSteps.value = done
                 if (done / 10 != prev / 10) refreshPanel()
-                if (done >= SLOPE_MIN_STEPS) {
+                // Признаки идут? Если шаги есть, а строк нет - смысла
+                // ждать нет, честнее сказать сразу.
+                if (slopeRows == 0 && done >= SLOPE_DRY_STEPS) {
+                    slopeDryStop()
+                    return
+                }
+                if (slopeRows >= SLOPE_MIN_ROWS) {
                     // Окно закрываем здесь: пока человек достаёт телефон и
                     // идёт обратно, лишнее в замер не попадёт.
                     slopeEndMs = System.currentTimeMillis()
@@ -887,7 +899,7 @@ class StepService : Service(), SensorEventListener {
                 .mapNotNull { it.accP90 ?: it.accRms }
                 .sorted()
             val msg: String
-            if (a.size < 3) {
+            if (a.size < 3) {   // подстраховка: окно могло не сойтись
                 msg = "Признаков не хватило (" + a.size + " строк). Обычно это " +
                     "значит, что телефон был в руке или сбор при выключенном " +
                     "экране отключён."
@@ -911,6 +923,21 @@ class StepService : Service(), SensorEventListener {
             if (!marksHidden) showMarks()
             toastMain(msg)
         }
+    }
+
+    /** Шаги идут, а признаков нет: телефон в руке или выключен сбор при
+     *  погашенном экране. Молчать до конца замера нечестно. */
+    private fun slopeDryStop() {
+        val msg = "Признаки не пишутся: телефон в руке или выключен " +
+            "сбор при выключенном экране (тумблер в SYNX). Замер остановлен."
+        slopeActive = false
+        StepsState.slopeTarget.value = ""
+        StepsState.slopeStage.value = "RESULT"
+        StepsState.slopeResult.value = msg
+        beep(1, low = true)
+        logEvent("Калибровка уклона: признаки не пишутся, замер остановлен")
+        toastMain(msg)
+        if (!marksHidden) showMarks()
     }
 
     private fun slopeRu(t: String) = when (t) {
@@ -1460,6 +1487,13 @@ class StepService : Service(), SensorEventListener {
     private fun two(v: Float?): String = if (v == null) "-" else "%.2f".format(v)
 
     private fun writeTerrainSample(mode: String, amp: Float, interval: Float, source: Int) {
+        // v267. Замер уклона ждёт именно строки признаков: считаем их
+        // здесь, в точке записи. Берём только чиповые - это карман, где
+        // уклон и читается.
+        if (slopeActive && StepsState.slopeStage.value == "REC" && source == 1) {
+            slopeRows++
+            StepsState.slopeRows.value = slopeRows
+        }
         // v186: часы для проверки протухания обязаны совпадать с теми, по
         // которым коллектор получает отсчёты. Внутрь идёт
         // event.timestamp / 1e6, то есть время с загрузки, а не
@@ -1809,7 +1843,9 @@ class StepService : Service(), SensorEventListener {
         val title = "Калибровка уклона · " + name
         val body = when (stage) {
             "ARM" -> "«" + name + "» — иди, запись начнётся сама"
-            "REC" -> "«" + name + "» — " + steps + " шагов из " + SLOPE_MIN_STEPS
+            "REC" -> "«" + name + "» — признаков " +
+                StepsState.slopeRows.value + " из " + SLOPE_MIN_ROWS +
+                "  (" + steps + " шагов)"
             "DONE" -> "«" + name + "» записан (" + steps + " шагов) — подтверди"
             "CALC" -> "считаю якоря…"
             else -> "«" + name + "»"
@@ -1993,6 +2029,14 @@ class StepService : Service(), SensorEventListener {
         const val HEADING_STALE_MS = 60_000L
         const val SLOPE_START_STEPS = 4
         /** На 40 шагах медиана уже устойчива, а отрезок найти реально. */
+        /** Сколько СТРОК признаков нужно для устойчивой медианы.
+         *  Плотность у этого пользователя ~1 строка на 30 шагов, то есть
+         *  8 строк - примерно 2 минуты ходьбы. Прежний порог в 40 шагов
+         *  давал 1-2 строки и калибровка не сходилась. */
+        const val SLOPE_MIN_ROWS = 8
+        /** Если за столько шагов не пришло ни одной строки - что-то не
+         *  так со сбором, ждать дальше бессмысленно. */
+        const val SLOPE_DRY_STEPS = 150
         const val SLOPE_MIN_STEPS = 40
         /** Столько без шагов и подтверждений - калибровка отменяется.
          *  15 минут: дольше человек на склоне не стоит, а забыть -

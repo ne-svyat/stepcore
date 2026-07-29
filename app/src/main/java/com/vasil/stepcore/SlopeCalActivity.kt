@@ -49,6 +49,7 @@ class SlopeCalActivity : AppCompatActivity() {
                 launch { StepsState.slopeTarget.collect { render() } }
                 launch { StepsState.slopeStage.collect { render() } }
                 launch { StepsState.slopeSteps.collect { render() } }
+                launch { StepsState.slopeRows.collect { render() } }
                 launch { StepsState.slopeResult.collect { render() } }
             }
         }
@@ -147,9 +148,12 @@ class SlopeCalActivity : AppCompatActivity() {
             811L, dens, DoodleBorderDrawable.MAT_ROCK, riftOf(t))
         card.text = when (stage) {
             "ARM" -> "Записываю «" + ru(t) + "»\n\nПоложи в карман и иди"
-            "REC" -> "Записываю «" + ru(t) + "»\n\n" + steps + " шагов" +
-                (if (steps < StepService.SLOPE_MIN_STEPS)
-                    "\nнужно ещё " + (StepService.SLOPE_MIN_STEPS - steps) else "\nхватит")
+            "REC" -> {
+                val rows = StepsState.slopeRows.value
+                "Записываю «" + ru(t) + "»\n\nпризнаков " + rows +
+                    " из " + StepService.SLOPE_MIN_ROWS +
+                    "\n" + steps + " шагов"
+            }
             "DONE" -> "Отрезок «" + ru(t) + "» записан\n\n" + steps + " шагов"
             else -> "Считаю…"
         }
@@ -157,8 +161,9 @@ class SlopeCalActivity : AppCompatActivity() {
 
         note(when (stage) {
             "ARM" -> "Запись начнётся сама — услышишь один сигнал."
-            "REC" -> "Два сигнала прозвучат сами, когда наберётся " +
-                StepService.SLOPE_MIN_STEPS + " шагов. Телефон доставать не нужно."
+            "REC" -> "Признаки пишутся примерно раз в 30 шагов, поэтому " +
+                "нужно около двух минут ходьбы. Два сигнала прозвучат сами, " +
+                "когда наберётся достаточно. Телефон доставать не нужно."
             "DONE" -> "Замер закрыт в момент сигнала — обратная дорога в него " +
                 "не попадёт."
             else -> ""
