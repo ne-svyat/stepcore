@@ -318,20 +318,39 @@ interface StepDao {
     @Query("SELECT COUNT(*) FROM sessions WHERE label != 'FLAT' AND reliable = 1")
     suspend fun countSessionsInclineReliable(): Int
 
+    // v282. ВОРОТА ВМЕНЯЕМОСТИ КОРПУСА.
+    // Найдено на выгрузке 201 сессии: две подтверждённые уклонные строки
+    // содержали ТОЛЬКО амплитуду - ни каденса, ни наклона телефона, ни
+    // гироскопа, ни IQR. Их амплитуды 10.95 и 11.83 лежат выше всего
+    // измеренного диапазона ходьбы (0.8-7.8) и выше обоих классов уклона
+    // (в гору 6.43-7.48, с горы 7.73-8.83).
+    // Цена: с ними зазор между максимумом «в гору» и минимумом «с горы»
+    // равен МИНУС 3.22 - классы перекрываются. Без них зазор ПЛЮС 0.25 -
+    // классы разделены. Две строки из тридцати четырёх переворачивали
+    // разделимость всей задачи.
+    // Правило не выдумано, а следует из данных: строка, у которой нет
+    // признаков второго слоя, не является наблюдением - её нечем
+    // проверить. Такие строки не удаляются (прошлое неизменно), они
+    // просто не участвуют ни в обучении, ни в вопросах, ни в базе
+    // относительного порога.
+
     // L3.0: самая свежая надёжная уклонная сессия, про которую ещё не спрашивали.
     @Query("SELECT * FROM sessions WHERE reliable = 1 AND confirmState = 0 " +
+        "AND cadenceMed IS NOT NULL AND pitchMed IS NOT NULL " +
         "AND label != 'FLAT' ORDER BY endMs DESC LIMIT 1")
     suspend fun latestUnaskedIncline(): SessionRecord?
 
     // v231: ОКНО свежих неспрошенных уклонных (для активного обучения -
     // среди них выбираем самую спорную по margin агента).
     @Query("SELECT * FROM sessions WHERE reliable = 1 AND confirmState = 0 " +
+        "AND cadenceMed IS NOT NULL AND pitchMed IS NOT NULL " +
         "AND label != 'FLAT' ORDER BY endMs DESC LIMIT :limit")
     suspend fun unaskedInclineWindow(limit: Int): List<SessionRecord>
 
     // v231: сколько уклонных ПОДТВЕРЖДЕНО - база агента. Пока мала, margin
     // ещё шум, приоритет спорным не включаем.
     @Query("SELECT COUNT(*) FROM sessions WHERE label != 'FLAT' " +
+        "AND cadenceMed IS NOT NULL AND pitchMed IS NOT NULL " +
         "AND reliable = 1 AND confirmState = 1")
     suspend fun countInclineConfirmed(): Int
 
@@ -342,6 +361,7 @@ interface StepDao {
     // v244: кандидаты на автометку - надёжные уклонные, ещё не тронутые.
     // Порядок от старых к свежим: сначала разбираем накопившееся.
     @Query("SELECT * FROM sessions WHERE reliable = 1 AND confirmState = 0 " +
+        "AND cadenceMed IS NOT NULL AND pitchMed IS NOT NULL " +
         "AND label != 'FLAT' ORDER BY endMs ASC LIMIT :limit")
     suspend fun autoLabelCandidates(limit: Int): List<SessionRecord>
 
@@ -368,6 +388,7 @@ interface StepDao {
     // L3.0: свежая надёжная ПЛОСКАЯ сессия, про которую ещё не спрашивали.
     // Нужна, чтобы "ровно" стало подтверждённым классом, а не меткой по умолчанию.
     @Query("SELECT * FROM sessions WHERE reliable = 1 AND confirmState = 0 " +
+        "AND cadenceMed IS NOT NULL AND pitchMed IS NOT NULL " +
         "AND label NOT IN ('UP','DOWN') ORDER BY endMs DESC LIMIT 1")
     suspend fun latestUnaskedFlat(): SessionRecord?
 
@@ -385,7 +406,11 @@ interface StepDao {
     suspend fun samplesBetween(from: Long, to: Long): List<TerrainSample>
 
     // L3.1: соседние сессии - база прогулки для относительного порога агента.
-    @Query("SELECT * FROM sessions WHERE startMs BETWEEN :from AND :to")
+    // v282. Ворота стоят и здесь - это САМОЕ важное место: относительный
+    // порог агента строится как медиана соседей по прогулке, и одна строка
+    // с амплитудой 11.8 сдвигает базу для всех соседних сессий сразу.
+    @Query("SELECT * FROM sessions WHERE startMs BETWEEN :from AND :to " +
+        "AND cadenceMed IS NOT NULL AND pitchMed IS NOT NULL")
     suspend fun sessionsAround(from: Long, to: Long): List<SessionRecord>
 
     // v202: ответы человека - исходные данные, их нельзя терять при пересборке.
