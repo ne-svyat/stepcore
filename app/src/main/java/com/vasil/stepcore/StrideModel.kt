@@ -38,6 +38,26 @@ object StrideModel {
     // На данных Markus: 92 см при медиане 73 и MAD 5 -> выброс.
     private const val MAD_K = 3.0f
     private const val MIN_FIT_POINTS = 4   // меньше - регрессии не верим
+    // v279. Наклон, когда персональный НЕ доказан. Раньше подставлялся
+    // популяционный A_DEFAULT = 0.37, и он применялся к человеку, у
+    // которого наклона нет. ИЗМЕРЕНО на 10 калибровках 26.07:
+    // корреляция каденса и длины шага r = -0.00, наклон регрессии
+    // -0.001 м/Гц, R2 = 0.000. При его разбросе каденса 1.77..2.05 Гц
+    // табличный наклон давал размах длины шага 16.7 см (70.8 см на
+    // 1.75 Гц против 87.5 на 2.20) там, где измеренный размах нулевой:
+    // -360 м на 10 000 шагов на медленном часе, +220 м на быстром.
+    // Недоказанный наклон - это выдумка, а не осторожность.
+    private const val A_WHEN_UNKNOWN = 0f
+    // v279. Ворота значимости: наклон принимается, только если объясняет
+    // хотя бы половину разброса точек. На синтетике БЕЗ наклона доля
+    // ложных "наклон персональный" падает с 22.6% до 7.2%, при этом
+    // настоящий наклон ловится в 47% случаев - его просто померят ещё раз.
+    private const val MIN_R2 = 0.5f
+    // v279. Возраст замера, после которого он не участвует в модели:
+    // обувь, вес и техника меняются. Свежесть в реестре спадает за 30
+    // дней; здесь горизонт шире, потому что калибровки редки.
+    private const val MAX_AGE_DAYS = 120L
+    private const val DAY_MS = 86_400_000L
     // v243. Эталонный замер: длина, на которой ошибка GPS и округление
     // шагов уже размазаны. Измерено у Markus: на ~300 м разброс 2 см,
     // на 105-152 м - 12 см. Опору строим только по длинным, если есть.
@@ -147,13 +167,14 @@ object StrideModel {
             // Тогда табличный наклон, но якорь по МЕДИАНЕ истории, а не
             // по последнему замеру - иначе длина шага скачет от выброса
             // к выбросу (у Markus прыгала 68..92 см).
-            a = A_DEFAULT
+            // v279. Наклона нет - значит нет, а не "возьмём популяционный".
+            a = A_WHEN_UNKNOWN
             // v243. Опора - эталонные (длинные) замеры, если они есть.
-            val clean = anchorPoints(hist)
+            // v279. И только свежие.
+            val clean = anchorPoints(freshPoints(hist))
             val medSL = medianStride(clean) ?: measuredSL
-            val medCad = if (clean.isEmpty()) cadence
-                else clean.map { it.cadence }.sorted()[clean.size / 2]
-            b = medSL - A_DEFAULT * medCad
+            val medCad = if (clean.isEmpty()) cadence else medianOf(clean.map { it.cadence })
+            b = medSL - a * medCad
         }
 
         pr.edit()
@@ -230,20 +251,40 @@ object StrideModel {
         return if (ref.size >= 2) ref else cleanPoints(h)
     }
 
+    /**
+     * Честная медиана. v279: при ЧЁТНОМ числе точек берётся среднее двух
+     * средних, а не верхний из них. Прежний v[size/2] систематически
+     * завышал: +1.09 см/шаг на случайных наборах, то есть +109 м на
+     * каждые 10 000 шагов. История хранит до 10 точек, чётные размеры
+     * обычны, поэтому перекос работал почти всегда.
+     */
+    fun medianOf(v: List<Float>): Float {
+        val s = v.sorted()
+        return if (s.size % 2 == 1) s[s.size / 2]
+        else (s[s.size / 2 - 1] + s[s.size / 2]) / 2f
+    }
+
+    /** Точки не старше MAX_AGE_DAYS. Полугодовалый замер - другая обувь и
+     *  другой вес, в модель он идти не должен. Если свежих нет вовсе,
+     *  возвращаем всё: считать по старому лучше, чем не считать. */
+    fun freshPoints(h: List<CalPoint>): List<CalPoint> {
+        val now = System.currentTimeMillis()
+        val fresh = h.filter { it.timeMs > 0L && now - it.timeMs <= MAX_AGE_DAYS * DAY_MS }
+        return if (fresh.isEmpty()) h else fresh
+    }
+
     /** Медиана длины шага по истории - устойчивый якорь. В отличие от
      *  последнего замера не скачет от выброса к выбросу. */
     fun medianStride(h: List<CalPoint>): Float? {
         if (h.isEmpty()) return null
-        val v = h.map { it.strideM }.sorted()
-        return v[v.size / 2]
+        return medianOf(h.map { it.strideM })
     }
 
     /** Медианное абсолютное отклонение - устойчивая мера разброса. */
     fun madStride(h: List<CalPoint>): Float {
         val med = medianStride(h) ?: return 0f
-        val dev = h.map { kotlin.math.abs(it.strideM - med) }.sorted()
-        if (dev.isEmpty()) return 0f
-        return dev[dev.size / 2]
+        if (h.isEmpty()) return 0f
+        return medianOf(h.map { kotlin.math.abs(it.strideM - med) })
     }
 
     /** Точки без выбросов: GPS-прыжки и пропуски шагов не должны
@@ -260,7 +301,11 @@ object StrideModel {
      *  умножает шум; регрессия его усредняет. Возвращает null, если
      *  точек мало, темп однороден или наклон неправдоподобен. */
     fun fitSlope(h: List<CalPoint>): Pair<Float, Float>? {
-        val pts = cleanPoints(h)
+        // v279. Регрессия строится только на ОПОРНЫХ и СВЕЖИХ точках.
+        // Раньше 110-метровый проход весил столько же, сколько 300-метровый,
+        // хотя разброс на коротких 12 см против 2 см на длинных - шум
+        // коротких проходов прямо тянул наклон.
+        val pts = anchorPoints(freshPoints(h))
         if (pts.size < MIN_FIT_POINTS) return null
         val cads = pts.map { it.cadence }
         if ((cads.max() - cads.min()) < MIN_CADENCE_GAP) return null
@@ -275,7 +320,22 @@ object StrideModel {
         if (den <= 0f) return null
         val a = num / den
         if (a < SANE_A_MIN || a > SANE_A_MAX) return null
-        return a to (my - a * mx)
+        val b = my - a * mx
+        // v279. Ворота значимости. Наклон внутри разумного диапазона ещё
+        // не значит, что он существует: на чистом шуме такой находился в
+        // каждом пятом случае и объявлялся "персональным". Принимаем,
+        // только если он объясняет разброс точек.
+        var ssTot = 0f
+        var ssRes = 0f
+        for (x in pts) {
+            val dy = x.strideM - my
+            val e = x.strideM - (a * x.cadence + b)
+            ssTot += dy * dy
+            ssRes += e * e
+        }
+        if (ssTot <= 0f) return null
+        if (1f - ssRes / ssTot < MIN_R2) return null
+        return a to b
     }
 
     /** Пара с максимальным разбросом каденса - на ней наклон точнее всего.
@@ -369,7 +429,7 @@ object StrideModel {
                 sb.append("то чаще шаги = короче шаг — связь ОБРАТНАЯ, и наклон\n")
                 sb.append("выходит отрицательным по арифметике. Модель описывает\n")
                 sb.append("удлинение шага при РАЗГОНЕ, а не смену манеры шага.\n\n")
-                val med = clean.map { it.metres }.sorted()[clean.size / 2]
+                val med = medianOf(clean.map { it.metres })
                 val slow = (med / 1.15f).toInt()
                 val fast = (med / 2.05f).toInt()
                 sb.append("ЗАДАНИЕ (если захочешь наклон):\n")
