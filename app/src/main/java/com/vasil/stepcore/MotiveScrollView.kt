@@ -13,11 +13,26 @@ import kotlin.math.sin
 /**
  * Пергаментный свиток с «мыслью» приложения.
  *
- * Смена строки - это маленький фильм: старый свиток гибнет (через раз в
- * огне или во льду), из печати и пара рождается новый, раскрывается, и
- * лишь затем построчно проступает текст. Номер длится около четырёх с
- * половиной секунд: быстрая смена читалась дёшево, медленная даёт время
- * разглядеть и огонь, и иней.
+ * Смена строки - маленький фильм: старый свиток гибнет (через раз в огне
+ * или во льду), рассыпается помехой, и из этой помехи разворачивается
+ * новый, после чего построчно проступает текст.
+ *
+ * Хореография (v276, переделана):
+ *   0 .. DEATH    гибель: огонь или лёд
+ *   .. GLITCH     полотно теряет сигнал: срезы, расслоение по цвету
+ *   .. BIRTH      валики расходятся, полотно разворачивается
+ *   .. TOTAL      проступает текст
+ *
+ * Что было сломано до v276:
+ *  - кривая раскрытия имела ПРОВАЛ: множитель (1 + 0.06·sin(k·2π)) на
+ *    k≈0.75 давал −1, и свиток откатывался назад перед финалом. Заменено
+ *    на честный easeOutBack - один перелёт в самом конце и возврат.
+ *  - первый показ стартовал с t = BIRTH, то есть раскрытие пропускалось
+ *    целиком и свиток просто возникал. Теперь первый показ начинается с
+ *    фазы рождения и разворачивается как все прочие.
+ *  - блик по полотну шёл, пока полотно ещё закрыто. Теперь строго после
+ *    полного раскрытия.
+ *  - красная печать с крестом убрана.
  *
  * Кадры тратятся только во время номера. В покое свиток статичен, идёт
  * лишь редкий перелив чернил.
@@ -71,8 +86,10 @@ class MotiveScrollView @JvmOverloads constructor(
         if (line == current && pending == null && current.isNotEmpty()) return
         pending = line
         if (current.isEmpty()) {
+            // Первый показ: гибели нет, но раскрытие обязано быть - иначе
+            // свиток «возникает», а не разворачивается.
             current = line; pending = null
-            seqStart = System.currentTimeMillis() - PHASE_BIRTH.toLong()
+            seqStart = System.currentTimeMillis() - PHASE_GLITCH.toLong()
         } else {
             seqStart = System.currentTimeMillis()
             byFire = !byFire
@@ -89,6 +106,18 @@ class MotiveScrollView @JvmOverloads constructor(
     }
 
     private fun smooth(x: Float) = x * x * (3f - 2f * x)
+
+    /**
+     * Упругий выход: один перелёт в САМОМ конце и возврат к единице.
+     * Именно этого не хватало прежней кривой - она проваливалась в
+     * середине и доходила до края уже без всякой упругости.
+     */
+    private fun easeOutBack(x: Float): Float {
+        val c1 = 1.70158f
+        val c3 = c1 + 1f
+        val k = (x - 1f)
+        return 1f + c3 * k * k * k + c1 * k * k
+    }
 
     override fun onDraw(canvas: Canvas) {
         val w = width.toFloat(); val h = height.toFloat()
@@ -107,27 +136,33 @@ class MotiveScrollView @JvmOverloads constructor(
         var open = 1f
         var alive = 1f
         var textK = 0f
+        var glitchK = 0f
         when {
             t < PHASE_DEATH -> alive = 1f - smooth((t / PHASE_DEATH).coerceIn(0f, 1f))
-            t < PHASE_SEAL -> { alive = 0f; open = 0f }
+            t < PHASE_GLITCH -> {
+                alive = 0f; open = 0f
+                glitchK = ((t - PHASE_DEATH) / (PHASE_GLITCH - PHASE_DEATH)).coerceIn(0f, 1f)
+            }
             t < PHASE_BIRTH -> {
-                alive = 0f
-                val k = ((t - PHASE_SEAL) / (PHASE_BIRTH - PHASE_SEAL)).coerceIn(0f, 1f)
-                // упругий довод: валики чуть проскакивают и возвращаются
-                open = smooth(k) * (1f + 0.06f * sin((k * Math.PI * 2.0).toFloat()))
+                alive = 1f
+                val k = ((t - PHASE_GLITCH) / (PHASE_BIRTH - PHASE_GLITCH)).coerceIn(0f, 1f)
+                open = easeOutBack(k)
+                // Остаточная помеха гаснет по мере раскрытия.
+                glitchK = (1f - k) * 0.55f
                 if (pending != null) { current = pending!!; pending = null }
             }
             t < PHASE_TOTAL -> textK = (t - PHASE_BIRTH) / (PHASE_TOTAL - PHASE_BIRTH)
             else -> textK = 1f
         }
-        val leftX = midX - (midX - fullL) * open.coerceIn(0f, 1.1f)
-        val rightX = midX + (fullR - midX) * open.coerceIn(0f, 1.1f)
+        val openC = open.coerceIn(0f, 1.08f)
+        val leftX = midX - (midX - fullL) * openC
+        val rightX = midX + (fullR - midX) * openC
 
         // ================= ПОЛОТНО =================
-        if (open > 0.01f && alive > 0.001f) {
-            val burnX = if (byFire) leftX + (rightX - leftX) * alive else rightX
+        if (openC > 0.01f && alive > 0.001f) {
+            val burnX = if (byFire && alive < 1f) leftX + (rightX - leftX) * alive else rightX
             body.reset()
-            if (byFire) {
+            if (byFire && alive < 1f) {
                 // Рваная кромка горения, а не прямой срез.
                 body.moveTo(leftX, top)
                 body.lineTo(burnX + h * 0.03f * (rnd(1) - 0.5f), top)
@@ -140,10 +175,10 @@ class MotiveScrollView @JvmOverloads constructor(
                     i++
                 }
                 body.lineTo(leftX, bottom)
+                body.close()
             } else {
                 body.addRoundRect(leftX, top, rightX, bottom, 3f * d, 3f * d, Path.Direction.CW)
             }
-            body.close()
 
             canvas.save()
             canvas.clipPath(body)
@@ -161,7 +196,7 @@ class MotiveScrollView @JvmOverloads constructor(
                 fy += (bottom - top) * 0.19f
             }
 
-            if (!byFire) {
+            if (!byFire && alive < 1f) {
                 val fr = 1f - alive
                 // Иней ползёт от обоих краёв кристаллами.
                 fx.color = 0xFFBFE3FF.toInt(); fx.alpha = (120f * fr).toInt().coerceIn(0, 255)
@@ -200,6 +235,10 @@ class MotiveScrollView @JvmOverloads constructor(
                     }
                 }
             }
+
+            // Помеха живёт на самом полотне - под клипом, чтобы не вылезала
+            // за края свитка.
+            if (glitchK > 0.01f) drawGlitch(canvas, leftX, top, rightX, bottom, h, glitchK, now)
             canvas.restore()
             canvas.drawPath(body, edge)
 
@@ -240,8 +279,8 @@ class MotiveScrollView @JvmOverloads constructor(
         }
 
         // ================= ЛЁД: ОСКОЛКИ =================
-        if (!byFire && t in (PHASE_DEATH * 0.82f)..PHASE_SEAL) {
-            val k = ((t - PHASE_DEATH * 0.82f) / (PHASE_SEAL - PHASE_DEATH * 0.82f)).coerceIn(0f, 1f)
+        if (!byFire && t in (PHASE_DEATH * 0.82f)..PHASE_GLITCH) {
+            val k = ((t - PHASE_DEATH * 0.82f) / (PHASE_GLITCH - PHASE_DEATH * 0.82f)).coerceIn(0f, 1f)
             for (i in 0 until 12) {
                 val a = Math.PI * (0.08 + 0.84 * i / 11.0)
                 val sp = 0.6f + 0.5f * rnd(i + 80)
@@ -263,61 +302,24 @@ class MotiveScrollView @JvmOverloads constructor(
                 canvas.drawPath(tmp, fx)
                 canvas.restore()
             }
-            for (i in 0 until 6) {
-                fx.color = 0xFFD8E8F5.toInt()
-                fx.alpha = (90f * (1f - k)).toInt().coerceIn(0, 255)
-                canvas.drawCircle(w * (0.15f + 0.14f * i), bottom - k * h * 0.5f,
-                    h * (0.08f + 0.20f * k), fx)
-            }
         }
 
-        // ================= ПЕЧАТЬ И ПАР =================
-        if (t in (PHASE_DEATH + 120f)..(PHASE_BIRTH - 80f)) {
-            val k = ((t - (PHASE_DEATH + 120f)) / ((PHASE_BIRTH - 80f) - (PHASE_DEATH + 120f)))
-                .coerceIn(0f, 1f)
-            val pop = if (k < 0.30f) smooth(k / 0.30f) else 1f
-            val fade = if (k > 0.62f) (1f - (k - 0.62f) / 0.38f) else 1f
+        // ================= ПОМЕХА В ПУСТОТЕ =================
+        // Печати с крестом больше нет. Между гибелью и рождением остаётся
+        // сам сигнал: узкая полоса помехи там, где сейчас свёрнут свиток.
+        if (openC <= 0.01f && glitchK > 0.01f) {
             val cy = (top + bottom) / 2f
-            val r = h * 0.26f * pop * (if (k > 0.62f) (1f - (k - 0.62f) * 0.6f) else 1f)
-            fx.color = 0xFFE23636.toInt(); fx.alpha = (80f * fade).toInt().coerceIn(0, 255)
-            canvas.drawCircle(midX, cy, r * 2.3f, fx)
-            fxLine.color = 0xFFE23636.toInt(); fxLine.alpha = (240f * fade).toInt().coerceIn(0, 255)
-            fxLine.strokeWidth = 2.4f * d
-            canvas.save(); canvas.rotate(t * 0.06f, midX, cy)
-            canvas.drawCircle(midX, cy, r, fxLine)
-            fxLine.strokeWidth = 1.4f * d
-            for (i in 0 until 8) {
-                val a = Math.toRadians((i * 45f).toDouble())
-                canvas.drawLine(midX + r * 0.72f * cos(a).toFloat(), cy + r * 0.72f * sin(a).toFloat(),
-                    midX + r * 1.02f * cos(a).toFloat(), cy + r * 1.02f * sin(a).toFloat(), fxLine)
-            }
-            canvas.restore()
-            canvas.save(); canvas.rotate(-t * 0.09f, midX, cy)
-            fxLine.strokeWidth = 1.8f * d
-            canvas.drawCircle(midX, cy, r * 0.62f, fxLine)
-            canvas.restore()
-            fxLine.color = 0xFFFFE9C9.toInt(); fxLine.alpha = (250f * fade).toInt().coerceIn(0, 255)
-            fxLine.strokeWidth = 2f * d
-            canvas.drawLine(midX - r * 0.42f, cy - r * 0.16f, midX + r * 0.42f, cy - r * 0.16f, fxLine)
-            canvas.drawLine(midX, cy - r * 0.52f, midX, cy + r * 0.42f, fxLine)
-            for (i in 0 until 10) {
-                val a = Math.toRadians((i * 36f + k * 40f).toDouble())
-                val rr = r * (1.1f + 3.0f * k)
-                fx.color = 0xFFDCE6F0.toInt()
-                fx.alpha = (130f * (1f - k)).toInt().coerceIn(0, 255)
-                canvas.drawCircle(midX + rr * cos(a).toFloat(), cy + rr * 0.55f * sin(a).toFloat(),
-                    h * 0.11f * (1f - 0.35f * k), fx)
-            }
-            for (i in 0 until 4) {
-                val g = (k * 1.4f + i * 0.25f) % 1f
-                fx.alpha = (90f * (1f - g) * fade).toInt().coerceIn(0, 255)
-                canvas.drawCircle(midX + (rnd(i + 100) - 0.5f) * h * 0.5f, cy - g * h * 1.1f,
-                    h * (0.09f + 0.16f * g), fx)
-            }
+            val half = h * (0.03f + 0.20f * glitchK)
+            drawGlitch(canvas, midX - h * 0.34f, cy - half, midX + h * 0.34f, cy + half,
+                h, glitchK, now)
+            fxLine.color = TINT_CYAN
+            fxLine.alpha = (200f * glitchK).toInt().coerceIn(0, 255)
+            fxLine.strokeWidth = 1.6f * d
+            canvas.drawLine(midX - h * 0.34f, cy, midX + h * 0.34f, cy, fxLine)
         }
 
         // ================= ВАЛИКИ =================
-        if (open > 0.01f) {
+        if (openC > 0.01f) {
             for (cx in floatArrayOf(leftX - rollW * 0.02f, rightX + rollW * 0.02f)) {
                 canvas.drawRoundRect(cx - rollW * 0.42f, top - h * 0.06f,
                     cx + rollW * 0.42f, bottom + h * 0.06f, rollW * 0.4f, rollW * 0.4f, roller)
@@ -333,10 +335,11 @@ class MotiveScrollView @JvmOverloads constructor(
                         cx + rollW * 0.42f, ry + 0.9f * d, rollerDark)
                 }
             }
-            // Блик пробегает по свежему полотну сразу после раскрытия.
-            if (t in PHASE_SEAL..(PHASE_BIRTH + 260f)) {
-                val k = ((t - PHASE_SEAL) / ((PHASE_BIRTH + 260f) - PHASE_SEAL)).coerceIn(0f, 1f)
-                fx.color = 0xFFFFFFFF.toInt(); fx.alpha = (70f * (1f - k)).toInt().coerceIn(0, 255)
+            // Блик пробегает по полотну ПОСЛЕ полного раскрытия: раньше он
+            // шёл по ещё закрытому свитку и читался как мусор.
+            if (t in PHASE_BIRTH..(PHASE_BIRTH + 420f)) {
+                val k = ((t - PHASE_BIRTH) / 420f).coerceIn(0f, 1f)
+                fx.color = 0xFFFFFFFF.toInt(); fx.alpha = (85f * (1f - k)).toInt().coerceIn(0, 255)
                 val gx = leftX + (rightX - leftX) * k
                 canvas.drawRect(gx - h * 0.10f, top, gx + h * 0.10f, bottom, fx)
             }
@@ -371,12 +374,67 @@ class MotiveScrollView @JvmOverloads constructor(
                 val share = (lines.size - i).toFloat() / lines.size
                 val a = ((textK - (1f - share) * 0.5f) / 0.5f).coerceIn(0f, 1f)
                 text.alpha = (238f * a).toInt().coerceIn(0, 255)
+                // Пока чернила проступают, буквы изредка «дёргает» помехой:
+                // короткий цветной дубль со сдвигом. Только на своей строке
+                // и только в первой половине проявления.
+                if (a < 0.92f && ((now / 90L + i) % 11L) == 0L) {
+                    val save = text.color
+                    text.color = if ((now / 90L) % 2L == 0L) TINT_MAGENTA else TINT_CYAN
+                    text.alpha = (110f * a).toInt().coerceIn(0, 255)
+                    canvas.drawText(ln, midX + 2.2f * d, y2, text)
+                    text.color = save
+                    text.alpha = (238f * a).toInt().coerceIn(0, 255)
+                }
                 canvas.drawText(ln, midX, y2, text)
                 y2 += lineH
             }
         }
 
         if (running) postInvalidateOnAnimation() else postInvalidateDelayed(220)
+    }
+
+    /**
+     * Помеха: горизонтальные срезы уезжают в стороны, поверх идёт
+     * расслоение по цвету и редкие строки развёртки. Оттенки взяты из
+     * палитры приложения, чтобы помеха принадлежала этому экрану, а не
+     * выглядела чужим эффектом.
+     */
+    private fun drawGlitch(
+        c: Canvas, l: Float, t0: Float, r: Float, b: Float,
+        h: Float, k: Float, now: Long
+    ) {
+        val kk = k.coerceIn(0f, 1f)
+        val frame = (now / 70L).toInt()
+        val slices = 7
+        for (i in 0 until slices) {
+            val n = rnd(frame * 13 + i * 5 + 200)
+            if (n < 0.35f) continue
+            val y = t0 + (b - t0) * rnd(frame * 7 + i + 210)
+            val hh = (b - t0) * (0.02f + 0.10f * n) * kk
+            val dx = (rnd(frame * 3 + i + 220) - 0.5f) * (r - l) * 0.55f * kk
+            fx.color = when (i % 3) {
+                0 -> TINT_MAGENTA
+                1 -> TINT_CYAN
+                else -> TINT_AMBER
+            }
+            fx.alpha = (170f * kk * (0.45f + 0.55f * n)).toInt().coerceIn(0, 255)
+            c.drawRect(l + dx, y, r + dx, y + hh, fx)
+        }
+        // Расслоение по цвету: два полупрозрачных дубля полотна со сдвигом.
+        val off = 3.2f * d * kk
+        fx.color = TINT_MAGENTA; fx.alpha = (55f * kk).toInt().coerceIn(0, 255)
+        c.drawRect(l - off, t0, r - off, b, fx)
+        fx.color = TINT_CYAN; fx.alpha = (55f * kk).toInt().coerceIn(0, 255)
+        c.drawRect(l + off, t0, r + off, b, fx)
+        // Строки развёртки.
+        fxLine.color = 0xFF000000.toInt()
+        fxLine.alpha = (40f * kk).toInt().coerceIn(0, 255)
+        fxLine.strokeWidth = 1f * d
+        var sy = t0 + (frame % 4) * 1.5f * d
+        while (sy < b) {
+            c.drawLine(l, sy, r, sy, fxLine)
+            sy += 4f * d
+        }
     }
 
     private fun wrapLines(src: String, maxW: Float, limit: Int): List<String> {
@@ -399,10 +457,14 @@ class MotiveScrollView @JvmOverloads constructor(
 
     private companion object {
         const val MAX_LINES = 5
-        // Хореография номера, мс. Медленнее прежнего вчетверо.
-        const val PHASE_DEATH = 1500f
-        const val PHASE_SEAL = 2400f
-        const val PHASE_BIRTH = 3500f
-        const val PHASE_TOTAL = 4400f
+        // Оттенки помехи - из палитры приложения.
+        val TINT_MAGENTA = 0xFFFF4BC8.toInt()
+        val TINT_CYAN = 0xFF3AE8E0.toInt()
+        val TINT_AMBER = 0xFFEF9F27.toInt()
+        // Хореография номера, мс.
+        const val PHASE_DEATH = 1400f
+        const val PHASE_GLITCH = 2150f
+        const val PHASE_BIRTH = 3150f
+        const val PHASE_TOTAL = 4300f
     }
 }
