@@ -138,6 +138,7 @@ class CrystalRingView @JvmOverloads constructor(
     private val glitchPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         strokeJoin = Paint.Join.ROUND
     }
+    private val boltPath = Path()
     private val eyeAlmond = Path()
     private val eyePupil = Path()
     private val bloodTrail = Path()
@@ -625,6 +626,72 @@ class CrystalRingView @JvmOverloads constructor(
         c.restore()
     }
 
+    /**
+     * Разряд бьёт в гору. Включается с ПЕРВОЙ взятой цели - гора ожила.
+     * Раз в 3.2 с и виден 260 мс: это вспышка, а не постоянное горение,
+     * поэтому не мозолит глаз и не жрёт кадры.
+     * Бьёт в узел тропы - в то место, куда человек уже дошёл.
+     */
+    private fun drawStrike(c: Canvas, tms: Long, maxed: Boolean) {
+        val period = 3200L
+        val phase = (tms % period).toFloat()
+        if (phase > 260f) return
+        val slot = tms / period
+        val r = (slot * 6364136223846793005L) ushr 24
+        val k = phase / 260f
+        // Резкий фронт и спад - как у настоящей вспышки, а не ровное свечение.
+        val br = if (k < 0.12f) k / 0.12f else (1f - (k - 0.12f) / 0.88f).coerceAtLeast(0f)
+
+        val node = (r % 5L).toInt() + 1
+        val tx = trailX[node]; val ty = trailY[node]
+        val sx = tx + (((r shr 8) % 100L).toFloat() / 100f - 0.5f) * width * 0.5f
+
+        boltPath.reset()
+        boltPath.moveTo(sx, 0f)
+        val segs = 6
+        for (i in 1..segs) {
+            val f = i / segs.toFloat()
+            val jx = (((r shr (i * 4)) % 100L).toFloat() / 100f - 0.5f) * width * 0.14f * (1f - f)
+            boltPath.lineTo(sx + (tx - sx) * f + jx, ty * f)
+        }
+
+        val col = if (maxed) magenta else kantColor
+        lightPaint.color = col
+        lightPaint.strokeWidth = 9f * d
+        lightPaint.alpha = (70f * br).toInt().coerceIn(0, 255)
+        c.drawPath(boltPath, lightPaint)
+        lightPaint.strokeWidth = 3.5f * d
+        lightPaint.alpha = (150f * br).toInt().coerceIn(0, 255)
+        c.drawPath(boltPath, lightPaint)
+        lightPaint.color = 0xFFFFFFFF.toInt()
+        lightPaint.strokeWidth = 1.6f * d
+        lightPaint.alpha = (235f * br).toInt().coerceIn(0, 255)
+        c.drawPath(boltPath, lightPaint)
+
+        // Удар: короткие лучи из точки попадания. Кружка нет намеренно.
+        crownPaint.color = if (maxed) hotCore else 0xFFFFFFFF.toInt()
+        crownPaint.strokeWidth = 2f * d
+        crownPaint.alpha = (210f * br).toInt().coerceIn(0, 255)
+        for (i in 0 until 6) {
+            val a = Math.toRadians(i * 60.0 + (r % 30L).toDouble())
+            val r0 = 3f * d
+            val r1 = (10f + 16f * br) * d
+            c.drawLine(
+                tx + r0 * Math.cos(a).toFloat(), ty + r0 * Math.sin(a).toFloat(),
+                tx + r1 * Math.cos(a).toFloat(), ty + r1 * Math.sin(a).toFloat(),
+                crownPaint)
+        }
+
+        // Гора на мгновение подсвечивается изнутри.
+        c.save()
+        c.clipPath(mountainPath)
+        fillPaint.color = col
+        fillPaint.alpha = (55f * br).toInt().coerceIn(0, 255)
+        c.drawRect(0f, 0f, width.toFloat(), height.toFloat(), fillPaint)
+        fillPaint.alpha = 255
+        c.restore()
+    }
+
     override fun onDraw(canvas: Canvas) {
         if (width == 0 || height == 0) return
         val bodyH = bodyBottom - bodyTop
@@ -788,6 +855,8 @@ class CrystalRingView @JvmOverloads constructor(
         // Жирный двойной контур: тёмная основа + яркий кант.
         canvas.drawPath(mountainPath, contourPaint)
         canvas.drawPath(mountainPath, kantPaint)
+        // С первой взятой цели в гору бьют разряды.
+        if (prog >= 1f) drawStrike(canvas, tms, maxed)
         if (maxed) drawGlitch(canvas, tms)
 
         // Искры вспыхивают только у ВЗЯТЫХ целей - награда, а не украшение.
