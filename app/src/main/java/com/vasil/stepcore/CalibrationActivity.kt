@@ -50,7 +50,13 @@ class CalibrationActivity : AppCompatActivity() {
         UiKit.screenTitle(this, UiKit.ACCENT_MEASURE)
         // V14.3: дудл-стиль.
         findViewById<DoodleSceneView>(R.id.doodleHeader).setScene(DoodleSceneView.CALIBRATION)
-        DoodleUi.frame(findViewById(R.id.calCard), R.color.accent_violet, R.color.surface, 401L, DoodleBorderDrawable.MAT_MECH)
+        DoodleUi.frame(findViewById(R.id.calCard), UiKit.ACCENT_MEASURE, R.color.surface, 401L, DoodleBorderDrawable.MAT_MECH)
+        // Переходы одного ранга получают одинаковые плиты в акценте экрана:
+        // разные роли, но одинаковый вес - выбирать их глазами одинаково легко.
+        DoodleUi.frame(findViewById(R.id.slopeCalButton), UiKit.ACCENT_MEASURE,
+            R.color.surface, 402L, DoodleBorderDrawable.MAT_MECH)
+        DoodleUi.frame(findViewById(R.id.calReportButton), UiKit.ACCENT_MEASURE,
+            R.color.surface, 403L, DoodleBorderDrawable.MAT_MECH)
         accuracyValue = findViewById(R.id.accuracyValue)
         accuracyHint = findViewById(R.id.accuracyHint)
         calStatus = findViewById(R.id.calStatus)
@@ -144,7 +150,7 @@ class CalibrationActivity : AppCompatActivity() {
             text = CalibrationRegistry.valueText(this@CalibrationActivity, k)
             setTextColor(ContextCompat.getColor(this@CalibrationActivity,
                 if (done) R.color.text_main else R.color.text_dim))
-            textSize = 14f
+            textSize = 15f
             setPadding(0, dp(3), 0, 0)
         })
         col.addView(TextView(this).apply {
@@ -160,13 +166,13 @@ class CalibrationActivity : AppCompatActivity() {
         right.addView(TextView(this).apply {
             text = "$fresh%"
             setTextColor(ContextCompat.getColor(this@CalibrationActivity,
-                if (done) R.color.accent_blue else R.color.text_dim))
+                if (done) UiKit.ACCENT_MEASURE else R.color.text_dim))
             textSize = 20f
         })
         right.addView(TextView(this).apply {
             text = if (done) age else "не пройдена"
             setTextColor(ContextCompat.getColor(this@CalibrationActivity, R.color.text_dim))
-            textSize = 11f
+            textSize = 12f
         })
         root.addView(col); root.addView(right)
         return root
