@@ -471,6 +471,14 @@ class SynxActivity : AppCompatActivity() {
         findViewById<TextView>(R.id.synxHeadingButton).setOnClickListener {
             lifecycleScope.launch { headingReport() }
         }
+        // Плиты одного акцента экрана. Материал несёт смысл: на камень
+        // жмут (действия), механику читают (показание корпуса).
+        DoodleUi.frame(findViewById<TextView>(R.id.synxHeadingButton),
+            UiKit.ACCENT_LEARN, R.color.surface, 522L, DoodleBorderDrawable.MAT_ROCK)
+        DoodleUi.frame(findViewById<TextView>(R.id.synxExportButton),
+            UiKit.ACCENT_LEARN, R.color.surface, 523L, DoodleBorderDrawable.MAT_ROCK)
+        DoodleUi.frame(findViewById<TextView>(R.id.synxCorpusText),
+            UiKit.ACCENT_LEARN, R.color.surface, 524L, DoodleBorderDrawable.MAT_MECH)
                 learnSwitch.isChecked = prefs.getBoolean(KEY_LEARN, false)
         learnSwitch.setOnCheckedChangeListener { _, checked ->
             // Включение - явное согласие: снимает и паузу "не беспокоить".

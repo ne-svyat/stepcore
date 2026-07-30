@@ -1,72 +1,203 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
     android:background="@color/bg">
-    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:orientation="vertical" android:gravity="center_horizontal" android:padding="20dp">
-        <com.vasil.stepcore.SynxOrbView android:id="@+id/synxHeroOrb"
-            android:layout_width="220dp" android:layout_height="220dp" android:layout_marginTop="24dp" />
-        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="center_horizontal"
+        android:padding="20dp">
+
+        <!-- ===== Герой: сфера читает реальное состояние обучения ===== -->
+        <com.vasil.stepcore.SynxOrbView
+            android:id="@+id/synxHeroOrb"
+            android:layout_width="220dp"
+            android:layout_height="220dp"
+            android:layout_marginTop="24dp" />
+
+        <TextView
             android:id="@+id/screenTitle"
-            android:text="SYNX" android:textColor="@color/text_main" android:textSize="33sp"
-            android:textStyle="bold" android:letterSpacing="0.15" android:layout_marginTop="16dp" />
-        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:text="Synaptic Nexus" android:textColor="@color/accent_amber"
-            android:textSize="16sp" android:layout_marginTop="2dp" />
-        <TextView android:id="@+id/synxStatus"
-            android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:text="…" android:textColor="@color/accent_amber_bright"
-            android:textSize="15sp" android:gravity="center"
-            android:lineSpacingExtra="3dp" android:layout_marginTop="18dp" />
-        <TextView android:id="@+id/dayProfileButton"
-            android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:gravity="center" android:text="▲▼  Профиль дня"
-            android:textColor="@color/accent_amber_bright" android:textSize="15sp"
-            android:paddingTop="12dp" android:paddingBottom="12dp"
-            android:layout_marginTop="22dp" />
-        <androidx.appcompat.widget.SwitchCompat android:id="@+id/learnSwitch"
-            android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:text="Обучение: спрашивать при открытии"
-            android:textColor="@color/text_main" android:textSize="15sp"
-            android:layout_marginTop="24dp" />
-        <TextView android:id="@+id/learnCost"
-            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="SYNX"
+            android:textColor="@color/text_main"
+            android:textSize="33sp"
+            android:textStyle="bold"
+            android:letterSpacing="0.15"
+            android:layout_marginTop="16dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Synaptic Nexus"
+            android:textColor="@color/accent_amber"
+            android:textSize="15sp"
+            android:layout_marginTop="2dp" />
+
+        <TextView
+            android:id="@+id/synxStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="…"
+            android:textColor="@color/accent_amber_bright"
+            android:textSize="15sp"
+            android:gravity="center"
+            android:lineSpacingExtra="3dp"
+            android:layout_marginTop="18dp" />
+
+        <!-- ===== СОСТОЯНИЕ ДНЯ ===== -->
+        <TextView
+            android:id="@+id/synxSecState"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:text="СОСТОЯНИЕ ДНЯ"
+            android:textColor="@color/accent_amber"
+            android:textSize="19sp"
+            android:letterSpacing="0.08"
+            android:layout_marginTop="26dp" />
+
+        <TextView
+            android:id="@+id/dayProfileButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:text="▲▼  Профиль дня"
+            android:textColor="@color/text_main"
+            android:textSize="15sp"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="14dp"
+            android:paddingBottom="14dp"
+            android:layout_marginTop="10dp" />
+
+        <!-- ===== ОБУЧЕНИЕ ===== -->
+        <TextView
+            android:id="@+id/synxSecLearn"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:text="ОБУЧЕНИЕ"
+            android:textColor="@color/accent_amber"
+            android:textSize="19sp"
+            android:letterSpacing="0.08"
+            android:layout_marginTop="26dp" />
+
+        <androidx.appcompat.widget.SwitchCompat
+            android:id="@+id/learnSwitch"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Спрашивать при открытии"
+            android:textColor="@color/text_main"
+            android:textSize="15sp"
+            android:layout_marginTop="10dp" />
+
+        <TextView
+            android:id="@+id/learnCost"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
             android:text="Когда включено, StepCore иногда спросит про одну прогулку. Отвечай честно: неверная метка отравляет корпус, и потом нужно много правильных, чтобы выправить. Промолчать лучше, чем ответить наугад."
-            android:textColor="@color/text_dim" android:textSize="13sp"
-            android:lineSpacingExtra="3dp" android:layout_marginTop="6dp" />
-<TextView android:id="@+id/synxCorpusText"
-            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:textColor="@color/text_dim"
+            android:textSize="15sp"
+            android:lineSpacingExtra="3dp"
+            android:layout_marginTop="6dp" />
+
+        <!-- ===== ДАННЫЕ ===== -->
+        <TextView
+            android:id="@+id/synxSecData"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:text="ДАННЫЕ"
+            android:textColor="@color/accent_amber"
+            android:textSize="19sp"
+            android:letterSpacing="0.08"
+            android:layout_marginTop="26dp" />
+
+        <TextView
+            android:id="@+id/synxCorpusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
             android:text="Корпус: —"
-            android:textColor="@color/text_main" android:fontFamily="monospace"
-            android:textSize="14sp" android:layout_marginTop="24dp" />
-        
-        <TextView android:id="@+id/synxHeadingButton"
-            android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:gravity="center" android:text="🧭  Диагностика курса"
-            android:textColor="@color/accent_teal" android:textSize="15sp"
-            android:paddingTop="12dp" android:paddingBottom="12dp"
+            android:textColor="@color/text_main"
+            android:fontFamily="monospace"
+            android:textSize="15sp"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="14dp"
+            android:paddingBottom="14dp"
             android:layout_marginTop="10dp" />
-        <TextView android:id="@+id/synxExportButton"
-            android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:gravity="center" android:text="⬇  Экспорт корпуса (CSV)"
-            android:textColor="@color/accent_blue" android:textSize="15sp"
-            android:paddingTop="12dp" android:paddingBottom="12dp"
+
+        <TextView
+            android:id="@+id/synxHeadingButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:text="🧭  Диагностика курса"
+            android:textColor="@color/text_main"
+            android:textSize="15sp"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="14dp"
+            android:paddingBottom="14dp"
             android:layout_marginTop="10dp" />
-        <androidx.appcompat.widget.SwitchCompat android:id="@+id/synxBgAccelSwitch"
-            android:layout_width="match_parent" android:layout_height="wrap_content"
+
+        <TextView
+            android:id="@+id/synxExportButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:text="⬇  Экспорт корпуса (CSV)"
+            android:textColor="@color/text_main"
+            android:textSize="15sp"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="14dp"
+            android:paddingBottom="14dp"
+            android:layout_marginTop="10dp" />
+
+        <androidx.appcompat.widget.SwitchCompat
+            android:id="@+id/synxBgAccelSwitch"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
             android:text="Сбор при выключенном экране"
-            android:textColor="@color/accent_amber_bright" android:textSize="15sp"
-            android:layout_marginTop="24dp" />
-        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:textColor="@color/text_main"
+            android:textSize="15sp"
+            android:layout_marginTop="18dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
             android:text="Признаки собираются и с заблокированным экраном, окнами по 12 секунд раз в минуту. Счёт шагов не меняется. Замер показал: расход батареи незначителен, можно держать включённым."
-            android:textColor="@color/text_dim" android:textSize="13sp"
-            android:lineSpacingExtra="3dp" android:layout_marginTop="6dp" />
-                <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:textColor="@color/text_dim"
+            android:textSize="15sp"
+            android:lineSpacingExtra="3dp"
+            android:layout_marginTop="6dp" />
+
+        <!-- ===== ЧТО ЭТО ===== -->
+        <TextView
+            android:id="@+id/synxSecAbout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:text="ЧТО ЭТО"
+            android:textColor="@color/accent_amber"
+            android:textSize="19sp"
+            android:letterSpacing="0.08"
+            android:layout_marginTop="26dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
             android:text="Модуль обучения. Здесь StepCore учится понимать именно тебя: как ты ходишь, в гору или с горы, устал или бодр. Чем больше данных ты дашь, тем точнее он станет.\n\nСфера показывает состояние: спокойная вода означает, что данных достаточно; электричество, что есть что улучшить; огонь, что нужна калибровка или профиль."
-            android:textColor="@color/text_dim" android:textSize="15sp"
-            android:lineSpacingExtra="4dp" android:layout_marginTop="24dp" />
-        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:text="Скоро: сессии походки, архивы примеров, вопросы на прогулке. Пока идёт сбор данных."
-            android:textColor="@color/axis_dim" android:textSize="13sp" android:layout_marginTop="20dp" />
+            android:textColor="@color/text_dim"
+            android:textSize="15sp"
+            android:lineSpacingExtra="4dp"
+            android:layout_marginTop="10dp"
+            android:layout_marginBottom="8dp" />
+
     </LinearLayout>
 </ScrollView>
