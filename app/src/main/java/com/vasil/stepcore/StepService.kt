@@ -940,7 +940,34 @@ class StepService : Service(), SensorEventListener {
                     "значит, что телефон был в руке или сбор при выключенном " +
                     "экране отключён."
             } else {
-                val med = a[a.size / 2]
+                // v281. Честная медиана: прежний a[size/2] при чётном числе
+                // строк брал верхний из двух средних.
+                val med = StrideModel.medianOf(a)
+                // v281. ВОРОТА КАЧЕСТВА НА СОХРАНЕНИЕ - та же защита, что
+                // стоит у темповой калибровки с v11.14, но здесь её не было.
+                // Отрезок с рваной амплитудой (остановки, смена рельефа,
+                // телефон сместился в кармане) даёт медиану между двумя
+                // кластерами, и якорь выходит лживым. Классы уклона
+                // расходятся примерно на 20% уровня, поэтому собственный
+                // разброс отрезка выше 25% не способен их разрешить.
+                val nn = a.size
+                val spreadPct = if (med > 0f)
+                    (100f * (a[nn * 3 / 4] - a[nn / 4]) / med).toInt() else 0
+                if (spreadPct > SLOPE_SPREAD_OK_PCT) {
+                    msg = "Амплитуда рваная (разброс " + spreadPct + "%): в отрезок " +
+                        "попал разный рельеф, остановки или телефон сместился. " +
+                        "Якорь НЕ сохранён. Пройди участок одного уклона ровным " +
+                        "шагом без остановок."
+                    logEvent("Калибровка уклона отклонена: " + slopeRu(target) +
+                        " разброс " + spreadPct + "%")
+                    StepsState.slopeResult.value = msg
+                    StepsState.slopeStage.value = "RESULT"
+                    StepsState.slopeTarget.value = ""
+                    beep(3)
+                    endSlopePanel()
+                    toastMain(msg)
+                    return@launch
+                }
                 getSharedPreferences(PREFS, MODE_PRIVATE).edit()
                     .putFloat("slope_anchor_" + target.lowercase(), med)
                     .putLong("slope_anchor_" + target.lowercase() + "_ms",
@@ -948,7 +975,7 @@ class StepService : Service(), SensorEventListener {
                     .apply()
                 msg = "Записано: " + slopeRu(target) + " = " +
                     String.format(java.util.Locale.US, "%.2f", med) +
-                    "  (строк " + a.size + ")"
+                    "  (строк " + a.size + " · разброс " + spreadPct + "%)"
                 logEvent("Калибровка уклона: " + slopeRu(target) + " = " +
                     String.format(java.util.Locale.US, "%.2f", med))
             }
@@ -2167,6 +2194,9 @@ class StepService : Service(), SensorEventListener {
         // среднего. IQR теснее размаха, поэтому пороги ниже.
         private const val CAL_SPREAD_GOOD_PCT = 12
         private const val CAL_SPREAD_OK_PCT = 25
+        // v281. Тот же порог для уклона: классы расходятся на ~20% уровня,
+        // отрезок с большим собственным разбросом их не разрешает.
+        private const val SLOPE_SPREAD_OK_PCT = 25
         // v280. Сколько беговых шагов за день считать настоящим бегом.
         // Меньше - это вспышки Бег/Ходьба на торможении, известный хвост.
         private const val RUN_SEEN_STEPS = 300

@@ -128,16 +128,28 @@ class SlopeCalActivity : AppCompatActivity() {
         val target = StepsState.slopeTarget.value
         if (target != "") { renderRecording(target); return }
 
-        note("Руками измеряются только «в гору» и «с горы» — их из корпуса " +
+        note("ЗАЧЕМ. Эти три числа — опора, по которой разбираются отрезки " +
+            "прогулки: где ты шёл в гору, где с горы. От них зависят метки " +
+            "уклона и через них — расход калорий на склонах.\n\n" +
+            "Руками измеряются только «в гору» и «с горы» — их из корпуса " +
             "не взять. «Ровно» считается само из накопленных данных.\n\n" +
-            "Порядок любой, между замерами хоть неделя.\n\n" +
+            "Порядок любой, между замерами хоть неделя. Но оба отрезка лучше " +
+            "пройти на одном склоне и с телефоном в одном кармане: шкала " +
+            "амплитуды уплывает от того, как лежит телефон, и замеры из " +
+            "разных мест сравнивать не с чем.\n\n" +
             "Телефон в карман: в руке амплитуда сглажена и уклон не читается. " +
             "На ходу всё слышно: один сигнал — пошёл, два — хватит, подтверди.\n" +
-            "Один отрезок — примерно 40-50 шагов.")
+            "Один отрезок — примерно 40-50 шагов: признак пишется раз в 5 шагов, нужно 8.")
 
         for (t in order) card(t)
-        flatFromCorpus()
-        verdict()
+        // v281. Вердикт печатается ПОСЛЕ того, как посчитан якорь «ровно».
+        // Раньше verdict() читал настройки синхронно, а flatFromCorpus()
+        // писал их из корутины - и на первом открытии экран одновременно
+        // сообщал «„Ровно“ не записано» и «Ровно: взято из корпуса».
+        val verdictSlot = LinearLayout(this)
+        verdictSlot.orientation = LinearLayout.VERTICAL
+        flatFromCorpus { verdict(verdictSlot) }
+        root.addView(verdictSlot)
 
         val res = StepsState.slopeResult.value
         if (res != "") note(res)
@@ -216,20 +228,33 @@ class SlopeCalActivity : AppCompatActivity() {
     }
 
     /** Вердикт по тому, что уже собрано. Пара в гору + с горы - минимум. */
-    private fun verdict() {
+    private fun verdict(parent: ViewGroup) {
         val up = anchorOf("UP")?.first
         val down = anchorOf("DOWN")?.first
         val flat = anchorOf("FLAT")?.first
         // "Ровно" не измеряется руками - см. flatFromCorpus()
         if (up == null || down == null) {
             note("Пока нет пары «в гору» + «с горы» — по ней и строится опора. " +
-                "Запиши оба, можно в разные дни.")
+                "Запиши оба, можно в разные дни.", parent)
             return
         }
         if (up >= down) {
             note("Порядок не сошёлся: «в гору» должно быть МЯГЧЕ, чем «с горы», " +
                 "а вышло наоборот. Скорее всего отрезки прошли в разных местах " +
-                "или телефон лежал по-разному. Перезапиши один из них.")
+                "или телефон лежал по-разному. Перезапиши один из них.", parent)
+            return
+        }
+        // v281. Порядок сошёлся - ещё не значит, что зазор пригоден.
+        // Измерено на корпусе: медианы классов расходятся на 1.30
+        // (в гору 6.43, с горы 7.73), внутри одной прогулки зазор 0.47 и
+        // 0.74. Зазор меньше SLOPE_MIN_GAP не отличим от шума кармана,
+        // и опираться на него нельзя - честнее сказать, чем принять.
+        if (down - up < SLOPE_MIN_GAP) {
+            note("Порядок сошёлся, но зазор всего " +
+                String.format(java.util.Locale.US, "%.2f", down - up) +
+                " — этого мало, чтобы на него опираться. Так бывает, когда оба " +
+                "отрезка прошли по пологому месту или телефон лежал по-разному. " +
+                "Перезапиши один из них на более выраженном склоне.", parent)
             return
         }
         val sb = StringBuilder("Порядок сошёлся ✓  зазор " +
@@ -243,13 +268,13 @@ class SlopeCalActivity : AppCompatActivity() {
             sb.append("\n«Ровно» не записано — разбор будет считать его серединой.")
         }
         sb.append("\n\nЭти числа уже работают в разборе отрезков.")
-        note(sb.toString())
+        note(sb.toString(), parent)
     }
 
     /** Якорь "ровно" считается из корпуса и сохраняется сам. Отдельная
      *  прогулка по ровному не нужна: этих строк накоплены сотни, и они
      *  собраны в тех же условиях - телефон в кармане. */
-    private fun flatFromCorpus() {
+    private fun flatFromCorpus(onDone: () -> Unit) {
         val v = TextView(this)
         v.textSize = 15f
         v.setTextColor(ContextCompat.getColor(this, R.color.text_dim))
@@ -265,16 +290,27 @@ class SlopeCalActivity : AppCompatActivity() {
             if (a.size < 20) {
                 v.text = "Ровно: в корпусе пока мало ровных карманных строк (" +
                     a.size + "). Наберётся с прогулками — руками ходить не надо."
+                onDone()
                 return@launch
             }
-            val med = a[a.size / 2]
-            getSharedPreferences(StepService.PREFS, MODE_PRIVATE).edit()
-                .putFloat("slope_anchor_flat", med)
-                .putLong("slope_anchor_flat_ms", System.currentTimeMillis())
-                .apply()
+            // v281. Честная медиана: прежний a[size/2] при чётном числе строк
+            // брал верхний из двух средних и систематически завышал якорь.
+            val med = StrideModel.medianOf(a)
+            val pr = getSharedPreferences(StepService.PREFS, MODE_PRIVATE)
+            val prev = runCatching { pr.getFloat("slope_anchor_flat", 0f) }.getOrDefault(0f)
+            // v281. Дата обновляется, только если значение реально изменилось.
+            // Раньше она переписывалась при каждом открытии экрана, и «ровно»
+            // всегда выглядело свежезамеренным, хотя корпус тот же.
+            if (kotlin.math.abs(prev - med) > 0.005f) {
+                pr.edit()
+                    .putFloat("slope_anchor_flat", med)
+                    .putLong("slope_anchor_flat_ms", System.currentTimeMillis())
+                    .apply()
+            }
             v.text = "Ровно: " +
                 String.format(java.util.Locale.US, "%.2f", med) +
                 "  — взято из корпуса (" + a.size + " строк), ходить не нужно"
+            onDone()
         }
     }
 
@@ -285,7 +321,7 @@ class SlopeCalActivity : AppCompatActivity() {
         root.addView(v, lp)
     }
 
-    private fun note(t: String) {
+    private fun note(t: String, parent: ViewGroup = root) {
         if (t == "") return
         val v = TextView(this)
         v.text = t
@@ -293,7 +329,7 @@ class SlopeCalActivity : AppCompatActivity() {
         v.setTextColor(ContextCompat.getColor(this, R.color.text_dim))
         v.setLineSpacing(3f * dens, 1f)
         v.setPadding(0, (14 * dens).toInt(), 0, 0)
-        root.addView(v)
+        parent.addView(v)
     }
 
     private fun button(label: String, colorRes: Int, onClick: () -> Unit) {
@@ -305,6 +341,12 @@ class SlopeCalActivity : AppCompatActivity() {
         v.setPadding(0, (16 * dens).toInt(), 0, (14 * dens).toInt())
         v.setOnClickListener { onClick() }
         root.addView(v)
+    }
+
+    private companion object {
+        /** Зазор между «в гору» и «с горы», ниже которого опора не строится.
+         *  Порог совпадает с запасом уверенного вердикта агента (0.30). */
+        const val SLOPE_MIN_GAP = 0.30f
     }
 
     private fun close() {
