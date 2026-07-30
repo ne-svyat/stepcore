@@ -1147,7 +1147,20 @@ class StepService : Service(), SensorEventListener {
                     pendCadSum += (iv.toLong()) * delta
                     pendCadN += delta
                 }
-                if (asRun) { runSteps += delta; bumpHour(0, delta) }
+                if (asRun) {
+                    runSteps += delta; bumpHour(0, delta)
+                    // v280. Отметка "бег видели". Нужна, чтобы общая точность
+                    // не занижалась у того, кто не бегает. Порог отсекает
+                    // случайные пары шагов, помеченных бегом на торможении.
+                    if (runSteps >= RUN_SEEN_STEPS) {
+                        val pr = getSharedPreferences(PREFS, MODE_PRIVATE)
+                        val last = pr.getLong(CalibrationRegistry.KEY_RUN_SEEN, 0L)
+                        if (System.currentTimeMillis() - last > 6 * 3600_000L) {
+                            pr.edit().putLong(CalibrationRegistry.KEY_RUN_SEEN,
+                                System.currentTimeMillis()).apply()
+                        }
+                    }
+                }
                 else { walkSteps += delta; bumpHour(delta, 0) }
                 if (screenOff) hwSessionAdded += delta
                 // v185: корпус в кармане. Детектор здесь молчит (вето по
@@ -2154,6 +2167,9 @@ class StepService : Service(), SensorEventListener {
         // среднего. IQR теснее размаха, поэтому пороги ниже.
         private const val CAL_SPREAD_GOOD_PCT = 12
         private const val CAL_SPREAD_OK_PCT = 25
+        // v280. Сколько беговых шагов за день считать настоящим бегом.
+        // Меньше - это вспышки Бег/Ходьба на торможении, известный хвост.
+        private const val RUN_SEEN_STEPS = 300
         // Абсолютные границы правдоподобного человеческого шага, мс. НЕ из
         // профиля (иначе калибровка зависела бы от прежней калибровки).
         // 200 мс = 5 шагов/с (спринт), 2000 мс = очень медленный шаг.

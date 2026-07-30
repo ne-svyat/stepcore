@@ -30,6 +30,16 @@ object CalibrationRegistry {
     private const val FLOOR = 0.70f
     private const val UNCALIBRATED = 0.50f
     private const val DAY_MS = 86_400_000L
+    // v280. Вес калибровки должен отражать её вклад в ЦИФРЫ ЭТОГО человека.
+    // Прежде некалиброванный темп бега вечно держал общую точность на
+    // потолке 92.5% даже у того, кто не бегает вовсе: экран показывал
+    // недостачу там, где её нет. Теперь вес бега умножается на его
+    // значимость, а остальные веса перенормируются.
+    // Значимость падает не сразу: месяц без бега - это перерыв, а не
+    // отказ от бега; четыре месяца - уже отказ.
+    private const val RUN_FULL_DAYS = 30f
+    private const val RUN_ZERO_DAYS = 120f
+    const val KEY_RUN_SEEN = "run_last_seen_ms"
 
     private fun p(c: Context) =
         c.getSharedPreferences(StepService.PREFS, Context.MODE_PRIVATE)
@@ -66,8 +76,41 @@ object CalibrationRegistry {
         return decayed.coerceIn(FLOOR, 1f)
     }
 
-    fun overallAccuracy(c: Context): Float =
-        Kind.values().sumOf { (it.weight * freshness(c, it)).toDouble() }.toFloat()
+    /**
+     * Значимость темпа бега для этого человека: 1 - бегал в последний
+     * месяц, 0 - не видели бега больше RUN_ZERO_DAYS, между ними спад.
+     * Метка ставится службой, когда за день набирается заметный бег,
+     * поэтому это наблюдение, а не настройка.
+     */
+    fun runRelevance(c: Context): Float {
+        // Откалиброванный бег значим всегда: человек его измерил осознанно.
+        if (isDone(c, Kind.RUN_TEMPO)) return 1f
+        val last = p(c).getLong(KEY_RUN_SEEN, 0L)
+        if (last <= 0L) return 0f
+        val days = (System.currentTimeMillis() - last).toFloat() / DAY_MS
+        return when {
+            days <= RUN_FULL_DAYS -> 1f
+            days >= RUN_ZERO_DAYS -> 0f
+            else -> 1f - (days - RUN_FULL_DAYS) / (RUN_ZERO_DAYS - RUN_FULL_DAYS)
+        }
+    }
+
+    /** Эффективный вес калибровки с учётом значимости. */
+    fun effectiveWeight(c: Context, k: Kind): Float =
+        if (k == Kind.RUN_TEMPO) k.weight * runRelevance(c) else k.weight
+
+    fun overallAccuracy(c: Context): Float {
+        var sum = 0f
+        var total = 0f
+        for (k in Kind.values()) {
+            val w = effectiveWeight(c, k)
+            sum += w * freshness(c, k)
+            total += w
+        }
+        // Перенормировка: если бег не в счёт, оставшиеся веса делят его долю
+        // между собой, а не оставляют дыру в процентах.
+        return if (total <= 0f) UNCALIBRATED else sum / total
+    }
 
     fun overallPercent(c: Context): Int = (overallAccuracy(c) * 100).toInt()
 
@@ -91,7 +134,9 @@ object CalibrationRegistry {
                 }
             }
             Kind.RUN_TEMPO -> {
-                if (!isDone(c, k)) "не измерен (стандартный диапазон)"
+                if (!isDone(c, k) && runRelevance(c) <= 0f)
+                    "не измерен — и не нужен: бега не видно"
+                else if (!isDone(c, k)) "не измерен (стандартный диапазон)"
                 else {
                     val lo = pr.getLong("run_min_interval", 0L)
                     val hi = pr.getLong("run_max_interval", 0L)
