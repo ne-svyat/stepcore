@@ -67,12 +67,6 @@ class CalibrationActivity : AppCompatActivity() {
                 startActivity(android.content.Intent(
                     this, SlopeCalActivity::class.java))
             }
-        findViewById<TextView>(R.id.backupButton).setOnClickListener {
-            startActivity(android.content.Intent(this, HistoryActivity::class.java)
-                .putExtra("open_backup", true))
-        }
-        DoodleUi.frame(findViewById<TextView>(R.id.backupButton),
-            UiKit.ACCENT_MEASURE, R.color.surface, 404L, DoodleBorderDrawable.MAT_MECH)
         findViewById<android.widget.TextView>(R.id.calReportButton)
             .setOnClickListener {
                 val rep = StrideModel.calibrationReport(this)
