@@ -76,13 +76,35 @@
                 <Button android:id="@+id/exportCsvButton" style="?android:attr/buttonBarButtonStyle"
                     android:layout_width="0dp" android:layout_weight="1"
                     android:layout_height="wrap_content" android:text="CSV" />
-                <Button android:id="@+id/exportJsonButton" style="?android:attr/buttonBarButtonStyle"
-                    android:layout_width="0dp" android:layout_weight="1"
-                    android:layout_height="wrap_content" android:text="JSON" />
-                <Button android:id="@+id/importJsonButton" style="?android:attr/buttonBarButtonStyle"
-                    android:layout_width="0dp" android:layout_weight="1"
-                    android:layout_height="wrap_content" android:text="Импорт" />
             </LinearLayout>
+
+            <!-- v291. Раньше здесь стояли две кнопки «JSON» и «Импорт»
+                 рядом с «CSV», и по названиям было не понять, что из
+                 этого полный бэкап, а что выгрузка таблицы. Теперь один
+                 вход с тем же диалогом, что в SYNX: одно действие -
+                 одно понятное имя. -->
+            <TextView
+                android:id="@+id/backupPlate"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:text="💾  Сохранить и восстановить данные"
+                android:textColor="@color/text_main"
+                android:textSize="15sp"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:paddingTop="14dp"
+                android:paddingBottom="14dp"
+                android:layout_marginTop="14dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Полный файл со всеми данными: шаги, калории, журнал, корпус обучения, сессии с твоими ответами и калибровки. Кнопка «CSV» выше — это просто таблица дней для просмотра, восстановить из неё нельзя."
+                android:textColor="@color/text_dim"
+                android:textSize="15sp"
+                android:lineSpacingExtra="3dp"
+                android:layout_marginTop="6dp" />
 
             <TextView
                 android:layout_width="wrap_content"

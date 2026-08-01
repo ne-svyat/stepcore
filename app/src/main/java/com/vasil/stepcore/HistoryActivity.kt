@@ -437,13 +437,12 @@ class HistoryActivity : AppCompatActivity() {
         findViewById<Button>(R.id.exportCsvButton).setOnClickListener {
             csvSaver.launch("stepcore_days.csv")
         }
-        findViewById<Button>(R.id.exportJsonButton).setOnClickListener {
-            jsonSaver.launch("stepcore_full.json")
-        }
-        findViewById<Button>(R.id.importJsonButton).setOnClickListener {
-            jsonImporter.launch(arrayOf(
-                "application/json", "application/octet-stream", "text/plain"))
-        }
+        // v291. Тот же диалог, что открывается из SYNX. Один код на оба
+        // входа: если объяснение поменяется, оно поменяется в обоих местах,
+        // и «а это одно и то же?» не возникнет.
+        findViewById<TextView>(R.id.backupPlate).setOnClickListener { backupDialog() }
+        DoodleUi.frame(findViewById<TextView>(R.id.backupPlate),
+            UiKit.ACCENT_DATA, R.color.surface, 407L, DoodleBorderDrawable.MAT_MECH)
 
         // v289. Бэкап нужен там, где человек о нём вспоминает: перед
         // калибровкой и в SYNX. Экран Истории открывается с флагом и
@@ -511,8 +510,6 @@ class HistoryActivity : AppCompatActivity() {
         }
         plate(findViewById(R.id.copyButton), R.color.axis_dim, DoodleBorderDrawable.MAT_ROCK, 321L, false)
         plate(findViewById(R.id.exportCsvButton), R.color.accent_green, DoodleBorderDrawable.MAT_ROCK, 322L, true)
-        plate(findViewById(R.id.exportJsonButton), R.color.accent_green, DoodleBorderDrawable.MAT_ROCK, 323L, true)
-        plate(findViewById(R.id.importJsonButton), R.color.accent_amber, DoodleBorderDrawable.MAT_ROPE, 324L, true)
         plate(findViewById(R.id.copySelectedButton), R.color.accent_blue, DoodleBorderDrawable.MAT_ROCK, 325L, true)
         // Удаление необратимо - единственная красная плита, с огнём.
         plate(findViewById(R.id.deleteButton), R.color.accent_red, DoodleBorderDrawable.MAT_FIRE, 326L, true)
