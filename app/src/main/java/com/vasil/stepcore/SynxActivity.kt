@@ -19,6 +19,14 @@ import kotlinx.coroutines.launch
  *  (ворота -> режим -> подтверждение метки уклона) -> три архива. */
 class SynxActivity : AppCompatActivity() {
 
+    private val sessionImporter =
+        registerForActivityResult(
+            androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
+        ) { uri ->
+            if (uri != null) lifecycleScope.launch { importSessions(uri) }
+        }
+
+
     // Порог "достаточно" для уклона. Выведен, не угадан: провизорно ~10
     // надёжных сессий на каждое направление (в гору/с горы), чтобы оценить
     // личную медиану и разброс признаков уклона без диктата одного выброса.
@@ -77,6 +85,125 @@ class SynxActivity : AppCompatActivity() {
      *  разбора нужна полная картина, включая короткие уклонные. */
     /** Диагностика курса: есть ли на чём строить понимание "вернулся тем
      *  же путём". Только читает. Вывод делает человек. */
+
+    /**
+     * v287. Импорт витрины сессий из CSV, снятого кнопкой экспорта.
+     *
+     * Зачем: экспорт бэкапа хранит дни, часы и профиль, но НЕ хранит
+     * корпус и сессии - они считаются данными устройства. После
+     * переустановки приложения обучение обнулялось, хотя ответы человека
+     * стоили месяцев ходьбы. Этот импорт возвращает их.
+     *
+     * Что импортируется: строка сессии целиком, включая confirmState и
+     * userLabel - то есть подтверждения, правки и архив дефектов.
+     *
+     * Правила безопасности (те же, что у импорта бэкапа):
+     *   - существующие сессии не перезаписываются, только добавляются
+     *     отсутствующие; дедупликация по startMs;
+     *   - битая строка пропускается, а не роняет импорт: файл мог быть
+     *     обрезан при копировании;
+     *   - импорт живёт в NonCancellable - уход с экрана посреди большого
+     *     файла не оборвёт его на середине (урок v11.18).
+     */
+    private suspend fun importSessions(uri: android.net.Uri) {
+        android.widget.Toast.makeText(this, "Импортирую сессии...", android.widget.Toast.LENGTH_SHORT).show()
+        val report = try {
+            kotlinx.coroutines.withContext(
+                kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.NonCancellable
+            ) {
+                val text = contentResolver.openInputStream(uri)?.bufferedReader()
+                    ?.use { it.readText() } ?: return@withContext "Файл не читается"
+                val lines = text.split("\n").filter { it.isNotBlank() }
+                if (lines.size < 2) return@withContext "Файл пуст"
+                val head = lines[0].split(",").map { it.trim() }
+                val need = listOf("startMs", "label", "userLabel", "confirm",
+                    "reliable", "nSamples", "durMs")
+                for (c in need) {
+                    if (!head.contains(c)) return@withContext "Не тот файл: нет колонки " + c
+                }
+                fun idx(name: String) = head.indexOf(name)
+                val iStart = idx("startMs"); val iLabel = idx("label")
+                val iUser = idx("userLabel"); val iConf = idx("confirm")
+                val iRel = idx("reliable"); val iN = idx("nSamples")
+                val iDur = idx("durMs"); val iWalk = idx("walkShare")
+                val iRun = idx("runShare"); val iChip = idx("chipShare")
+                val iAmp = idx("ampMed"); val iAmpI = idx("ampIqr")
+                val iCad = idx("cadMed"); val iCadI = idx("cadIqr")
+                val iPitch = idx("pitchMed"); val iGyro = idx("gyroMed")
+                val iAmpT = idx("ampTrend"); val iCadT = idx("cadTrend")
+                val iStab = idx("rhythmStab"); val iPr = idx("pitchRange")
+
+                val dao = AppDb.get(this@SynxActivity).dao()
+                val have = dao.allSessionStarts().toHashSet()
+                var added = 0; var skipped = 0; var broken = 0
+                var confirmed = 0; var edited = 0
+
+                for (li in 1 until lines.size) {
+                    val f = lines[li].split(",")
+                    if (f.size < need.size) { broken++; continue }
+                    fun s(i: Int): String = if (i >= 0 && i < f.size) f[i].trim() else ""
+                    fun fl(i: Int): Float? = s(i).toFloatOrNull()
+                    val start = s(iStart).toLongOrNull()
+                    if (start == null || start <= 0L) { broken++; continue }
+                    if (have.contains(start)) { skipped++; continue }
+                    val dur = s(iDur).toLongOrNull() ?: 0L
+                    val conf = s(iConf).toIntOrNull() ?: 0
+                    val user = s(iUser).ifEmpty { null }
+                    dao.insertSession(
+                        SessionRecord(
+                            startMs = start,
+                            endMs = start + dur,
+                            durationMs = dur,
+                            label = s(iLabel).ifEmpty { "NONE" },
+                            nSamples = s(iN).toIntOrNull() ?: 0,
+                            reliable = s(iRel) == "1" || s(iRel).equals("true", true),
+                            walkShare = fl(iWalk) ?: 0f,
+                            runShare = fl(iRun) ?: 0f,
+                            ampMed = fl(iAmp), ampIqr = fl(iAmpI),
+                            cadenceMed = fl(iCad), cadenceIqr = fl(iCadI),
+                            pitchMed = fl(iPitch), gyroMed = fl(iGyro),
+                            chipShare = fl(iChip) ?: 0f,
+                            // Файл снят экспортом текущей схемы признаков.
+                            featureVersion = 5,
+                            ampTrend = fl(iAmpT), cadenceTrend = fl(iCadT),
+                            rhythmStab = fl(iStab), pitchRange = fl(iPr),
+                            confirmState = conf,
+                            // Чтобы автодогон не пересобирал этот период заново.
+                            builtFromMaxTimeMs = start + dur,
+                            userLabel = user
+                        )
+                    )
+                    have.add(start)
+                    added++
+                    if (conf == 1) confirmed++
+                    if (user != null) edited++
+                }
+                "Добавлено сессий: " + added +
+                    "\nИз них подтверждённых: " + confirmed +
+                    "\nС правкой метки: " + edited +
+                    "\nУже были: " + skipped +
+                    (if (broken > 0) "\nПропущено битых строк: " + broken else "")
+            }
+        } catch (e: Exception) {
+            "Импорт не удался: " + (e.message ?: "неизвестная ошибка")
+        }
+        AlertDialog.Builder(this)
+            .setCustomTitle(TextView(this).apply {
+                text = "  Импорт сессий"
+                textSize = 19f
+                setPadding(48, 36, 48, 12)
+                setTextColor(androidx.core.content.ContextCompat.getColor(
+                    this@SynxActivity, UiKit.ACCENT_LEARN))
+            })
+            .setMessage(report)
+            .setPositiveButton("Понятно") { _, _ ->
+                // Экран пересобирается, чтобы сфера и счётчики сразу
+                // увидели импортированные сессии.
+                recreate()
+            }
+            .show()
+    }
+
     private suspend fun headingReport() {
         val dao = AppDb.get(this).dao()
         val all = dao.countSamples()
@@ -312,6 +439,12 @@ class SynxActivity : AppCompatActivity() {
      *  (confirmState, userLabel) по совпадению времени и метки - прошлое
      *  неизменно. Тот же выверенный путь свёртки корпуса в сессии. */
     private suspend fun rebuildAllWithAnswers(dao: StepDao) {
+        // v287. НИКОГДА не удалять вычисленное, когда источник пуст.
+        // После переустановки корпус пустой, а сессии могли приехать
+        // импортом. Прежний порядок (удалить -> пересобрать) стёр бы их
+        // начисто и собрал ноль строк. Тот же класс ошибки, что в v202:
+        // пересборка уносила ответы человека.
+        if (dao.samplesAfter(0L).isEmpty()) return
         val saved = dao.answeredSessions().map {
             Triple(it.startMs + it.durationMs / 2, it.label, it.confirmState)
         }
@@ -465,6 +598,13 @@ class SynxActivity : AppCompatActivity() {
         // v228. Счётчик корпуса и экспорт переехали сюда из Инструментов.
         val corpusText = findViewById<TextView>(R.id.synxCorpusText)
         lifecycleScope.launch { refreshCorpusSynx(corpusText) }
+        findViewById<TextView>(R.id.synxImportButton).setOnClickListener {
+            // Тип */* намеренно: провайдеры Android часто отдают CSV как
+            // application/octet-stream, и фильтр по text/csv прячет файл.
+            sessionImporter.launch(arrayOf("*/*"))
+        }
+        DoodleUi.frame(findViewById<TextView>(R.id.synxImportButton),
+            UiKit.ACCENT_LEARN, R.color.surface, 525L, DoodleBorderDrawable.MAT_ROCK)
         findViewById<TextView>(R.id.synxExportButton).setOnClickListener {
             lifecycleScope.launch { exportCorpusSynx() }
         }

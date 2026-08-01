@@ -292,6 +292,15 @@ interface StepDao {
     @Insert
     suspend fun insertSession(s: SessionRecord)
 
+    // v287. Импорт витрины сессий из файла экспорта. Нужен, чтобы вернуть
+    // ответы человека (confirmState, userLabel) после переустановки:
+    // бэкап их не содержит, а собраны они месяцами ходьбы.
+    // Дедупликация по startMs - повторный импорт того же файла не плодит
+    // копий, а существующие строки НИКОГДА не перезаписываются: локальное
+    // всегда главнее файла, как и в импорте бэкапа.
+    @Query("SELECT startMs FROM sessions")
+    suspend fun allSessionStarts(): List<Long>
+
     @Query("SELECT COALESCE(MAX(builtFromMaxTimeMs), 0) FROM sessions")
     suspend fun lastBuiltTimeMs(): Long
 
