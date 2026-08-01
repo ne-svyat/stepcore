@@ -26,6 +26,26 @@ import java.util.Locale
 
 class HistoryActivity : AppCompatActivity() {
 
+    private companion object {
+        /** Ключи калибровки, которые обязаны переживать переустановку.
+         *  Всё это измерено ногами и задним числом не восстанавливается. */
+        val Q = 34.toChar()
+
+        fun jsonOrNull(v: String?): String =
+            if (v == null) "null" else "" + Q + v + Q
+
+        val CALIB_KEYS = listOf(
+            "stride_a", "stride_b", "stride_by_gps", "stride_manual",
+            "stride_cal_history",
+            "walk_min_interval", "walk_max_interval",
+            "run_min_interval", "run_max_interval",
+            "cal_date_walk", "cal_date_run", "cal_date_stride",
+            "slope_anchor_up", "slope_anchor_down", "slope_anchor_flat",
+            "slope_anchor_up_ms", "slope_anchor_down_ms", "slope_anchor_flat_ms"
+        )
+    }
+
+
     private val selectedLines = LinkedHashSet<String>()
     private var copySelBtn: Button? = null
     private var currentFilterDays = 7
@@ -71,10 +91,13 @@ class HistoryActivity : AppCompatActivity() {
                 val events = dao.allEvents()
                 // Секция экспедиций (schema 3): собирается survival-модулем,
                 // ядро о его устройстве не знает. Вызов до buildString - suspend.
+                val corpus = dao.allSamplesForBackup()
+                val sessions = dao.allSessionsForBackup()
+                val calPrefs = getSharedPreferences(StepService.PREFS, MODE_PRIVATE)
                 val survivalJson = com.vasil.stepcore.survival.SurvivalBackup.exportFragment(this@HistoryActivity)
                 val json = buildString {
                     appendLine("{")
-                    appendLine("\"schema\":3,")
+                    appendLine("\"schema\":4,")
                     appendLine("\"days\":[")
                     append(days.joinToString(",\n") {
                         "{\"date\":\"${it.date}\",\"walk\":${it.walkSteps},\"run\":${it.runSteps}," +
@@ -92,6 +115,42 @@ class HistoryActivity : AppCompatActivity() {
                         "{\"timeMs\":${it.timeMs},\"date\":\"${it.date}\",\"text\":\"${jsonEsc(it.text)}\"}"
                     })
                     appendLine("],")
+                    // v288. Корпус, сессии и калибровка. Без них бэкап
+                    // возвращал историю, но не возвращал ОБУЧЕНИЕ.
+                    appendLine("\"corpus\":[")
+                    append(corpus.joinToString(",\n") {
+                        "{\"t\":${it.timeMs},\"label\":\"${it.label}\",\"mode\":\"${it.mode}\"," +
+                        "\"amp\":${it.amp},\"iv\":${it.intervalMs},\"gyro\":${it.gyro}," +
+                        "\"fv\":${it.featureVersion},\"pitch\":${it.pitchDeg}," +
+                        "\"roll\":${it.rollDeg}}"
+                    })
+                    appendLine("],")
+                    appendLine("\"sessions\":[")
+                    append(sessions.joinToString(",\n") {
+                        "{\"s\":${it.startMs},\"e\":${it.endMs},\"d\":${it.durationMs}," +
+                        "\"label\":\"${it.label}\",\"n\":${it.nSamples}," +
+                        "\"rel\":${if (it.reliable) 1 else 0}," +
+                        "\"walk\":${it.walkShare},\"run\":${it.runShare},\"chip\":${it.chipShare}," +
+                        "\"amp\":${it.ampMed},\"ampIqr\":${it.ampIqr}," +
+                        "\"cad\":${it.cadenceMed},\"cadIqr\":${it.cadenceIqr}," +
+                        "\"pitch\":${it.pitchMed},\"gyro\":${it.gyroMed}," +
+                        "\"fv\":${it.featureVersion},\"ampT\":${it.ampTrend}," +
+                        "\"cadT\":${it.cadenceTrend},\"stab\":${it.rhythmStab}," +
+                        "\"pr\":${it.pitchRange},\"conf\":${it.confirmState}," +
+                        "\"user\":" + jsonOrNull(it.userLabel) + "}"
+                    })
+                    appendLine("],")
+                    appendLine("\"calib\":{")
+                    append(CALIB_KEYS.mapNotNull { k ->
+                        val v = calPrefs.all[k] ?: return@mapNotNull null
+                        val vs = when (v) {
+                            is String -> "\"" + jsonEsc(v) + "\""
+                            is Boolean -> if (v) "true" else "false"
+                            else -> v.toString()
+                        }
+                        "\"" + k + "\":" + vs
+                    }.joinToString(",\n"))
+                    appendLine("},")
                     append(survivalJson)
                     appendLine("}")
                 }
@@ -182,6 +241,93 @@ class HistoryActivity : AppCompatActivity() {
                     eA++
                 }
                 }
+                // v288. Корпус, сессии и калибровка. Правила те же, что для
+                // дней: существующее НЕ перезаписывается, только добавляется
+                // отсутствующее. Дедупликация корпуса по timeMs, сессий по
+                // startMs. Калибровка ставится, только если её сейчас нет:
+                // свежий замер на этом телефоне всегда главнее файла.
+                var addCorpus = 0
+                var addSess = 0
+                var addCalib = 0
+                val corpusArr = root.optJSONArray("corpus")
+                if (corpusArr != null && corpusArr.length() > 0) {
+                    val haveT = dao.allSampleTimes().toHashSet()
+                    for (i in 0 until corpusArr.length()) {
+                        val o = corpusArr.getJSONObject(i)
+                        val t = o.optLong("t", 0L)
+                        if (t <= 0L || haveT.contains(t)) continue
+                        dao.insertSample(
+                            TerrainSample(
+                                timeMs = t,
+                                label = o.optString("label", "NONE"),
+                                mode = o.optString("mode", "IDLE"),
+                                amp = o.optDouble("amp", 0.0).toFloat(),
+                                intervalMs = o.optDouble("iv", 0.0).toFloat(),
+                                gyro = o.optDouble("gyro", 0.0).toFloat(),
+                                featureVersion = o.optInt("fv", 1),
+                                pitchDeg = if (o.isNull("pitch")) null
+                                    else o.optDouble("pitch").toFloat(),
+                                rollDeg = if (o.isNull("roll")) null
+                                    else o.optDouble("roll").toFloat()
+                            )
+                        )
+                        haveT.add(t); addCorpus++
+                    }
+                }
+                val sessArr = root.optJSONArray("sessions")
+                if (sessArr != null && sessArr.length() > 0) {
+                    val haveS = dao.allSessionStarts().toHashSet()
+                    for (i in 0 until sessArr.length()) {
+                        val o = sessArr.getJSONObject(i)
+                        val st = o.optLong("s", 0L)
+                        if (st <= 0L || haveS.contains(st)) continue
+                        fun fOrNull(k: String): Float? =
+                            if (o.isNull(k)) null else o.optDouble(k).toFloat()
+                        dao.insertSession(
+                            SessionRecord(
+                                startMs = st,
+                                endMs = o.optLong("e", st),
+                                durationMs = o.optLong("d", 0L),
+                                label = o.optString("label", "NONE"),
+                                nSamples = o.optInt("n", 0),
+                                reliable = o.optInt("rel", 0) == 1,
+                                walkShare = o.optDouble("walk", 0.0).toFloat(),
+                                runShare = o.optDouble("run", 0.0).toFloat(),
+                                ampMed = fOrNull("amp"), ampIqr = fOrNull("ampIqr"),
+                                cadenceMed = fOrNull("cad"), cadenceIqr = fOrNull("cadIqr"),
+                                pitchMed = fOrNull("pitch"), gyroMed = fOrNull("gyro"),
+                                chipShare = o.optDouble("chip", 0.0).toFloat(),
+                                featureVersion = o.optInt("fv", 5),
+                                ampTrend = fOrNull("ampT"), cadenceTrend = fOrNull("cadT"),
+                                rhythmStab = fOrNull("stab"), pitchRange = fOrNull("pr"),
+                                confirmState = o.optInt("conf", 0),
+                                builtFromMaxTimeMs = o.optLong("e", st),
+                                userLabel = if (o.isNull("user")) null else o.optString("user")
+                            )
+                        )
+                        haveS.add(st); addSess++
+                    }
+                }
+                val calObj = root.optJSONObject("calib")
+                if (calObj != null) {
+                    val p = getSharedPreferences(StepService.PREFS, MODE_PRIVATE)
+                    val ed = p.edit()
+                    for (k in CALIB_KEYS) {
+                        if (!calObj.has(k) || p.contains(k)) continue
+                        val v = calObj.get(k)
+                        when (v) {
+                            is String -> ed.putString(k, v)
+                            is Boolean -> ed.putBoolean(k, v)
+                            is Int -> ed.putLong(k, v.toLong())
+                            is Long -> ed.putLong(k, v)
+                            is Double -> ed.putFloat(k, v.toFloat())
+                            else -> {}
+                        }
+                        addCalib++
+                    }
+                    ed.apply()
+                }
+
                 // Экспедиции (schema 3): отдельная БД - отдельная транзакция.
                 // Пустая строка = секции в файле нет, survival не трогается.
                 val svReport = com.vasil.stepcore.survival.SurvivalBackup.importFromBackup(this@HistoryActivity, root)
@@ -190,6 +336,12 @@ class HistoryActivity : AppCompatActivity() {
                     append("Часы: +$hA, дубликатов $hS\n")
                     append("События: +$eA, дубликатов $eS")
                     if (svReport.isNotEmpty()) append("\n" + svReport)
+                    if (addCorpus + addSess + addCalib > 0) {
+                        append("\n\nОбучение: корпус " + addCorpus +
+                            ", сессии " + addSess + ", калибровки " + addCalib)
+                    }
+                    if (schema < 4) append("\n\nВ этом файле нет корпуса, сессий и " +
+                        "калибровок - он снят до версии 1.83. Обучение из него не вернётся.")
                     if (schema < 2) append("\n\nВнимание: это старый неполный бэкап - " +
                         "без калорий, дистанции, активного времени и почасовых данных. " +
                         "Импортированные дни будут считаться по текущему профилю.")

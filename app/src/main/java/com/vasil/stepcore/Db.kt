@@ -301,6 +301,21 @@ interface StepDao {
     @Query("SELECT startMs FROM sessions")
     suspend fun allSessionStarts(): List<Long>
 
+    // v288. Полный бэкап. Раньше в файл уходили только дни, часы и события,
+    // а корпус и сессии считались "данными устройства" и НЕ сохранялись.
+    // Цена этого решения выяснилась на переустановке: месяцы разметки
+    // исчезли, хотя весь смысл проекта - в накопленных данных.
+    // Правило теперь простое: раз всё лежит офлайн и никуда не уходит,
+    // в бэкап идёт ВСЁ, что нельзя собрать задним числом.
+    @Query("SELECT * FROM sessions ORDER BY startMs")
+    suspend fun allSessionsForBackup(): List<SessionRecord>
+
+    @Query("SELECT * FROM terrain_samples ORDER BY timeMs")
+    suspend fun allSamplesForBackup(): List<TerrainSample>
+
+    @Query("SELECT timeMs FROM terrain_samples")
+    suspend fun allSampleTimes(): List<Long>
+
     @Query("SELECT COALESCE(MAX(builtFromMaxTimeMs), 0) FROM sessions")
     suspend fun lastBuiltTimeMs(): Long
 
