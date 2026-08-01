@@ -7,6 +7,14 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # v286. Контекст secrets НЕЛЬЗЯ использовать в if - GitHub отклоняет
+    # такой файл при разборе, до запуска ("Unrecognized named-value").
+    # На уровне env он разрешён, поэтому наличие ключа превращается здесь
+    # в обычную строку "true"/"false", а шаги проверяют уже её.
+    # Сам ключ сюда не кладём: в env он был бы виден всем шагам,
+    # включая сборку, где он не нужен.
+    env:
+      HAS_KEYSTORE: ${{ secrets.KEYSTORE_BASE64 != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -23,7 +31,7 @@ jobs:
       # не заданы (например, в форке), шаг просто ничего не создаёт, и
       # сборка идёт с отладочной подписью - падать она не должна.
       - name: Restore signing key
-        if: ${{ secrets.KEYSTORE_BASE64 != '' }}
+        if: env.HAS_KEYSTORE == 'true'
         run: |
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/stepcore.keystore"
           echo "STEPCORE_KEYSTORE=$RUNNER_TEMP/stepcore.keystore" >> "$GITHUB_ENV"
