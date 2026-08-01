@@ -26,7 +26,44 @@ import java.util.Locale
 
 class HistoryActivity : AppCompatActivity() {
 
+    /**
+     * v289. Один диалог на обе операции. Текст объясняет НЕ механику,
+     * а последствие: что человек теряет, если не сделает этого.
+     */
+    fun backupDialog() {
+        val t = TextView(this)
+        t.text = "  Данные StepCore"
+        t.textSize = 19f
+        t.setPadding(48, 36, 48, 12)
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setCustomTitle(t)
+            .setMessage(
+                "В файл сохраняется ВСЁ, что нельзя собрать заново:\n\n" +
+                "• шаги, калории, дистанция по дням и часам\n" +
+                "• журнал событий\n" +
+                "• корпус признаков — сырьё обучения\n" +
+                "• сессии вместе с твоими ответами про уклон\n" +
+                "• калибровки: длина шага, темп, якоря уклона\n\n" +
+                "Зачем: при переустановке приложения база стирается " +
+                "полностью. Файл — единственный способ вернуть месяцы " +
+                "ходьбы. Держи свежий файл всегда.\n\n" +
+                "Импорт ничего не перезаписывает: добавляется только то, " +
+                "чего сейчас нет. Повторный импорт того же файла безопасен."
+            )
+            .setPositiveButton("Сохранить") { _, _ ->
+                jsonSaver.launch("stepcore_full.json")
+            }
+            .setNegativeButton("Восстановить") { _, _ ->
+                jsonImporter.launch(arrayOf(
+                    "application/json", "application/octet-stream", "text/plain"))
+            }
+            .setNeutralButton("Закрыть", null)
+            .show()
+    }
+
     private companion object {
+        const val EXTRA_BACKUP = "open_backup"
+
         /** Ключи калибровки, которые обязаны переживать переустановку.
          *  Всё это измерено ногами и задним числом не восстанавливается. */
         val Q = 34.toChar()
@@ -406,6 +443,13 @@ class HistoryActivity : AppCompatActivity() {
         findViewById<Button>(R.id.importJsonButton).setOnClickListener {
             jsonImporter.launch(arrayOf(
                 "application/json", "application/octet-stream", "text/plain"))
+        }
+
+        // v289. Бэкап нужен там, где человек о нём вспоминает: перед
+        // калибровкой и в SYNX. Экран Истории открывается с флагом и
+        // сразу показывает выбор, не заставляя искать кнопки внизу.
+        if (intent?.getBooleanExtra(EXTRA_BACKUP, false) == true) {
+            backupDialog()
         }
 
         findViewById<Button>(R.id.deleteButton).setOnClickListener {

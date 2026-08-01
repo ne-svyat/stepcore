@@ -133,6 +133,20 @@
             android:layout_marginTop="10dp" />
 
         <TextView
+            android:id="@+id/backupButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:text="💾  Сохранить и восстановить данные"
+            android:textColor="@color/text_main"
+            android:textSize="15sp"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="14dp"
+            android:paddingBottom="14dp"
+            android:layout_marginTop="10dp" />
+
+        <TextView
             android:id="@+id/calReportButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

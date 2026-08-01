@@ -598,6 +598,12 @@ class SynxActivity : AppCompatActivity() {
         // v228. Счётчик корпуса и экспорт переехали сюда из Инструментов.
         val corpusText = findViewById<TextView>(R.id.synxCorpusText)
         lifecycleScope.launch { refreshCorpusSynx(corpusText) }
+        findViewById<TextView>(R.id.synxBackupButton).setOnClickListener {
+            startActivity(android.content.Intent(this, HistoryActivity::class.java)
+                .putExtra("open_backup", true))
+        }
+        DoodleUi.frame(findViewById<TextView>(R.id.synxBackupButton),
+            UiKit.ACCENT_LEARN, R.color.surface, 526L, DoodleBorderDrawable.MAT_MECH)
         findViewById<TextView>(R.id.synxImportButton).setOnClickListener {
             // Тип */* намеренно: провайдеры Android часто отдают CSV как
             // application/octet-stream, и фильтр по text/csv прячет файл.
