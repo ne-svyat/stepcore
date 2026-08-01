@@ -12,22 +12,48 @@ android {
         applicationId "com.vasil.stepcore"
         minSdk 30
         targetSdk 34
-        versionCode 280
+        versionCode 281
         versionName "1.81.0"
     }
 
+    // v285. Ключ подписи БОЛЬШЕ НЕ ЛЕЖИТ В РЕПОЗИТОРИИ.
+    //
+    // Было: release.keystore закоммичен, а пароль к нему лежал открытым
+    // текстом прямо в этом файле. Любой, кто видел репозиторий, мог собрать APK,
+    // подписанный тем же ключом, и он установился бы пользователю поверх
+    // настоящего как обычное обновление. Тот ключ считается сгоревшим.
+    //
+    // Стало: путь и пароли берутся из окружения. Локально - из
+    // ~/.gradle/gradle.properties (файл вне репозитория), в GitHub Actions -
+    // из Secrets. Если ключа нет, сборка НЕ падает: подписывается
+    // стандартным отладочным ключом, просто такой APK не встанет
+    // обновлением поверх подписанного настоящим.
+    def ksPath = System.getenv("STEPCORE_KEYSTORE") ?:
+        (project.findProperty("stepcoreKeystore") ?: "")
+    def ksPass = System.getenv("STEPCORE_KEYSTORE_PASSWORD") ?:
+        (project.findProperty("stepcoreKeystorePassword") ?: "")
+    def ksAlias = System.getenv("STEPCORE_KEY_ALIAS") ?:
+        (project.findProperty("stepcoreKeyAlias") ?: "stepcore")
+    def ksAliasPass = System.getenv("STEPCORE_KEY_PASSWORD") ?:
+        (project.findProperty("stepcoreKeyPassword") ?: "")
+    def haveKeystore = ksPath && !ksPath.isEmpty() && file(ksPath).exists()
+
     signingConfigs {
         stable {
-            storeFile file("release.keystore")
-            storePassword "stepcore123"
-            keyAlias "stepcore"
-            keyPassword "stepcore123"
+            if (haveKeystore) {
+                storeFile file(ksPath)
+                storePassword ksPass
+                keyAlias ksAlias
+                keyPassword ksAliasPass
+            }
         }
     }
 
     buildTypes {
         debug {
-            signingConfig signingConfigs.stable
+            if (haveKeystore) {
+                signingConfig signingConfigs.stable
+            }
         }
     }
 

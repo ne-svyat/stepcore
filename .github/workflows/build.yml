@@ -19,8 +19,26 @@ jobs:
         with:
           gradle-version: '8.7'
 
+      # v285. Ключ приезжает из Secrets, а не из репозитория. Если секреты
+      # не заданы (например, в форке), шаг просто ничего не создаёт, и
+      # сборка идёт с отладочной подписью - падать она не должна.
+      - name: Restore signing key
+        if: ${{ secrets.KEYSTORE_BASE64 != '' }}
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/stepcore.keystore"
+          echo "STEPCORE_KEYSTORE=$RUNNER_TEMP/stepcore.keystore" >> "$GITHUB_ENV"
+
       - name: Build debug APK
+        env:
+          STEPCORE_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          STEPCORE_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          STEPCORE_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: gradle assembleDebug
+
+      # Ключ не должен пережить сборку даже на одноразовой машине.
+      - name: Wipe signing key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/stepcore.keystore"
 
       - uses: actions/upload-artifact@v4
         with:

@@ -3,3 +3,8 @@
 /v*.sh
 out_v*.sh
 out_v*.sh
+# v285: ключи подписи и локальные настройки не попадают в git
+*.keystore
+*.jks
+keystore.properties
+local.properties
