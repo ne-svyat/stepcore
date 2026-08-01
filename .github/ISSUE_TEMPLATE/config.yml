@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Настройка на Xiaomi, Samsung, Huawei
+    url: https://github.com/ne-svyat/stepcore/blob/main/MIUI_SETUP.md
+    about: Счёт прерывается в фоне — сначала загляните сюда, скорее всего дело в настройках системы
+  - name: Что делает приложение и почему оно офлайн
+    url: https://github.com/ne-svyat/stepcore/blob/main/README.md
+    about: Разрешения, устройство счёта, план развития

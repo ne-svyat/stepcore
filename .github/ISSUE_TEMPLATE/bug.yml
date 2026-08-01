@@ -1,0 +1,90 @@
+name: Что-то работает не так
+description: Счёт шагов, расход батареи, экран, вылет — всё сюда
+labels: ["баг"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Спасибо, что нашли время написать.
+
+        Приложение написано и проверено на **одном** телефоне (Xiaomi 13T Pro,
+        HyperOS). Как оно ведёт себя на других — я не знаю, поэтому ваш отчёт
+        имеет реальную ценность.
+
+        Данные никуда не отправляются автоматически. Всё, что вы приложите
+        к этому сообщению, вы прикладываете сами и осознанно.
+
+  - type: input
+    id: device
+    attributes:
+      label: Телефон
+      description: Производитель и модель
+      placeholder: Samsung Galaxy S23
+    validations:
+      required: true
+
+  - type: input
+    id: android
+    attributes:
+      label: Android и оболочка
+      description: Версия Android и оболочка, если она есть
+      placeholder: Android 14, One UI 6.1
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Версия StepCore
+      description: Профиль → внизу экрана
+      placeholder: 1.83.0
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: Что произошло
+      description: Своими словами, без терминов — так понятнее
+      placeholder: |
+        Прошёл около часа, приложение показало 300 шагов,
+        системный шагомер за то же время — 4200.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Как это повторить
+      description: Если знаете, при каких условиях это случается
+      placeholder: |
+        1. Запустил счёт
+        2. Заблокировал экран, положил в карман
+        3. Через полчаса открыл — счёт стоит
+
+  - type: dropdown
+    id: background
+    attributes:
+      label: Экран был выключен?
+      options:
+        - Да, телефон лежал в кармане
+        - Нет, экран был включён
+        - И так, и так
+        - Не помню
+
+  - type: checkboxes
+    id: miui
+    attributes:
+      label: Настройки системы
+      options:
+        - label: Разрешил автозапуск и снял ограничения батареи для StepCore
+        - label: Не проверял / не нашёл такие настройки
+
+  - type: textarea
+    id: export
+    attributes:
+      label: Файл диагностики
+      description: |
+        Необязательно, но помогает больше всего.
+        SYNX → «⚙ Диагностика» или Профиль дня → «⚕ Диагностика сбора».
+        Файл ложится в Downloads — перетащите его сюда.
