@@ -283,6 +283,11 @@ class StepService : Service(), SensorEventListener {
     private var idleSinceMs = 0L
 
     private var calibrating: String? = null
+    // v295. Независимый измеритель темпа бега. Живёт только во время
+    // калибровки бега, детектор не читает и не трогает. В этом релизе
+    // работает в режиме ДИАГНОСТИКИ: показывает и пишет в журнал, но
+    // профиль бега НЕ меняет - сначала смотрим на числа с живой пробежки.
+    private val runMeter = RunTempoMeter()
     private val calIntervals = ArrayList<Long>()
     // Диагностика V11.12: амплитуда удара и фон гироскопа НА КАЖДЫЙ принятый
     // шаг калибровки, параллельно calIntervals. По этим данным проектируется
@@ -600,6 +605,7 @@ class StepService : Service(), SensorEventListener {
 
     private fun startCalibration(kind: String) {
         calibrating = kind
+        if (kind == "run") runMeter.reset()
         calIntervals.clear()
         calAmps.clear()
         calGyros.clear()
@@ -692,6 +698,7 @@ class StepService : Service(), SensorEventListener {
     }
 
     private fun publishCalProgress(kind: String) {
+        if (kind == "run") { publishRunProgress(); return }
         val n = calIntervals.size
         val label = if (kind == "walk") "Ходьба" else "Бег"
         if (n < MIN_CAL_INTERVALS) {
@@ -713,6 +720,23 @@ class StepService : Service(), SensorEventListener {
             "$label: чистых шагов $n · темп $median мс · $rhythm$noise · можно завершать"
     }
 
+    /**
+     * v295. Прогресс бега берётся у независимого измерителя. Показываем
+     * СЫРЫЕ числа: сколько беговых шагов поймано и какой темп выходит.
+     * Пока это диагностика - человек смотрит и говорит, похоже ли на правду.
+     */
+    private fun publishRunProgress() {
+        val n = runMeter.stepCount()
+        val med = runMeter.medianIntervalMs()
+        StepsState.calibrationState.value = if (med <= 0L) {
+            "Бег: беговых шагов " + n + " · нужно ещё " + RUN_METER_MIN_STEPS
+        } else {
+            val hz = 1000f / med
+            "Бег: " + n + " шагов · " + "%.2f".format(hz) + " Гц · разброс " +
+                runMeter.spreadPct() + "%"
+        }
+    }
+
     private fun finishCalibration() {
         val kind = calibrating ?: return
         calibrating = null
@@ -732,6 +756,30 @@ class StepService : Service(), SensorEventListener {
                     "%d/%.1f/%.1f".format(calIntervals[i],
                         calAmps.getOrElse(i) { 0f }, calGyros.getOrElse(i) { 0f })
                 })
+        }
+        // v295. Бег: отчёт независимого измерителя. Профиль НЕ трогаем -
+        // это диагностический прогон, чтобы сверить числа с живой пробежкой.
+        if (kind == "run") {
+            val ivs = runMeter.intervalsSnapshot()
+            val amps = runMeter.ampsSnapshot()
+            if (ivs.isNotEmpty()) {
+                logEvent("[диаг] изм.бег интервалы (" + ivs.size + "): " +
+                    ivs.joinToString(","))
+                logEvent("[диаг] изм.бег амплитуды: " +
+                    amps.joinToString(" ") { "%.1f".format(it) })
+            }
+            val med = runMeter.medianIntervalMs()
+            StepsState.calibrationState.value = if (med <= 0L) {
+                "Бег: чистых беговых шагов не набралось (" +
+                    runMeter.stepCount() + "). Профиль не изменён."
+            } else {
+                "ИЗМЕРЕНО: " + "%.2f".format(1000f / med) + " Гц (" + med +
+                    " мс), шагов " + runMeter.stepCount() + ", разброс " +
+                    runMeter.spreadPct() + "%, амплитуда " +
+                    "%.1f".format(runMeter.medianAmp()) +
+                    ".\nПрофиль пока НЕ меняется - это проверочный прогон."
+            }
+            return
         }
         if (calIntervals.size < MIN_CAL_INTERVALS) {
             StepsState.calibrationState.value =
@@ -1281,6 +1329,14 @@ class StepService : Service(), SensorEventListener {
                         )
                     }
                     return
+                }
+                // v295. Отдельный канал калибровки бега. Стоит ДО детектора
+                // и от него не зависит: у детектора замкнутый круг с режимом
+                // RUN (измерено 01.08), из-за которого он подтверждает каждый
+                // второй беговой шаг.
+                if (calibrating == "run") {
+                    runMeter.onAccel(
+                        event.values[0], event.values[1], event.values[2], timeMs)
                 }
                 val added = detector.onAccel(
                     event.values[0], event.values[1], event.values[2], timeMs
@@ -2206,6 +2262,10 @@ class StepService : Service(), SensorEventListener {
         // Диагностика STEP_DETECTOR: потолок выборки, чтобы длинная
         // калибровка не раздувала память и строку журнала.
         private const val HW_DET_DIAG_CAP = 300
+        // v295. Сколько беговых шагов нужно измерителю. 20 при темпе
+        // 2.8 Гц это около 7 секунд бега - на синтетике разброс на такой
+        // выборке уже устойчив.
+        private const val RUN_METER_MIN_STEPS = 20
         private const val CAL_MIN_STEP_MS = 200L
         private const val CAL_MAX_STEP_MS = 2000L
         // Тактильная калибровка (V11.6). Тик слабее обычной haptic (255),
