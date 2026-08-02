@@ -234,6 +234,18 @@ interface StepDao {
     @Query("SELECT * FROM hours WHERE dateHour LIKE :dayPrefix || '%' ORDER BY dateHour ASC")
     suspend fun hoursOfDay(dayPrefix: String): List<HourRecord>
 
+    // v301. Диагностика пустого Timeline. Экран, который показывает нули,
+    // обязан уметь объяснить, ПОЧЕМУ они нули: сам факт «пусто» ничего не
+    // говорит - данных нет, или они есть, но не читаются.
+    @Query("SELECT COUNT(*) FROM hours")
+    suspend fun countHoursAll(): Int
+
+    @Query("SELECT COUNT(*) FROM hours WHERE dateHour LIKE :dayPrefix || '%'")
+    suspend fun countHoursOfDay(dayPrefix: String): Int
+
+    @Query("SELECT dateHour FROM hours ORDER BY dateHour DESC LIMIT 3")
+    suspend fun lastHourKeys(): List<String>
+
     /** Вся почасовая таблица - для полного бэкапа (V11.15). */
     @Query("SELECT * FROM hours ORDER BY dateHour ASC")
     suspend fun allHours(): List<HourRecord>

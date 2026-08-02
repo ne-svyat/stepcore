@@ -157,6 +157,35 @@ class TimelineActivity : AppCompatActivity() {
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
+    /**
+     * v301. Почему пусто. Экран с нулями обязан объяснять причину, иначе
+     * поиск превращается в перебор гипотез: данных нет вообще, данные
+     * есть но не за этот день, или ключ часа не совпадает с запросом.
+     * Все три случая различимы только числами, поэтому они здесь.
+     */
+    private suspend fun emptyReason(dao: StepDao, day: String): String {
+        val all = dao.countHoursAll()
+        val today = dao.countHoursOfDay(day)
+        val rec = dao.day(day)
+        val steps = (rec?.walkSteps ?: 0) + (rec?.runSteps ?: 0)
+        val keys = dao.lastHourKeys()
+        return when {
+            all == 0 && steps == 0 ->
+                "Часов нет и шагов за день нет."
+            all == 0 ->
+                "Шагов за день " + steps + ", но почасовая таблица ПУСТА. " +
+                "Значит часы не записываются. Прошедшие часы вернуть нельзя, " +
+                "новые появятся по ходу дня."
+            today == 0 ->
+                "Всего часов в базе " + all + ", но за " + day + " ни одного. " +
+                "Последние записанные: " + keys.joinToString(", ") +
+                ". Похоже, ключ часа не совпадает с датой дня."
+            else ->
+                "Часов за день " + today + ", шагов " + steps +
+                " - данные есть, но не попали на график."
+        }
+    }
+
     private fun render() {
         paintChips()
         lifecycleScope.launch {
@@ -195,6 +224,9 @@ class TimelineActivity : AppCompatActivity() {
                     }
                     basalDays = if (current == Scale.TODAY) todayFraction else 1f
                     labelEvery = 3
+                    if (walkSum + runSum == 0) {
+                        hint.text = emptyReason(dao, day.toString())
+                    }
                     val rec = dao.day(day.toString())
                     // Сводка дня: вчера - из снапшота, сегодня - на лету.
                     rec?.let {
