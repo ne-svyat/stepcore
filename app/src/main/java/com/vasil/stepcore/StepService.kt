@@ -288,6 +288,20 @@ class StepService : Service(), SensorEventListener {
     // работает в режиме ДИАГНОСТИКИ: показывает и пишет в журнал, но
     // профиль бега НЕ меняет - сначала смотрим на числа с живой пробежки.
     private val runMeter = RunTempoMeter()
+
+    // v300. Почасовой учёт вынесен из службы. Служба только отдаёт дельту -
+    // как и с корпусом признаков и измерителем бега.
+    private val hourAcc by lazy {
+        HourAccumulator(
+            nowKey = { hourKeyNow() },
+            write = { k, w, r, up, down, cadSum, cadN ->
+                val dao = AppDb.get(this@StepService).dao()
+                dao.ensureHour(k)
+                dao.addHour(k, w, r, up, down, cadSum, cadN)
+            },
+            onError = { msg -> logEvent("ОШИБКА записи часа: " + msg) }
+        )
+    }
     private var runUiTick = 0
     private val calIntervals = ArrayList<Long>()
     // Диагностика V11.12: амплитуда удара и фон гироскопа НА КАЖДЫЙ принятый
@@ -1783,7 +1797,33 @@ class StepService : Service(), SensorEventListener {
         scope.launch { AppDb.get(this@StepService).dao().insertSample(sample) }
     }
 
+    /**
+     * v300. Час пишется СРАЗУ, а не копится в памяти службы.
+     *
+     * Прежняя схема отдавала час в базу только при смене часа или в
+     * `persistDb`. Любой путь, где поля обнулялись или служба
+     * перезапускалась, терял час молча - и таблица часов оставалась
+     * пустой при живом счёте шагов. Timeline и посегментная дистанция
+     * читают именно её, поэтому пустыми оказывались они, а не шаги.
+     *
+     * Накопление осталось только для каденса: он приходит не с каждой
+     * дельтой и суммируется до ближайшей записи.
+     */
     private fun bumpHour(w: Int, r: Int) {
+        val d = w + r
+        var up = 0; var down = 0
+        when (TerrainState.incline.value) {
+            TerrainState.Incline.UP -> up = d
+            TerrainState.Incline.DOWN -> down = d
+            else -> {}
+        }
+        val cs = pendCadSum; val cn = pendCadN
+        pendCadSum = 0L; pendCadN = 0
+        scope.launch { hourAcc.add(w, r, up, down, cs, cn) }
+        return
+    }
+
+    private fun bumpHourLegacyUnused(w: Int, r: Int) {
         val k = hourKeyNow()
         if (k != pendKey) { flushHour(); pendKey = k }
         pendW += w; pendR += r
