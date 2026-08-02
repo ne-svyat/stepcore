@@ -1888,7 +1888,7 @@ class StepService : Service(), SensorEventListener {
         flushHour()
         val d = currentDay; val w = walkSteps; val r = runSteps
         scope.launch {
-            AppDb.get(this@StepService).dao().upsertDay(DayRecord(d, w, r))
+            AppDb.get(this@StepService).dao().saveDaySteps(d, w, r)
         }
     }
 
@@ -1909,7 +1909,7 @@ class StepService : Service(), SensorEventListener {
         runBlocking {
             val dao = AppDb.get(this@StepService).dao()
             if (k.isNotEmpty() && (w > 0 || r > 0)) { dao.ensureHour(k); dao.addHour(k, w, r, up, down, pcs, pcn) }
-            dao.upsertDay(DayRecord(d, dw, dr))
+            dao.saveDaySteps(d, dw, dr)
         }
     }
 

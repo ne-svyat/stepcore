@@ -166,6 +166,34 @@ interface StepDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertDay(day: DayRecord)
 
+    // v307. Обновить ТОЛЬКО шаги дня, не трогая снимок.
+    //
+    // Найдено 02.08: дистанция и калории обнулились сразу по всем дням.
+    // Причина - `upsertDay(DayRecord(d, w, r))` в двух местах: конструктор
+    // заполняет остальные поля нулями по умолчанию, а @Insert с REPLACE
+    // заменяет строку ЦЕЛИКОМ. То есть каждое сохранение шагов стирало
+    // дистанцию, активные и базовые калории и активное время.
+    // Шаги при этом оставались - их и писали, поэтому поломка выглядела
+    // как «шаги есть, остального нет».
+    //
+    // Точечное обновление вместо замены строки: снимок дня переживает
+    // сохранение шагов. Прошлое неизменно - в том числе от нас самих.
+    @Query("UPDATE days SET walkSteps = :w, runSteps = :r WHERE date = :date")
+    suspend fun updateDaySteps(date: String, w: Int, r: Int): Int
+
+    /** Создать строку дня, если её ещё нет (нулевой снимок - это норма для
+     *  только что начавшегося дня, в отличие от затирания готового). */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertDayIfAbsent(day: DayRecord)
+
+    /** Сохранить шаги дня, не разрушая снимок. */
+    suspend fun saveDaySteps(date: String, w: Int, r: Int) {
+        if (updateDaySteps(date, w, r) == 0) {
+            insertDayIfAbsent(DayRecord(date, w, r))
+            updateDaySteps(date, w, r)
+        }
+    }
+
     /**
      * Вставка дня ТОЛЬКО если его нет (V11.16, импорт). Импорт никогда не
      * перезаписывает существующие данные - REPLACE тут был бы потерей.
