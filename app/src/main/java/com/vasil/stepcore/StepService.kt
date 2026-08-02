@@ -303,6 +303,12 @@ class StepService : Service(), SensorEventListener {
         )
     }
     private var runUiTick = 0
+
+    // v311. Теневой наблюдатель бега. Отдельный экземпляр измерителя -
+    // калибровочный трогать нельзя, иначе теневой счёт испортит замер.
+    // Метку не меняет: только пишет в журнал, что пометил бы.
+    private val shadowMeter = RunTempoMeter()
+    private val shadowWatch = ShadowRunWatch()
     private val calIntervals = ArrayList<Long>()
     // Диагностика V11.12: амплитуда удара и фон гироскопа НА КАЖДЫЙ принятый
     // шаг калибровки, параллельно calIntervals. По этим данным проектируется
@@ -631,6 +637,8 @@ class StepService : Service(), SensorEventListener {
 
     private fun startCalibration(kind: String) {
         calibrating = kind
+        // Тень на время калибровки замолкает и стартует с чистого листа.
+        shadowMeter.reset(); shadowWatch.clear()
         if (kind == "run") { runMeter.reset(); runUiTick = 0 }
         calIntervals.clear()
         calAmps.clear()
@@ -1299,6 +1307,9 @@ class StepService : Service(), SensorEventListener {
                     pendCadSum += (iv.toLong()) * delta
                     pendCadN += delta
                 }
+                // v311. Отдаём тени дельту чипа и решение ДЕТЕКТОРА - чтобы
+                // в журнале два мнения стояли рядом и их можно было сверить.
+                shadowWatch.onChipDelta(delta, asRun)
                 if (asRun) {
                     runSteps += delta; bumpHour(0, delta)
                     // v280. Отметка "бег видели". Нужна, чтобы общая точность
@@ -1411,6 +1422,16 @@ class StepService : Service(), SensorEventListener {
                 // и от него не зависит: у детектора замкнутый круг с режимом
                 // RUN (измерено 01.08), из-за которого он подтверждает каждый
                 // второй беговой шаг.
+                // v311. Тень: тот же поток отсчётов, никаких новых сенсоров
+                // и никакой лишней батареи. Во время калибровки молчит,
+                // чтобы не мешать замеру.
+                if (calibrating == null) {
+                    if (shadowMeter.onAccel(
+                            event.values[0], event.values[1], event.values[2], timeMs)) {
+                        shadowWatch.onPeak(timeMs)
+                    }
+                    shadowWatch.poll(timeMs)?.let { logEvent(it) }
+                }
                 if (calibrating == "run") {
                     // Прогресс идёт отсюда же: раньше экран обновлялся по
                     // тикам детектора и застревал на 15 шагах, пока измеритель
