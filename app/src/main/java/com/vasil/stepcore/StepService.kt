@@ -458,6 +458,17 @@ class StepService : Service(), SensorEventListener {
         screenOff = !pm.isInteractive
 
         StepsState.serviceRunning.value = true
+        scope.launch {
+            // v298. Разовая чистка негодных точек профиля. Одна такая точка
+            // (вес 0, записана до заполнения профиля) обнуляла дистанцию и
+            // активные калории всего дня. После чистки день пересчитается
+            // сам: снимки дня хранятся, а текущий день считается на лету.
+            runCatching {
+                val n = AppDb.get(this@StepService).dao().purgeUnusableProfiles()
+                if (n > 0) logEvent("Убрано пустых точек профиля: " + n +
+                    " - дистанция и калории пересчитаются")
+            }
+        }
         scope.launch {   // V9.6: автоочистка диаг-логов старше 14 дней
             val cutoff = System.currentTimeMillis() - 14L * 24 * 3600 * 1000
             runCatching { AppDb.get(this@StepService).dao().purgeOldDiagLogs(cutoff) }

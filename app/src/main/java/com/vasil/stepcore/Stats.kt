@@ -130,6 +130,11 @@ object Stats {
     suspend fun energyForHour(c: Context, hour: HourRecord): Pair<Int, Float> {
         if (hour.walkSteps <= 0 && hour.runSteps <= 0) return 0 to 0f
         val p = ProfileHistory.at(c, hourEndMs(hour.dateHour))
+        // v298. Профиль без веса больше сюда не доходит (ProfileHistory.at
+        // отбрасывает негодные точки), но проверка остаётся как последний
+        // рубеж: делить на нулевую массу нельзя, а выдумывать вес - тем
+        // более. Ноль здесь означает «не смогли посчитать», и главный
+        // экран об этом честно пишет.
         val mass = p.weightKg + p.loadKg
         if (mass <= 0f) return 0 to 0f
         // v220. Каденс ЧАСА, если детектор его мерил; иначе - константа

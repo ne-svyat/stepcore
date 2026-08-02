@@ -256,6 +256,11 @@ interface StepDao {
     @Query("SELECT * FROM profile_history WHERE timestampMs <= :atMs ORDER BY timestampMs DESC LIMIT 1")
     suspend fun profileAt(atMs: Long): ProfileSnapshotRecord?
 
+    // v298. То же, но только среди годных точек.
+    @Query("SELECT * FROM profile_history WHERE timestampMs <= :atMs " +
+        "AND weightKg > 0 ORDER BY timestampMs DESC LIMIT 1")
+    suspend fun profileAtUsable(atMs: Long): ProfileSnapshotRecord?
+
     /**
      * Самая ранняя точка истории. Нужна как якорь для часов, прожитых ДО
      * первой записи (переход на V11): они замораживаются на первом известном
@@ -263,6 +268,18 @@ interface StepDao {
      */
     @Query("SELECT * FROM profile_history ORDER BY timestampMs ASC LIMIT 1")
     suspend fun earliestProfile(): ProfileSnapshotRecord?
+
+    // v298. Самая ранняя ГОДНАЯ точка. Точка с нулевым весом не является
+    // профилем - по ней нельзя посчитать ни калории, ни дистанцию.
+    @Query("SELECT * FROM profile_history WHERE weightKg > 0 " +
+        "ORDER BY timestampMs ASC LIMIT 1")
+    suspend fun earliestUsableProfile(): ProfileSnapshotRecord?
+
+    // v298. Разовая чистка: негодные точки, попавшие в историю до этой
+    // версии. Не удаляем чужое молча - удаляем ровно то, что нельзя
+    // использовать и что мешает считать день.
+    @Query("DELETE FROM profile_history WHERE weightKg <= 0")
+    suspend fun purgeUnusableProfiles(): Int
 
     // --- корпус уклона (Сегмент 3) ---
     @Insert

@@ -36,10 +36,29 @@ object ProfileHistory {
         )
     }
 
-    /** Вызывать СРАЗУ после реальной записи в SharedPreferences, не раньше. */
+    /**
+     * Вызывать СРАЗУ после реальной записи в SharedPreferences, не раньше.
+     *
+     * v298. Снимок с НУЛЕВЫМ весом не записывается вообще.
+     * Найдено на живом телефоне: после переустановки служба стартовала
+     * раньше, чем человек успел заполнить профиль, и положила в историю
+     * точку с весом 0. Дальше каждый час дня подтягивал именно её, и
+     * `energyForHour` при нулевой массе молча возвращал ноль И по
+     * калориям, И по дистанции - обе цифры считаются в ней. Базовый
+     * обмен при этом работал, потому что читает настройки напрямую,
+     * так что поломка выглядела как «шаги идут, километры нет».
+     *
+     * Пустая точка хуже отсутствия точки: отсутствие честно откатывается
+     * на текущий профиль, а нулевая молча обнуляет день.
+     */
     suspend fun record(c: Context, timestampMs: Long = System.currentTimeMillis()) {
-        AppDb.get(c).dao().insertProfileSnapshot(currentSnapshot(c, timestampMs))
+        val snap = currentSnapshot(c, timestampMs)
+        if (!isUsable(snap)) return
+        AppDb.get(c).dao().insertProfileSnapshot(snap)
     }
+
+    /** Снимок годен, только если по нему в принципе можно считать энергию. */
+    fun isUsable(s: ProfileSnapshotRecord): Boolean = s.weightKg > 0f
 
     /**
      * Профиль, действовавший в момент atMs.
@@ -53,6 +72,13 @@ object ProfileHistory {
      */
     suspend fun at(c: Context, atMs: Long): ProfileSnapshotRecord {
         val dao = AppDb.get(c).dao()
-        return dao.profileAt(atMs) ?: dao.earliestProfile() ?: currentSnapshot(c, atMs)
+        // v298. Негодная точка пропускается на КАЖДОЙ ступени отката, а не
+        // только на последней: одна нулевая запись в истории обнуляла весь
+        // день, хотя рядом лежали нормальные. Ноль не равен данным.
+        val exact = dao.profileAtUsable(atMs)
+        if (exact != null && isUsable(exact)) return exact
+        val earliest = dao.earliestUsableProfile()
+        if (earliest != null && isUsable(earliest)) return earliest
+        return currentSnapshot(c, atMs)
     }
 }
