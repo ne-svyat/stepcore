@@ -169,7 +169,23 @@ class TimelineActivity : AppCompatActivity() {
         val rec = dao.day(day)
         val steps = (rec?.walkSteps ?: 0) + (rec?.runSteps ?: 0)
         val keys = dao.lastHourKeys()
-        return when {
+        // v303. ПРОБНАЯ ЗАПИСЬ. Всё остальное - косвенные признаки: они
+        // говорят, что строк нет, но не говорят почему. Здесь мы прямо
+        // пробуем записать текущий час нулевой дельтой и смотрим, что
+        // ответит база. Нулевая дельта ничего не портит: строка часа
+        // создаётся с нулями, ровно как её создала бы служба.
+        val probe = runCatching {
+            val k = java.time.LocalDateTime.now().let {
+                "%04d-%02d-%02d %02d".format(it.year, it.monthValue, it.dayOfMonth, it.hour)
+            }
+            dao.ensureHour(k)
+            dao.addHour(k, 0, 0, 0, 0, 0L, 0)
+            val after = dao.countHoursOfDay(day)
+            "пробная запись прошла, часов за день стало " + after
+        }.getOrElse { e ->
+            "ПРОБНАЯ ЗАПИСЬ УПАЛА: " + (e.message ?: e.javaClass.simpleName)
+        }
+        return probe + ".\n" + when {
             all == 0 && steps == 0 ->
                 "Часов нет и шагов за день нет."
             all == 0 ->
