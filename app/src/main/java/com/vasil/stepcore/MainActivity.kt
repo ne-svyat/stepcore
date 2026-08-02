@@ -604,7 +604,15 @@ class MainActivity : AppCompatActivity() {
     /** Бейдж точности данных -> ведёт на экран Калибровки (V10). */
     private fun refreshAccuracyBadge() {
         val pct = CalibrationRegistry.overallPercent(this)
-        accuracyBadge.text = "Точность данных $pct% · настроить"
+        // v297. Ноль не равен отсутствию данных. Без веса и роста дистанция
+        // и активные калории физически не считаются, и рисовать вместо них
+        // «0,00 км» при «точности 100%» - враньё в двух местах сразу.
+        val prof = getSharedPreferences(StepService.PREFS, MODE_PRIVATE)
+        val noBody = prof.getFloat("p_weight", 0f) <= 0f ||
+            prof.getInt("p_height", 0) <= 0
+        accuracyBadge.text = if (noBody)
+            "Заполни вес и рост — без них дистанция и калории не считаются · настроить"
+        else "Точность данных $pct% · настроить"
         // V13.0 фаза 3: та же цифра, короткая подпись прямо на плитке -
         // одно вычисление, два места отображения, расхождения быть не может.
         calibrationAccuracyText.text = "точность $pct%"

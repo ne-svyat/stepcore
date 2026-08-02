@@ -78,7 +78,14 @@ class HistoryActivity : AppCompatActivity() {
             "run_min_interval", "run_max_interval",
             "cal_date_walk", "cal_date_run", "cal_date_stride",
             "slope_anchor_up", "slope_anchor_down", "slope_anchor_flat",
-            "slope_anchor_up_ms", "slope_anchor_down_ms", "slope_anchor_flat_ms"
+            "slope_anchor_up_ms", "slope_anchor_down_ms", "slope_anchor_flat_ms",
+            // v297. ПРОФИЛЬ. В v288 его пропустили, и это стоило дорого:
+            // после переустановки вес и рост не вернулись, масса вышла
+            // нулевой, а `energyForHour` при нулевой массе возвращает 0
+            // и по калориям, И по дистанции - обе цифры считаются в ней.
+            // Шаги при этом шли нормально, поэтому поломка выглядела как
+            // «приложение считает шаги, но не считает километры».
+            "p_weight", "p_height", "p_age", "p_sex", "p_load", "p_goal"
         )
     }
 
