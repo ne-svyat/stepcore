@@ -288,6 +288,7 @@ class StepService : Service(), SensorEventListener {
     // работает в режиме ДИАГНОСТИКИ: показывает и пишет в журнал, но
     // профиль бега НЕ меняет - сначала смотрим на числа с живой пробежки.
     private val runMeter = RunTempoMeter()
+    private var runUiTick = 0
     private val calIntervals = ArrayList<Long>()
     // Диагностика V11.12: амплитуда удара и фон гироскопа НА КАЖДЫЙ принятый
     // шаг калибровки, параллельно calIntervals. По этим данным проектируется
@@ -605,7 +606,7 @@ class StepService : Service(), SensorEventListener {
 
     private fun startCalibration(kind: String) {
         calibrating = kind
-        if (kind == "run") runMeter.reset()
+        if (kind == "run") { runMeter.reset(); runUiTick = 0 }
         calIntervals.clear()
         calAmps.clear()
         calGyros.clear()
@@ -662,6 +663,13 @@ class StepService : Service(), SensorEventListener {
      * не идёт.
      */
     private fun collectCalInterval(kind: String, added: Int, timeMs: Long) {
+        // v296. РАЗДЕЛЕНИЕ ПРОЦЕССОВ. Калибровка бега больше не зависит от
+        // детектора ни в чём: ни сбор, ни прогресс, ни отчёт. Измерено на
+        // контрольной пробежке 02.08 - человек насчитал 40-43 шага, детектор
+        // за то же время дал ДВА интервала, независимый измеритель - 44 пика.
+        // Смешивать источник, который работает, с источником, который на
+        // этом режиме молчит, значит портить первый вторым.
+        if (kind == "run") return
         if (calLastStepMs > 0 && added == 1) {
             val iv = timeMs - calLastStepMs
             if (iv in CAL_MIN_STEP_MS..CAL_MAX_STEP_MS) {
@@ -737,6 +745,64 @@ class StepService : Service(), SensorEventListener {
         }
     }
 
+
+    /**
+     * v296. Завершение калибровки бега. Отдельная функция намеренно:
+     * у бега свой источник, свои пороги и свой текст, и ни одна строка
+     * отсюда не должна влиять на ходьбу.
+     *
+     * Данные пишутся в профиль, потому что измеритель сверен с реальностью:
+     * на контрольной пробежке человек насчитал 40-43 шага, измеритель дал
+     * 44 пика (43 интервала). Ворота качества те же, что у ходьбы, - при
+     * рваном ритме профиль НЕ меняется.
+     */
+    private fun finishRunCalibration() {
+        val ivs = runMeter.intervalsSnapshot()
+        val amps = runMeter.ampsSnapshot()
+        if (ivs.isNotEmpty()) {
+            // Сырьё в журнал ВСЕГДА, даже если ворота не пройдены: эти
+            // данные нельзя собрать задним числом, а разбирать неудачные
+            // попытки важнее, чем удачные.
+            logEvent("[диаг] изм.бег интервалы (" + ivs.size + "): " +
+                ivs.joinToString(","))
+            logEvent("[диаг] изм.бег амплитуды: " +
+                amps.joinToString(" ") { "%.1f".format(it) })
+        }
+        val med = runMeter.medianIntervalMs()
+        val steps = runMeter.stepCount()
+        if (steps < RUN_METER_MIN_STEPS || med <= 0L) {
+            StepsState.calibrationState.value =
+                "Беговых шагов набралось " + steps + ", нужно " +
+                RUN_METER_MIN_STEPS + ". Профиль не изменён."
+            return
+        }
+        val spread = runMeter.spreadPct()
+        if (spread > CAL_SPREAD_OK_PCT) {
+            StepsState.calibrationState.value =
+                "Темп получился " + "%.2f".format(1000f / med) + " Гц, но ритм " +
+                "рваный (разброс " + spread + "%, допустимо " + CAL_SPREAD_OK_PCT +
+                "%). Профиль НЕ изменён.\n\nЧаще всего это телефон в руке: " +
+                "размах руки добавляет пики. Попробуй убрать его в карман и " +
+                "пробежать ровным темпом без ускорений."
+            return
+        }
+        val lo = (med * 0.65).toLong()
+        val hi = (med * 1.35).toLong()
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+            .putLong("run_min_interval", lo)
+            .putLong("run_max_interval", hi)
+            .apply()
+        loadProfile()
+        scope.launch { ProfileHistory.record(this@StepService) }
+        CalibrationRegistry.markDone(this, CalibrationRegistry.Kind.RUN_TEMPO)
+        logEvent("Калибровка бега: " + "%.2f".format(1000f / med) + " Гц (" +
+            med + " мс), шагов " + steps + ", разброс " + spread + "%")
+        StepsState.calibrationState.value =
+            "Готово: твой бег = " + "%.2f".format(1000f / med) + " Гц (" + med +
+            " мс/шаг), диапазон " + lo + "-" + hi + " мс.\nШагов " + steps +
+            ", разброс " + spread + "%."
+    }
+
     private fun finishCalibration() {
         val kind = calibrating ?: return
         calibrating = null
@@ -757,30 +823,10 @@ class StepService : Service(), SensorEventListener {
                         calAmps.getOrElse(i) { 0f }, calGyros.getOrElse(i) { 0f })
                 })
         }
-        // v295. Бег: отчёт независимого измерителя. Профиль НЕ трогаем -
-        // это диагностический прогон, чтобы сверить числа с живой пробежкой.
-        if (kind == "run") {
-            val ivs = runMeter.intervalsSnapshot()
-            val amps = runMeter.ampsSnapshot()
-            if (ivs.isNotEmpty()) {
-                logEvent("[диаг] изм.бег интервалы (" + ivs.size + "): " +
-                    ivs.joinToString(","))
-                logEvent("[диаг] изм.бег амплитуды: " +
-                    amps.joinToString(" ") { "%.1f".format(it) })
-            }
-            val med = runMeter.medianIntervalMs()
-            StepsState.calibrationState.value = if (med <= 0L) {
-                "Бег: чистых беговых шагов не набралось (" +
-                    runMeter.stepCount() + "). Профиль не изменён."
-            } else {
-                "ИЗМЕРЕНО: " + "%.2f".format(1000f / med) + " Гц (" + med +
-                    " мс), шагов " + runMeter.stepCount() + ", разброс " +
-                    runMeter.spreadPct() + "%, амплитуда " +
-                    "%.1f".format(runMeter.medianAmp()) +
-                    ".\nПрофиль пока НЕ меняется - это проверочный прогон."
-            }
-            return
-        }
+        // v296. Бег: полностью свой путь. Сверено с контрольным счётом
+        // 02.08 - 43 интервала при 40-43 шагах, посчитанных вслух. Один пик
+        // равен одному шагу, удвоения нет. Медиана 329 мс = 3.04 Гц.
+        if (kind == "run") { finishRunCalibration(); return }
         if (calIntervals.size < MIN_CAL_INTERVALS) {
             StepsState.calibrationState.value =
                 "Мало данных (${calIntervals.size + 1} шагов), профиль не изменён"
@@ -1335,8 +1381,16 @@ class StepService : Service(), SensorEventListener {
                 // RUN (измерено 01.08), из-за которого он подтверждает каждый
                 // второй беговой шаг.
                 if (calibrating == "run") {
-                    runMeter.onAccel(
-                        event.values[0], event.values[1], event.values[2], timeMs)
+                    // Прогресс идёт отсюда же: раньше экран обновлялся по
+                    // тикам детектора и застревал на 15 шагах, пока измеритель
+                    // набирал 44. Свой процесс - свой прогресс.
+                    if (runMeter.onAccel(
+                            event.values[0], event.values[1], event.values[2], timeMs)) {
+                        runUiTick++
+                        if (runUiTick == 1 || runUiTick % CAL_UI_EVERY == 0) {
+                            publishRunProgress()
+                        }
+                    }
                 }
                 val added = detector.onAccel(
                     event.values[0], event.values[1], event.values[2], timeMs
