@@ -181,10 +181,9 @@ interface StepDao {
     @Query("UPDATE days SET walkSteps = :w, runSteps = :r WHERE date = :date")
     suspend fun updateDaySteps(date: String, w: Int, r: Int): Int
 
-    /** Создать строку дня, если её ещё нет (нулевой снимок - это норма для
-     *  только что начавшегося дня, в отличие от затирания готового). */
-    @Insert(onConflict = OnConflictStrategy.IGNORE)
-    suspend fun insertDayIfAbsent(day: DayRecord)
+    // v308. Своя вставка не нужна: insertDayIfAbsent уже объявлена ниже
+    // с тем же поведением (IGNORE). Дубликат объявления - ошибка сборки
+    // «Conflicting overloads», её ловит только компилятор.
 
     /** Сохранить шаги дня, не разрушая снимок. */
     suspend fun saveDaySteps(date: String, w: Int, r: Int) {
