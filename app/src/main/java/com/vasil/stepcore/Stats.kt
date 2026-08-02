@@ -236,7 +236,30 @@ object Stats {
     ): Triple<Int, Int, Int> {
         val hours = AppDb.get(c).dao().hoursOfDay(date)
         if (hours.isEmpty()) return snapshotForDay(c, walkSteps, runSteps)
-        val (active, distM) = segmentedActiveAndDistance(c, hours)
-        return Triple(active, kcalBasalFullDay(c), distM.toInt())
+        var active = 0
+        var dist = 0f
+        var hourW = 0
+        var hourR = 0
+        val seg = segmentedActiveAndDistance(c, hours)
+        active = seg.first
+        dist = seg.second
+        for (h in hours) { hourW += h.walkSteps; hourR += h.runSteps }
+        // v310. ТОТ ЖЕ ОСТАТОК, ЧТО И В РАСЧЁТЕ НА ЛЕТУ.
+        //
+        // Это ТРЕТИЙ путь вычисления дистанции, и в v309 его пропустили:
+        // правку получила версия по дате, а служба пишет снимок дня через
+        // эту. Главный экран показывает именно снимок - поэтому на нём
+        // осталось 4.82 км, хотя Timeline уже считал иначе.
+        //
+        // Шаги, записанные до включения почасового учёта, обязаны попадать
+        // в снимок так же, как и в расчёт на лету, иначе два экрана будут
+        // показывать разные километры одного дня.
+        val restW = (walkSteps - hourW).coerceAtLeast(0)
+        val restR = (runSteps - hourR).coerceAtLeast(0)
+        if (restW > 0 || restR > 0) {
+            active += kcalActive(c, restW, restR)
+            dist += distanceKm(c, restW, restR) * 1000f
+        }
+        return Triple(active, kcalBasalFullDay(c), dist.toInt())
     }
 }
