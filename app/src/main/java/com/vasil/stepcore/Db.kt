@@ -246,6 +246,16 @@ interface StepDao {
     @Query("SELECT dateHour FROM hours ORDER BY dateHour DESC LIMIT 3")
     suspend fun lastHourKeys(): List<String>
 
+    // v304. Дамп таблиц как есть. Косвенные признаки отвечали на вопрос
+    // «сколько строк», но не на вопрос «что в них лежит»: ключ, нули или
+    // значения, тот ли день. Источник правды - сама база, поэтому
+    // показываем строки целиком, а не выводы о них.
+    @Query("SELECT * FROM hours ORDER BY dateHour DESC LIMIT 20")
+    suspend fun dumpHours(): List<HourRecord>
+
+    @Query("SELECT * FROM days ORDER BY date DESC LIMIT 7")
+    suspend fun dumpDays(): List<DayRecord>
+
     /** Вся почасовая таблица - для полного бэкапа (V11.15). */
     @Query("SELECT * FROM hours ORDER BY dateHour ASC")
     suspend fun allHours(): List<HourRecord>

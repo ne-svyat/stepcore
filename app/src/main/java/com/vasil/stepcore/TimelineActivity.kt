@@ -202,6 +202,43 @@ class TimelineActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * v304. Дамп таблиц прямо на экран. База лежит в приватной папке
+     * приложения, снаружи её не открыть, поэтому единственный способ
+     * увидеть настоящие строки - показать их отсюда.
+     *
+     * Печатаются строки КАК ЕСТЬ: ключ часа, шаги, уклон, каденс. По ним
+     * сразу видно, пуста ли таблица, тот ли ключ и нули там или значения.
+     */
+    private suspend fun dumpTables(dao: StepDao): String {
+        val sb = StringBuilder()
+        val hours = runCatching { dao.dumpHours() }.getOrElse {
+            return "ЧТЕНИЕ hours УПАЛО: " + (it.message ?: it.javaClass.simpleName)
+        }
+        sb.append("hours: строк ").append(hours.size)
+        if (hours.isEmpty()) {
+            sb.append(" — ТАБЛИЦА ПУСТА")
+        } else {
+            for (h in hours.take(12)) {
+                sb.append("\n  [").append(h.dateHour).append("] ход ")
+                    .append(h.walkSteps).append(" бег ").append(h.runSteps)
+                    .append(" вверх ").append(h.upSteps)
+                    .append(" вниз ").append(h.downSteps)
+                    .append(" кад ").append(h.cadenceStepSum)
+            }
+        }
+        val days = runCatching { dao.dumpDays() }.getOrElse {
+            return sb.toString() + "\nЧТЕНИЕ days УПАЛО: " +
+                (it.message ?: it.javaClass.simpleName)
+        }
+        sb.append("\ndays: строк ").append(days.size)
+        for (d in days.take(4)) {
+            sb.append("\n  [").append(d.date).append("] ход ")
+                .append(d.walkSteps).append(" бег ").append(d.runSteps)
+        }
+        return sb.toString()
+    }
+
     private fun render() {
         paintChips()
         lifecycleScope.launch {
@@ -252,7 +289,8 @@ class TimelineActivity : AppCompatActivity() {
                     // про неполную детализацию вместо причины. Присвоение
                     // подписи должно быть ОДНО, иначе побеждает последнее.
                     hint.text = when {
-                        walkSum + runSum == 0 -> emptyReason(dao, day.toString())
+                        walkSum + runSum == 0 ->
+                            emptyReason(dao, day.toString()) + "\n\n" + dumpTables(dao)
                         dayTotal > walkSum + runSum ->
                             "За день всего $dayTotal шагов · по часам разложено " +
                             (walkSum + runSum) + " · остальное записано до того, " +
