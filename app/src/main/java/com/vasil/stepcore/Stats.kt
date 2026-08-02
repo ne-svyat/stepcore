@@ -181,13 +181,42 @@ object Stats {
      * профиль на весь день), но честнее нуля.
      */
     suspend fun segmentedActiveAndDistance(c: Context, date: String): Pair<Int, Float> {
-        val hours = AppDb.get(c).dao().hoursOfDay(date)
-        if (hours.isNotEmpty()) return segmentedActiveAndDistance(c, hours)
-        val d = AppDb.get(c).dao().day(date)
-        val w = d?.walkSteps ?: 0
-        val r = d?.runSteps ?: 0
-        if (w == 0 && r == 0) return 0 to 0f
-        return kcalActive(c, w, r) to (distanceKm(c, w, r) * 1000f)
+        val dao = AppDb.get(c).dao()
+        val hours = dao.hoursOfDay(date)
+        val d = dao.day(date)
+        val dayW = d?.walkSteps ?: 0
+        val dayR = d?.runSteps ?: 0
+        if (dayW == 0 && dayR == 0 && hours.isEmpty()) return 0 to 0f
+
+        // Часть дня, разложенная по часам: считается точно, каждый час со
+        // своим профилем.
+        var active = 0
+        var dist = 0f
+        var hourW = 0
+        var hourR = 0
+        if (hours.isNotEmpty()) {
+            val seg = segmentedActiveAndDistance(c, hours)
+            active = seg.first
+            dist = seg.second
+            for (h in hours) { hourW += h.walkSteps; hourR += h.runSteps }
+        }
+
+        // v309. ОСТАТОК ДНЯ. Раньше при НЕПОЛНЫХ часах считалась только их
+        // часть, а всё, что записано до включения почасового учёта, просто
+        // выпадало. Измерено 02.08: за день 32396 шагов, по часам разложено
+        // 6539, и дистанция показывала 4.88 км вместо 24.17 - потерялось
+        // 25857 шагов, то есть 19.3 км.
+        // Откат из v299 срабатывал только при ПОЛНОСТЬЮ пустых часах, а
+        // самый частый случай - часы неполные.
+        // Остаток считается общим способом (один профиль): грубее, чем по
+        // часам, но несравнимо честнее, чем потерять три четверти дня.
+        val restW = (dayW - hourW).coerceAtLeast(0)
+        val restR = (dayR - hourR).coerceAtLeast(0)
+        if (restW > 0 || restR > 0) {
+            active += kcalActive(c, restW, restR)
+            dist += distanceKm(c, restW, restR) * 1000f
+        }
+        return active to dist
     }
 
     /** Есть ли почасовые данные за день. Нужно, чтобы экран мог честно
