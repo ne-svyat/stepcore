@@ -224,9 +224,6 @@ class TimelineActivity : AppCompatActivity() {
                     }
                     basalDays = if (current == Scale.TODAY) todayFraction else 1f
                     labelEvery = 3
-                    if (walkSum + runSum == 0) {
-                        hint.text = emptyReason(dao, day.toString())
-                    }
                     val rec = dao.day(day.toString())
                     // Сводка дня: вчера - из снапшота, сегодня - на лету.
                     rec?.let {
@@ -234,9 +231,18 @@ class TimelineActivity : AppCompatActivity() {
                         sumA = e.first; sumB = e.second; sumD = e.third
                     }
                     val dayTotal = (rec?.walkSteps ?: 0) + (rec?.runSteps ?: 0)
-                    hint.text = if (dayTotal > walkSum + runSum)
-                        "За день всего $dayTotal шагов · почасовая детализация есть не за весь день"
-                    else ""
+                    // v302. ПОРЯДОК. В v301 объяснение ставилось выше, а эта
+                    // строка его тут же затирала - человек видел общую фразу
+                    // про неполную детализацию вместо причины. Присвоение
+                    // подписи должно быть ОДНО, иначе побеждает последнее.
+                    hint.text = when {
+                        walkSum + runSum == 0 -> emptyReason(dao, day.toString())
+                        dayTotal > walkSum + runSum ->
+                            "За день всего $dayTotal шагов · по часам разложено " +
+                            (walkSum + runSum) + " · остальное записано до того, " +
+                            "как включился почасовой учёт"
+                        else -> ""
+                    }
                 }
                 Scale.D7, Scale.D30 -> {
                     val n = if (current == Scale.D7) 7 else 30
