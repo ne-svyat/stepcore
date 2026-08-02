@@ -357,12 +357,79 @@ object StrideModel {
     }
 
     /** Отчёт для человека: все калибровки и честный диагноз. */
+    /**
+     * v306. Блок бега и уклона в отчёте. До этого отчёт знал только про
+     * длину шага, а бег и уклон приходилось выяснять по журналу вручную.
+     * Отчёт целиком копируется в буфер одной кнопкой - это отладочный
+     * инструмент на время настройки, потом его можно свернуть.
+     */
+    private fun tempoAndSlopeBlock(c: Context): String {
+        val p = p(c)
+        val fmt = java.text.SimpleDateFormat("dd.MM HH:mm", java.util.Locale("ru"))
+        val sb = StringBuilder()
+
+        sb.append("\n--- ТЕМП ---\n")
+        val wLo = p.getLong("walk_min_interval", 0L)
+        val wHi = p.getLong("walk_max_interval", 0L)
+        if (wLo > 0L && wHi > 0L) {
+            val mid = (wLo + wHi) / 2
+            sb.append("Ходьба: ").append(wLo).append("-").append(wHi)
+              .append(" мс (середина ").append(mid).append(" мс = ")
+              .append(String.format(java.util.Locale.US, "%.2f", 1000f / mid))
+              .append(" Гц)\n")
+        } else sb.append("Ходьба: не калибровалась\n")
+
+        val rLo = p.getLong("run_min_interval", 0L)
+        val rHi = p.getLong("run_max_interval", 0L)
+        if (rLo > 0L && rHi > 0L) {
+            val mid = (rLo + rHi) / 2
+            sb.append("Бег: ").append(rLo).append("-").append(rHi)
+              .append(" мс (середина ").append(mid).append(" мс = ")
+              .append(String.format(java.util.Locale.US, "%.2f", 1000f / mid))
+              .append(" Гц)\n")
+        } else sb.append("Бег: НЕ калиброван\n")
+        val runDate = p.getLong("cal_date_run", 0L)
+        if (runDate > 0L) sb.append("Бег измерен: ")
+            .append(fmt.format(java.util.Date(runDate))).append("\n")
+
+        sb.append("\n--- УКЛОН ---\n")
+        val up = p.getFloat("slope_anchor_up", 0f)
+        val down = p.getFloat("slope_anchor_down", 0f)
+        val flat = p.getFloat("slope_anchor_flat", 0f)
+        fun line(name: String, v: Float, key: String) {
+            sb.append(name).append(": ")
+            if (v <= 0f) { sb.append("нет\n"); return }
+            sb.append(String.format(java.util.Locale.US, "%.2f", v))
+            val ms = p.getLong(key, 0L)
+            if (ms > 0L) sb.append("  (").append(fmt.format(java.util.Date(ms))).append(")")
+            sb.append("\n")
+        }
+        line("В гору", up, "slope_anchor_up_ms")
+        line("Ровно", flat, "slope_anchor_flat_ms")
+        line("С горы", down, "slope_anchor_down_ms")
+        if (up > 0f && down > 0f) {
+            val gap = down - up
+            sb.append("Зазор с горы минус в гору: ")
+              .append(String.format(java.util.Locale.US, "%+.2f", gap))
+            sb.append(if (gap >= 0.30f) "  — годится\n"
+                      else if (gap > 0f) "  — МАЛО, нужно от 0.30\n"
+                      else "  — ПОРЯДОК ПЕРЕВЁРНУТ\n")
+            if (flat > 0f) {
+                sb.append("Проверка: ровно должно лежать между ними — ")
+                sb.append(if (flat in up..down) "да\n" else "НЕТ, значение выпадает\n")
+            }
+        }
+        return sb.toString()
+    }
+
     fun calibrationReport(c: Context): String {
         val h = calHistory(c)
         val sb = StringBuilder("StepCore — отчёт калибровки\n\n")
-        if (h.isEmpty()) return sb.append("Калибровок пока нет.").toString()
+        if (h.isEmpty()) return sb.append("Калибровок длины шага пока нет.")
+            .append("\n").append(tempoAndSlopeBlock(c)).toString()
         val fmt = java.text.SimpleDateFormat("dd.MM HH:mm", java.util.Locale("ru"))
-        sb.append("Калибровок сохранено: ").append(h.size).append("\n\n")
+        sb.append("Калибровок длины шага: ").append(h.size).append("\n")
+        sb.append(tempoAndSlopeBlock(c)).append("\n--- ДЛИНА ШАГА ---\n")
         for ((i, x) in h.withIndex()) {
             sb.append(i + 1).append(") ").append(fmt.format(java.util.Date(x.timeMs)))
               .append("  темп ").append(String.format(java.util.Locale.US, "%.2f", x.cadence))
