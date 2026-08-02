@@ -166,9 +166,34 @@ object Stats {
         return active to dist
     }
 
-    /** То же, но сама грузит часы дня из БД. */
-    suspend fun segmentedActiveAndDistance(c: Context, date: String): Pair<Int, Float> =
-        segmentedActiveAndDistance(c, AppDb.get(c).dao().hoursOfDay(date))
+    /**
+     * То же, но сама грузит часы дня из БД.
+     *
+     * v299. ОТКАТ, КОГДА ЧАСОВ НЕТ. Дистанция и активные калории считались
+     * ТОЛЬКО по таблице часов, а активное время - по общему числу шагов.
+     * Из-за этого расхождения экран показывал живое активное время и
+     * одновременно «0,00 км» и «0 ккал»: если часы почему-либо пусты,
+     * первое считалось, второе молча обнулялось.
+     *
+     * Ноль здесь означал не «ты не прошёл», а «мне нечем считать». Теперь
+     * при пустых часах берётся общий расчёт по шагам дня - тот же, что
+     * применяется к старым дням без почасовых данных. Он грубее (один
+     * профиль на весь день), но честнее нуля.
+     */
+    suspend fun segmentedActiveAndDistance(c: Context, date: String): Pair<Int, Float> {
+        val hours = AppDb.get(c).dao().hoursOfDay(date)
+        if (hours.isNotEmpty()) return segmentedActiveAndDistance(c, hours)
+        val d = AppDb.get(c).dao().day(date)
+        val w = d?.walkSteps ?: 0
+        val r = d?.runSteps ?: 0
+        if (w == 0 && r == 0) return 0 to 0f
+        return kcalActive(c, w, r) to (distanceKm(c, w, r) * 1000f)
+    }
+
+    /** Есть ли почасовые данные за день. Нужно, чтобы экран мог честно
+     *  сказать, что цифры посчитаны грубо, а не по часам. */
+    suspend fun hasHours(c: Context, date: String): Boolean =
+        AppDb.get(c).dao().hoursOfDay(date).isNotEmpty()
 
     /**
      * Снапшот дня при закрытии (V11.2): сумма по часам, каждый час со своим

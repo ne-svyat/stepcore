@@ -720,8 +720,8 @@ class MainActivity : AppCompatActivity() {
         val (walk, run) = todayWalkRun()
         val activeSec = Stats.activeSeconds(this, walk, run)
         activeTimeText.text = if (activeSec > 0) fmtDur(activeSec) else "0 мин"
-        val (active, distM) = Stats.segmentedActiveAndDistance(
-            this, java.time.LocalDate.now().toString())
+        val today = java.time.LocalDate.now().toString()
+        val (active, distM) = Stats.segmentedActiveAndDistance(this, today)
         val km = distM / 1000f
         val total = active + Stats.kcalBasalToday(this)
         // Active = расход на движение; Total = Active + базовый обмен (BMR)

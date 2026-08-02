@@ -1803,8 +1803,18 @@ class StepService : Service(), SensorEventListener {
         pendW = 0; pendR = 0; pendUp = 0; pendDown = 0
         pendCadSum = 0L; pendCadN = 0
         scope.launch {
-            val dao = AppDb.get(this@StepService).dao()
-            dao.ensureHour(k); dao.addHour(k, w, r, up, down, cadSum, cadN)
+            // v299. Запись часа больше не может провалиться молча. Раньше
+            // исключение здесь просто гасило корутину, и человек видел
+            // пустой Timeline и нулевую дистанцию без единого намёка на
+            // причину. Сбой в журнал - его видно в Истории.
+            val res = runCatching {
+                val dao = AppDb.get(this@StepService).dao()
+                dao.ensureHour(k); dao.addHour(k, w, r, up, down, cadSum, cadN)
+            }
+            res.exceptionOrNull()?.let { e ->
+                logEvent("ОШИБКА записи часа " + k + ": " +
+                    (e.message ?: e.javaClass.simpleName))
+            }
         }
     }
 
