@@ -181,7 +181,10 @@ class TimelineActivity : AppCompatActivity() {
             dao.ensureHour(k)
             dao.addHour(k, 0, 0, 0, 0, 0L, 0)
             val after = dao.countHoursOfDay(day)
-            "пробная запись прошла, часов за день стало " + after
+            // v305. Печатаем сам ключ: раньше проба сообщала «прошла», а
+            // строка не появлялась, и по такому отчёту нельзя было понять,
+            // что именно писалось.
+            "проба: ключ [" + k + "], часов за день стало " + after
         }.getOrElse { e ->
             "ПРОБНАЯ ЗАПИСЬ УПАЛА: " + (e.message ?: e.javaClass.simpleName)
         }

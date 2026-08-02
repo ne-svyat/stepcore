@@ -225,8 +225,25 @@ interface StepDao {
     suspend fun deleteAllEvents()
 
     // --- почасовые ---
-    @Query("INSERT OR IGNORE INTO hours(dateHour, walkSteps, runSteps) VALUES(:k, 0, 0)")
-    suspend fun ensureHour(k: String)
+    // v305. Строка часа создаётся через @Insert СУЩНОСТИ, а не строковым
+    // INSERT в @Query.
+    //
+    // Измерено на живой базе 02.08: пробная запись «проходила» без единого
+    // исключения, а строка не появлялась - ни в счётчике, ни в дампе.
+    // Последний записанный час так и остался 2026-08-01 17, то есть вечер
+    // переустановки; все 340 часов в базе приехали импортом бэкапа, а
+    // новых не добавилось ни одного. Дни при этом писались нормально -
+    // они идут через @Insert сущности.
+    //
+    // Строковый INSERT перечисляет три колонки из семи; остальные должны
+    // подставиться значениями по умолчанию, и на этом путь ломался молча:
+    // ни ошибки, ни строки. @Insert сущности заполняет все поля целиком,
+    // а IGNORE сохраняет прежнее поведение «не трогать существующий час».
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertHourRow(h: HourRecord)
+
+    /** Создать час, если его ещё нет. Сигнатура прежняя - вызовы не меняются. */
+    suspend fun ensureHour(k: String) = insertHourRow(HourRecord(dateHour = k))
 
     @Query("UPDATE hours SET walkSteps = walkSteps + :w, runSteps = runSteps + :r, upSteps = upSteps + :up, downSteps = downSteps + :down, cadenceIntervalSum = cadenceIntervalSum + :cadSum, cadenceStepSum = cadenceStepSum + :cadN WHERE dateHour = :k")
     suspend fun addHour(k: String, w: Int, r: Int, up: Int, down: Int, cadSum: Long, cadN: Int)
