@@ -303,6 +303,8 @@ class StepService : Service(), SensorEventListener {
         )
     }
     private var runUiTick = 0
+    // v314. Реплика «половина» звучит один раз за замер.
+    private var calHalfSaid = false
 
     // v311. Теневой наблюдатель бега. Отдельный экземпляр измерителя -
     // калибровочный трогать нельзя, иначе теневой счёт испортит замер.
@@ -637,6 +639,7 @@ class StepService : Service(), SensorEventListener {
 
     private fun startCalibration(kind: String) {
         calibrating = kind
+        calHalfSaid = false
         // Тень на время калибровки замолкает и стартует с чистого листа.
         shadowMeter.reset(); shadowWatch.clear()
         if (kind == "run") { runMeter.reset(); runUiTick = 0 }
@@ -721,6 +724,14 @@ class StepService : Service(), SensorEventListener {
         }
         calLastStepMs = timeMs
         calUiTick++
+        // v314. Половина набрана - короткая реплика, чтобы человек понимал,
+        // что идёт правильно, и не гадал, сколько ещё. Звучит ровно один
+        // раз за замер: повтор каждые несколько шагов раздражал бы сильнее,
+        // чем молчание.
+        if (!calHalfSaid && calIntervals.size * 2 >= MIN_CAL_INTERVALS) {
+            calHalfSaid = true
+            Voice.say(this, "cal_halfway")
+        }
         if (calUiTick == 1 || calUiTick % CAL_UI_EVERY == 0) publishCalProgress(kind)
     }
 
@@ -914,6 +925,10 @@ class StepService : Service(), SensorEventListener {
         CalibrationRegistry.markDone(this,
             if (kind == "walk") CalibrationRegistry.Kind.WALK_TEMPO
             else CalibrationRegistry.Kind.RUN_TEMPO)
+        // v314. Озвучка успеха ходьбы. Файлы для неё уже лежали, а вызова
+        // не было - самый частый замер оставался немым, и телефон всё равно
+        // приходилось доставать.
+        Voice.say(this, if (kind == "walk") "cal_walk_done" else "cal_run_done")
         StepsState.calibrationState.value =
             // v270. Было "твой шаг = 562 мс/шаг" - читается как ДЛИНА шага,
             // хотя это темп. Длина лежит рядом в сантиметрах, и человек
