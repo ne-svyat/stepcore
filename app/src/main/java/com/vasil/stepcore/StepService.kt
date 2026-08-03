@@ -654,6 +654,10 @@ class StepService : Service(), SensorEventListener {
         // 18%. Смотрит на дорогу - идёт естественно, разброс 3%. Экран сам
         // портит то, что измеряет. Поэтому обратная связь тут ТАКТИЛЬНАЯ:
         // тик на шаг, двойной сигнал на готовность. Смотреть в телефон не надо.
+        // v312. Голос вместо «достань телефон и посмотри». Реплика звучит
+        // на старте и на финише - то есть ровно там, где раньше нужно было
+        // вынимать телефон из кармана и портить замер.
+        Voice.say(this, if (kind == "walk") "cal_walk_start" else "cal_run_start")
         StepsState.calibrationState.value = if (kind == "walk")
             "Калибровка ходьбы: смотри на дорогу, иди обычным шагом. Телефон тикнет дважды, когда готово."
         else
@@ -804,6 +808,7 @@ class StepService : Service(), SensorEventListener {
         val med = runMeter.medianIntervalMs()
         val steps = runMeter.stepCount()
         if (steps < RUN_METER_MIN_STEPS || med <= 0L) {
+            Voice.say(this, "cal_need_more")
             StepsState.calibrationState.value =
                 "Беговых шагов набралось " + steps + ", нужно " +
                 RUN_METER_MIN_STEPS + ". Профиль не изменён."
@@ -811,6 +816,7 @@ class StepService : Service(), SensorEventListener {
         }
         val spread = runMeter.spreadPct()
         if (spread > CAL_SPREAD_OK_PCT) {
+            Voice.say(this, "cal_rejected")
             StepsState.calibrationState.value =
                 "Темп получился " + "%.2f".format(1000f / med) + " Гц, но ритм " +
                 "рваный (разброс " + spread + "%, допустимо " + CAL_SPREAD_OK_PCT +
@@ -828,6 +834,7 @@ class StepService : Service(), SensorEventListener {
         loadProfile()
         scope.launch { ProfileHistory.record(this@StepService) }
         CalibrationRegistry.markDone(this, CalibrationRegistry.Kind.RUN_TEMPO)
+        Voice.say(this, "cal_run_done")
         logEvent("Калибровка бега: " + "%.2f".format(1000f / med) + " Гц (" +
             med + " мс), шагов " + steps + ", разброс " + spread + "%")
         StepsState.calibrationState.value =
@@ -1010,6 +1017,9 @@ class StepService : Service(), SensorEventListener {
                     slopeStartMs = System.currentTimeMillis()
                     StepsState.slopeStage.value = "REC"
                     StepsState.slopeSteps.value = total - slopeStartSteps
+                    Voice.say(this@StepService,
+                        if (StepsState.slopeTarget.value == "UP") "cal_up_start"
+                        else "cal_down_start")
                     beep(1)
                     refreshPanel()
                 }
@@ -1038,6 +1048,9 @@ class StepService : Service(), SensorEventListener {
                     // идёт обратно, лишнее в замер не попадёт.
                     slopeEndMs = System.currentTimeMillis()
                     StepsState.slopeStage.value = "DONE"
+                    Voice.say(this@StepService,
+                        if (StepsState.slopeTarget.value == "UP") "cal_up_done"
+                        else "cal_down_done")
                     beep(2)
                     refreshPanel()
                 }
@@ -1096,6 +1109,7 @@ class StepService : Service(), SensorEventListener {
                     StepsState.slopeResult.value = msg
                     StepsState.slopeStage.value = "RESULT"
                     StepsState.slopeTarget.value = ""
+                    Voice.say(this@StepService, "cal_rejected")
                     beep(3)
                     endSlopePanel()
                     toastMain(msg)
@@ -1141,6 +1155,7 @@ class StepService : Service(), SensorEventListener {
 
     private fun slopeCancel() {
         slopeActive = false
+        Voice.say(this, "cal_cancelled")
         StepsState.slopeTarget.value = ""
         StepsState.slopeStage.value = "ARM"
         updateMotionSensors()   // вернуть обычный режим сбора
