@@ -12,7 +12,7 @@ android {
         applicationId "com.vasil.stepcore"
         minSdk 30
         targetSdk 34
-        versionCode 307
+        versionCode 308
         versionName "1.81.0"
     }
 
