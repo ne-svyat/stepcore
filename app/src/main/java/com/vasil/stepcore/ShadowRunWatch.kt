@@ -57,6 +57,11 @@ class ShadowRunWatch(
      * Отчёт пишется, только если бег реально был: иначе журнал заполнится
      * пустыми строками про покой, и в нём станет невозможно искать.
      */
+    /** Доля окна, в течение которой наблюдатель реально смотрел. В фоне
+     *  акселерометр работает не всё время, и без этой пометки отчёт врёт:
+     *  «мало пиков» читается как «бега не было», хотя мы просто не видели. */
+    var coveragePct: Int = 100
+
     fun poll(nowMs: Long): String? {
         if (windowStart == 0L) { windowStart = nowMs; return null }
         if (nowMs - windowStart < windowMs) return null
@@ -69,6 +74,7 @@ class ShadowRunWatch(
         val med = medianInterval()
         val hz = if (med > 0L) 1000f / med else 0f
         return "[тень] бег: пиков " + peaks +
+            (if (coveragePct < 90) " · видно только " + coveragePct + "% времени" else "") +
             (if (med > 0L) " · темп " + "%.2f".format(hz) + " Гц (" + med + " мс)" else "") +
             " · чип за окно " + chipSteps +
             " · детектор пометил бегом " + chipRun

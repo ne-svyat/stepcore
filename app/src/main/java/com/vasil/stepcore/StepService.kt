@@ -235,6 +235,13 @@ class StepService : Service(), SensorEventListener {
         // батарею при круглосуточном сборе; в двухминутном замере он
         // только протухляет признаки и растягивает калибровку.
         if (slopeActive) return true
+        // v316. Темповая калибровка и калибровка бега - тоже замер, а не
+        // круглосуточный сбор. Измерено 04.08: с заблокированным экраном
+        // калибровка вставала и ждала разблокировки, потому что
+        // акселерометр работал окнами 12 с из 60. Замер длится минуту-две,
+        // и на это время экономия окнами вредна: она растягивает замер и
+        // делает голос бессмысленным - человек всё равно достаёт телефон.
+        if (calibrating != null) return true
         return StepsState.bgAccel.value && now % BG_PERIOD_MS < BG_WINDOW_MS
     }
 
@@ -1464,6 +1471,30 @@ class StepService : Service(), SensorEventListener {
                         features.onAccel(
                             event.values[0], event.values[1], event.values[2], timeMs
                         )
+                        // v316. Измеритель пиков от детектора не зависит и
+                        // его заморозки не нарушает: он читает сырой канал.
+                        // Поэтому в фоне он работать МОЖЕТ и должен - иначе
+                        // калибровка в кармане невозможна, а тень слепа.
+                        // Измерено 04.08: при заблокированном экране тень
+                        // видела 0.04 пика на шаг против 0.96 при включённом.
+                        if (calibrating == "run") {
+                            if (runMeter.onAccel(event.values[0], event.values[1],
+                                    event.values[2], timeMs)) {
+                                runUiTick++
+                                if (runUiTick == 1 || runUiTick % CAL_UI_EVERY == 0) {
+                                    publishRunProgress()
+                                }
+                            }
+                        } else if (calibrating == null) {
+                            if (shadowMeter.onAccel(event.values[0], event.values[1],
+                                    event.values[2], timeMs)) {
+                                shadowWatch.onPeak(timeMs)
+                            }
+                            // Охват: в фоне смотрим BG_WINDOW_MS из BG_PERIOD_MS.
+                            shadowWatch.coveragePct =
+                                (100L * BG_WINDOW_MS / BG_PERIOD_MS).toInt()
+                            shadowWatch.poll(timeMs)?.let { logEvent(it) }
+                        }
                     }
                     return
                 }
@@ -1479,6 +1510,7 @@ class StepService : Service(), SensorEventListener {
                             event.values[0], event.values[1], event.values[2], timeMs)) {
                         shadowWatch.onPeak(timeMs)
                     }
+                    shadowWatch.coveragePct = 100
                     shadowWatch.poll(timeMs)?.let { logEvent(it) }
                 }
                 if (calibrating == "run") {
