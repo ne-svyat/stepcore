@@ -43,6 +43,8 @@ class CalibrationActivity : AppCompatActivity() {
      * а всё остальное - тот же код, который уже работает.
      */
     private var strideIsRun = false
+    /** Последняя озвученная сотня шагов GPS-замера. */
+    private var gpsStepMark = 0
     private var gpsCal: LocationCalibrator? = null
     private var gpsStepsAtStart = 0
     private var gpsStartMs = 0L
@@ -286,9 +288,22 @@ class CalibrationActivity : AppCompatActivity() {
             runOnUiThread {
                 val a = if (acc >= 0) "±${acc.toInt()}м" else "—"
                 toastState("GPS: %.0f м, точек %d, сигнал %s".format(metres, fixes, a))
+                // Ступени по сотням шагов - те же, что у замера по метражу.
+                val done = StepsState.steps.value - gpsStepsAtStart
+                val mark = done / 100
+                if (mark > gpsStepMark && mark in 1..3) {
+                    gpsStepMark = mark
+                    Voice.say(this, "cal_stride_" + (mark * 100) + "_steps")
+                }
             }
         }
         cal.start()
+        // v320. Голос при GPS-замере. Раньше он звучал только у замера по
+        // метражу: тот идёт через службу, а GPS - здесь, и вызов сюда
+        // просто не добавили. Замер длинный, и без голоса человек идёт
+        // вслепую ровно так же.
+        Voice.say(this, if (strideIsRun) "cal_run_start" else "cal_stride_start")
+        gpsStepMark = 0
         toastState("GPS: иди по прямой… (ждём сигнал)")
         showFinish()
     }
@@ -366,8 +381,7 @@ class CalibrationActivity : AppCompatActivity() {
         lifecycleScope.launch { ProfileHistory.record(this@CalibrationActivity) }   // V11
         CalibrationRegistry.markDone(this, CalibrationRegistry.Kind.STRIDE)
         val cm = StrideModel.measuredStrideCm(this) ?: 0
-        val slopeNote = if (StrideModel.hasPersonalSlope(this))
-            " · наклон персональный ✓" else " · наклон табличный (нужен 2-й проход на др. темпе)"
+        val slopeNote = " · " + StrideModel.slopeVerdict(this)
         toastState("Готово: %.0f м за %d шагов = %d см · темп %.2f Гц%s"
             .format(metres, steps, cm, measuredCad, slopeNote))
     }
