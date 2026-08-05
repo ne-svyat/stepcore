@@ -34,6 +34,15 @@ class CalibrationActivity : AppCompatActivity() {
     private lateinit var container: LinearLayout
 
     private var activeKind: CalibrationRegistry.Kind? = null
+    /**
+     * v319. Текущий замер длины шага - беговой.
+     *
+     * Замер устроен так же, как ходовой (GPS или известный отрезок), но
+     * пишется в свой ключ и проходит свои ворота правдоподобия. Один флаг
+     * вместо второго набора экранов: пути расходятся только в самом конце,
+     * а всё остальное - тот же код, который уже работает.
+     */
+    private var strideIsRun = false
     private var gpsCal: LocationCalibrator? = null
     private var gpsStepsAtStart = 0
     private var gpsStartMs = 0L
@@ -67,6 +76,12 @@ class CalibrationActivity : AppCompatActivity() {
                 startActivity(android.content.Intent(
                     this, SlopeCalActivity::class.java))
             }
+        findViewById<TextView>(R.id.runStrideButton).setOnClickListener {
+            strideIsRun = true
+            chooseStrideMethod()
+        }
+        DoodleUi.frame(findViewById<TextView>(R.id.runStrideButton),
+            UiKit.ACCENT_MEASURE, R.color.surface, 405L, DoodleBorderDrawable.MAT_ROCK)
         findViewById<android.widget.TextView>(R.id.calReportButton)
             .setOnClickListener {
                 val rep = StrideModel.calibrationReport(this)
@@ -104,6 +119,15 @@ class CalibrationActivity : AppCompatActivity() {
         if (activeKind == CalibrationRegistry.Kind.STRIDE && gpsCal != null) {
             gpsCal?.stop(); gpsCal = null; activeKind = null
         }
+    }
+
+    /** v319. Строка бегового шага под остальными калибровками: тот же
+     *  вид, что у прочих, чтобы взгляд не спотыкался. */
+    private fun runStrideLine(): String {
+        val cm = (StrideModel.runStrideM(this) * 100).toInt()
+        return if (StrideModel.runStrideMeasured(this))
+            cm.toString() + " см • измерено"
+        else cm.toString() + " см • оценка по росту"
     }
 
     private fun render() {
@@ -188,7 +212,7 @@ class CalibrationActivity : AppCompatActivity() {
             return
         }
         when (k) {
-            CalibrationRegistry.Kind.STRIDE -> chooseStrideMethod()
+            CalibrationRegistry.Kind.STRIDE -> { strideIsRun = false; chooseStrideMethod() }
             CalibrationRegistry.Kind.WALK_TEMPO -> confirmTempo(k,
                 "Пройди 30–50 шагов своим обычным шагом, потом нажми «Готово».\n\n" +
                 "Система измерит твой темп: сколько миллисекунд занимает один шаг. " +
@@ -216,10 +240,15 @@ class CalibrationActivity : AppCompatActivity() {
 
     private fun chooseStrideMethod() {
         AlertDialog.Builder(this)
-            .setTitle("Длина шага")
-            .setMessage("Два способа измерить одно и то же. GPS точнее и удобнее, " +
-                    "но нужен открытый участок неба. Метраж работает где угодно, " +
-                    "если знаешь длину отрезка.")
+            .setTitle(if (strideIsRun) "Длина шага БЕГА" else "Длина шага")
+            .setMessage(
+                (if (strideIsRun)
+                    "Отрезок нужно ПРОБЕЖАТЬ ровным темпом, как обычно бегаешь. " +
+                    "Замер идёт в свою ячейку и на ходьбу не влияет.\n\n"
+                else "") +
+                "Два способа измерить одно и то же. GPS точнее и удобнее, " +
+                "но нужен открытый участок неба. Метраж работает где угодно, " +
+                "если знаешь длину отрезка.")
             .setPositiveButton("По GPS") { _, _ -> confirmGps() }
             .setNeutralButton("По метражу") { _, _ -> askMetres() }
             .setNegativeButton("Отмена", null)
@@ -285,7 +314,8 @@ class CalibrationActivity : AppCompatActivity() {
                 activeKind = CalibrationRegistry.Kind.STRIDE
                 startForegroundService(Intent(this, StepService::class.java)
                     .setAction(StepService.ACTION_CAL_DIST_START)
-                    .putExtra(StepService.EXTRA_METRES, m))
+                    .putExtra(StepService.EXTRA_METRES, m)
+                    .putExtra(StepService.EXTRA_IS_RUN, strideIsRun))
                 showFinish()
             }
             .setNegativeButton("Отмена", null)
@@ -316,6 +346,16 @@ class CalibrationActivity : AppCompatActivity() {
         val steps = StepsState.steps.value - gpsStepsAtStart
         if (metres < StrideModel.REFERENCE_METRES || steps < 30) {
             toastState("Мало данных (%.0f м, %d шагов). Нужно ≥100 м на открытом небе.".format(metres, steps))
+            return
+        }
+        // v319. Беговой замер: своя ячейка, свои ворота, ходьба не задета.
+        if (strideIsRun) {
+            val msg = StrideModel.applyRunCalibration(this, metres, steps, byGps = true)
+            strideIsRun = false
+            activeKind = null
+            finishBtn.visibility = View.GONE
+            toastState(msg)
+            container.postDelayed({ render() }, 400)
             return
         }
         // Фактический каденс замера: шаги за замер / его длительность.
