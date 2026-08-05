@@ -365,7 +365,9 @@ class CalibrationActivity : AppCompatActivity() {
         }
         // v319. Беговой замер: своя ячейка, свои ворота, ходьба не задета.
         if (strideIsRun) {
-            val msg = StrideModel.applyRunCalibration(this, metres, steps, byGps = true)
+            val durSec = (System.currentTimeMillis() - gpsStartMs) / 1000f
+            val msg = StrideModel.applyRunCalibration(
+                this, metres, steps, byGps = true, durationSec = durSec)
             strideIsRun = false
             activeKind = null
             finishBtn.visibility = View.GONE

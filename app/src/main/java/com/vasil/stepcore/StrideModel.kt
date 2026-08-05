@@ -72,6 +72,13 @@ object StrideModel {
      *  Не источник значения - только отсев явно битых замеров. */
     private const val RUN_RATIO_MIN = 1.05f
     private const val RUN_RATIO_MAX = 1.90f
+    /** Границы скорости бега, м/с. 2.0 = 7.2 км/ч (медленнее это уже
+     *  быстрая ходьба), 7.0 = 25 км/ч (быстрее человек долго не бежит). */
+    private const val RUN_SPEED_MIN = 2.0f
+    private const val RUN_SPEED_MAX = 7.0f
+    /** Насколько каденс замера может расходиться с измеренным темпом бега.
+     *  Больше - значит часть шагов потерялась, и длина шага раздута. */
+    private const val RUN_CADENCE_TOLERANCE = 0.25f
 
     private fun p(c: Context) =
         c.getSharedPreferences(StepService.PREFS, Context.MODE_PRIVATE)
@@ -148,6 +155,15 @@ object StrideModel {
         return runStrideMOf(p(c).getInt("p_height", 0))
     }
 
+    /** Измеренный темп бега в герцах, 0 - если калибровки бега нет. */
+    fun calibratedRunCadenceHz(c: Context): Float {
+        val lo = p(c).getLong("run_min_interval", 0L)
+        val hi = p(c).getLong("run_max_interval", 0L)
+        if (lo <= 0L || hi <= 0L) return 0f
+        val mid = (lo + hi) / 2
+        return if (mid > 0L) 1000f / mid else 0f
+    }
+
     /** Измерена ли длина бегового шага, или это оценка по росту. */
     fun runStrideMeasured(c: Context): Boolean = p(c).getFloat(KEY_RUN_SL, 0f) > 0f
 
@@ -164,7 +180,9 @@ object StrideModel {
      * источник значения: всё, что внутри, сохраняется как измерено, всё,
      * что снаружи - почти наверняка срезанный угол или сбой GPS.
      */
-    fun applyRunCalibration(c: Context, metres: Float, steps: Int, byGps: Boolean): String {
+    fun applyRunCalibration(
+        c: Context, metres: Float, steps: Int, byGps: Boolean, durationSec: Float = 0f
+    ): String {
         if (steps <= 0 || metres <= 0f) return "Замер пустой - ничего не сохранено."
         val sl = metres / steps
         val walk = walkStrideAvgM(c)
@@ -175,6 +193,39 @@ object StrideModel {
                 (walk * 100).toInt() + " см - это в " +
                 String.format(java.util.Locale.US, "%.1f", ratio) +
                 " раза. Похоже на срезанный угол или сбой GPS. НЕ сохранено."
+        }
+        // v321. ВОРОТА ПО СКОРОСТИ. Отношение к ходовому шагу пропустило
+        // замер 136 см (в 1.81 раза), а он означал бы 18 км/ч на пятнадцать
+        // минут бега - столько человек так долго не бежит.
+        if (durationSec > 0f) {
+            val speed = metres / durationSec
+            if (speed < RUN_SPEED_MIN || speed > RUN_SPEED_MAX) {
+                return "Скорость замера " +
+                    String.format(java.util.Locale.US, "%.1f", speed * 3.6f) +
+                    " км/ч - это не похоже на бег. НЕ сохранено."
+            }
+            // v321. ВОРОТА СОГЛАСОВАННОСТИ С ТЕМПОМ.
+            // Главная причина завышенной длины шага - ПОТЕРЯННЫЕ шаги:
+            // гвардия тряски выбрасывает их пачками (в журнале 05.08 за
+            // пробежку отброшено около 290). Метры делятся на заниженное
+            // число шагов, и длина раздувается. Скорость при этом остаётся
+            // правильной, поэтому предыдущие ворота такое пропускают.
+            // Ловится это иначе: каденс самого замера должен сходиться с
+            // измеренным беговым темпом. На замере 136 см расхождение
+            // вышло бы 30%, на честных 95 см - меньше одного процента.
+            val calCad = calibratedRunCadenceHz(c)
+            if (calCad > 0f) {
+                val measCad = steps / durationSec
+                val diff = kotlin.math.abs(measCad - calCad) / calCad
+                if (diff > RUN_CADENCE_TOLERANCE) {
+                    return "Темп замера " +
+                        String.format(java.util.Locale.US, "%.2f", measCad) +
+                        " Гц против измеренного бега " +
+                        String.format(java.util.Locale.US, "%.2f", calCad) +
+                        " Гц - расхождение " + (diff * 100).toInt() +
+                        "%. Похоже, часть шагов не досчиталась. НЕ сохранено."
+                }
+            }
         }
         p(c).edit()
             .putFloat(KEY_RUN_SL, sl)

@@ -1245,7 +1245,9 @@ class StepService : Service(), SensorEventListener {
         // v318. Беговой замер идёт своим путём: у него другая величина,
         // другие ворота и другой ключ. Ходьба не задета.
         if (distCalIsRun) {
-            val msg = StrideModel.applyRunCalibration(this, distCalMetres, steps, false)
+            val durSec = (System.currentTimeMillis() - distCalStartMs) / 1000f
+            val msg = StrideModel.applyRunCalibration(
+                this, distCalMetres, steps, false, durSec)
             StepsState.calibrationState.value = msg
             logEvent("Калибровка бегового шага: " + msg)
             Voice.say(this, if (msg.startsWith("Готово")) "cal_stride_done" else "cal_rejected")
