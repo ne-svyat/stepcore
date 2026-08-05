@@ -337,6 +337,8 @@ class StepService : Service(), SensorEventListener {
     // Калибровка дистанции (V9.3): якорь чипа + метраж отрезка.
     private var distCalActive = false
     private var distCalChipStart = -1L
+    /** Последняя озвученная сотня шагов замера: ступень звучит один раз. */
+    private var distCalStepMark = 0
     private var distCalMetres = 0f
     // v242. Время старта замера по метражу: каденс считаем из него,
     // а не из профиля - иначе в историю попадает чужое число.
@@ -966,6 +968,12 @@ class StepService : Service(), SensorEventListener {
             return
         }
         distCalActive = true
+        distCalStepMark = 0
+        // v317. Замер длины шага - самый длинный из всех: сотни шагов по
+        // прямой. Без голоса человек идёт вслепую и не знает, сколько ещё,
+        // поэтому здесь озвучены не только начало и конец, но и ступени
+        // по сотням шагов.
+        Voice.say(this, "cal_stride_start")
         distCalMetres = metres
         distCalStartMs = System.currentTimeMillis()
         distCalChipStart = hwLastTotal
@@ -1219,6 +1227,8 @@ class StepService : Service(), SensorEventListener {
         distCalActive = false
         val steps = if (distCalChipStart >= 0 && hwLastTotal >= 0)
             (hwLastTotal - distCalChipStart).toInt() else 0
+        if (steps >= 20) Voice.say(this, "cal_stride_done")
+        else Voice.say(this, "cal_need_more")
         if (steps < 20) {
             StepsState.calibrationState.value =
                 "Мало шагов ($steps) - калибровка не сохранена. Нужен отрезок подлиннее."
@@ -1366,6 +1376,17 @@ class StepService : Service(), SensorEventListener {
                 // v311. Отдаём тени дельту чипа и решение ДЕТЕКТОРА - чтобы
                 // в журнале два мнения стояли рядом и их можно было сверить.
                 shadowWatch.onChipDelta(delta, asRun)
+                // v317. Ступени замера длины шага. Реплика на каждой сотне
+                // и ровно один раз: повтор на каждом шаге раздражал бы
+                // сильнее, чем молчание.
+                if (distCalActive && distCalChipStart >= 0) {
+                    val done = (hwLastTotal - distCalChipStart).toInt()
+                    val mark = done / 100
+                    if (mark > distCalStepMark && mark in 1..3) {
+                        distCalStepMark = mark
+                        Voice.say(this, "cal_stride_" + (mark * 100) + "_steps")
+                    }
+                }
                 if (asRun) {
                     runSteps += delta; bumpHour(0, delta)
                     // v280. Отметка "бег видели". Нужна, чтобы общая точность
