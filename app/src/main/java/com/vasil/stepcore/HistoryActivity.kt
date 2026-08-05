@@ -85,7 +85,9 @@ class HistoryActivity : AppCompatActivity() {
             // и по калориям, И по дистанции - обе цифры считаются в ней.
             // Шаги при этом шли нормально, поэтому поломка выглядела как
             // «приложение считает шаги, но не считает километры».
-            "p_weight", "p_height", "p_age", "p_sex", "p_load", "p_goal"
+            "p_weight", "p_height", "p_age", "p_sex", "p_load", "p_goal",
+            // v318. Измеренная длина бегового шага.
+            "stride_run_m", "stride_run_ms", "stride_run_by_gps"
         )
     }
 

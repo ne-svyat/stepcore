@@ -64,6 +64,14 @@ object StrideModel {
     const val REFERENCE_METRES = 200f
     private const val HEIGHT_FACTOR_WALK = 0.414f
     private const val HEIGHT_FACTOR_RUN = 0.65f
+    /** Ключи измеренного бегового шага. */
+    const val KEY_RUN_SL = "stride_run_m"
+    const val KEY_RUN_SL_MS = "stride_run_ms"
+    const val KEY_RUN_SL_GPS = "stride_run_by_gps"
+    /** Границы правдоподобия отношения бегового шага к ходовому.
+     *  Не источник значения - только отсев явно битых замеров. */
+    private const val RUN_RATIO_MIN = 1.05f
+    private const val RUN_RATIO_MAX = 1.90f
 
     private fun p(c: Context) =
         c.getSharedPreferences(StepService.PREFS, Context.MODE_PRIVATE)
@@ -121,7 +129,62 @@ object StrideModel {
     /** Средняя длина шага ходьбы по калиброванному каденсу (для сумм за день). */
     fun walkStrideAvgM(c: Context): Float = walkStrideM(c, avgWalkCadenceHz(c))
 
-    fun runStrideM(c: Context): Float = runStrideMOf(p(c).getInt("p_height", 0))
+    /**
+     * v318. Длина шага БЕГА.
+     *
+     * Приоритет: ИЗМЕРЕНО > оценка. Если беговой отрезок пройден - берём
+     * его; если нет, остаётся оценка по росту (рост x 0.65), и она честно
+     * помечается как оценка в отчёте.
+     *
+     * Модель НЕ подмешивается к измерению. Усреднять свой замер с
+     * популяционным коэффициентом значит разбавлять данные чужой
+     * константой - ровно то, за что в v279 выкинули табличный наклон
+     * длины шага. Формула здесь работает только как ПРОВЕРКА (см.
+     * applyRunCalibration): она не задаёт число, а отсекает бессмыслицу.
+     */
+    fun runStrideM(c: Context): Float {
+        val measured = p(c).getFloat(KEY_RUN_SL, 0f)
+        if (measured > 0f) return measured
+        return runStrideMOf(p(c).getInt("p_height", 0))
+    }
+
+    /** Измерена ли длина бегового шага, или это оценка по росту. */
+    fun runStrideMeasured(c: Context): Boolean = p(c).getFloat(KEY_RUN_SL, 0f) > 0f
+
+    /** Когда измеряли (0 - никогда). */
+    fun runStrideMs(c: Context): Long = p(c).getLong(KEY_RUN_SL_MS, 0L)
+
+    /**
+     * Сохранить замер длины бегового шага. Возвращает текст результата -
+     * его же произносит голос и показывает экран.
+     *
+     * Ворота вменяемости: беговой шаг не может быть короче ходового и не
+     * может превышать его почти вдвое. Диапазон 1.05..1.90 взят из
+     * литературы по биомеханике как ГРАНИЦЫ ПРАВДОПОДОБИЯ, а не как
+     * источник значения: всё, что внутри, сохраняется как измерено, всё,
+     * что снаружи - почти наверняка срезанный угол или сбой GPS.
+     */
+    fun applyRunCalibration(c: Context, metres: Float, steps: Int, byGps: Boolean): String {
+        if (steps <= 0 || metres <= 0f) return "Замер пустой - ничего не сохранено."
+        val sl = metres / steps
+        val walk = walkStrideAvgM(c)
+        if (walk <= 0f) return "Сначала измерь длину шага ходьбы."
+        val ratio = sl / walk
+        if (ratio < RUN_RATIO_MIN || ratio > RUN_RATIO_MAX) {
+            return "Беговой шаг вышел " + (sl * 100).toInt() + " см при ходьбе " +
+                (walk * 100).toInt() + " см - это в " +
+                String.format(java.util.Locale.US, "%.1f", ratio) +
+                " раза. Похоже на срезанный угол или сбой GPS. НЕ сохранено."
+        }
+        p(c).edit()
+            .putFloat(KEY_RUN_SL, sl)
+            .putLong(KEY_RUN_SL_MS, System.currentTimeMillis())
+            .putBoolean(KEY_RUN_SL_GPS, byGps)
+            .apply()
+        return "Готово: беговой шаг " + (sl * 100).toInt() + " см (" +
+            metres.toInt() + " м / " + steps + " шаг.). Это в " +
+            String.format(java.util.Locale.US, "%.2f", ratio) + " раза длиннее шага ходьбы."
+    }
 
     /** Каденс ходьбы из калибровки интервалов: med = (lo+hi)/2 -> Гц. */
     fun avgWalkCadenceHz(c: Context): Float {
@@ -391,6 +454,16 @@ object StrideModel {
         val runDate = p.getLong("cal_date_run", 0L)
         if (runDate > 0L) sb.append("Бег измерен: ")
             .append(fmt.format(java.util.Date(runDate))).append("\n")
+
+        sb.append("Беговой шаг: ").append((runStrideM(c) * 100).toInt()).append(" см")
+        if (runStrideMeasured(c)) {
+            val ms = runStrideMs(c)
+            sb.append("  измерено")
+            if (ms > 0L) sb.append(" ").append(fmt.format(java.util.Date(ms)))
+        } else {
+            sb.append("  ОЦЕНКА по росту (не измерено)")
+        }
+        sb.append("\n")
 
         sb.append("\n--- УКЛОН ---\n")
         val up = p.getFloat("slope_anchor_up", 0f)

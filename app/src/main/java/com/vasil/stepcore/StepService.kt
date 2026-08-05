@@ -339,6 +339,8 @@ class StepService : Service(), SensorEventListener {
     private var distCalChipStart = -1L
     /** Последняя озвученная сотня шагов замера: ступень звучит один раз. */
     private var distCalStepMark = 0
+    /** Текущий замер длины шага - беговой, а не ходовой. */
+    private var distCalIsRun = false
     private var distCalMetres = 0f
     // v242. Время старта замера по метражу: каденс считаем из него,
     // а не из профиля - иначе в историю попадает чужое число.
@@ -602,7 +604,10 @@ class StepService : Service(), SensorEventListener {
                 ACTION_CAL_WALK -> startCalibration("walk")
                 ACTION_CAL_RUN -> startCalibration("run")
                 ACTION_CAL_STOP -> finishCalibration()
-                ACTION_CAL_DIST_START -> startDistCal(intent.getFloatExtra(EXTRA_METRES, 0f))
+                ACTION_CAL_DIST_START -> {
+                distCalIsRun = intent.getBooleanExtra(EXTRA_IS_RUN, false)
+                startDistCal(intent.getFloatExtra(EXTRA_METRES, 0f))
+            }
                 ACTION_CAL_DIST_STOP -> finishDistCal()
                 ACTION_MARKS_DISMISSED -> onMarksDismissed()
                 ACTION_SLOPE_PICK ->
@@ -1237,6 +1242,16 @@ class StepService : Service(), SensorEventListener {
         // Фактический каденс замера: шаги / длительность (как в GPS-пути).
         val durSec = (System.currentTimeMillis() - distCalStartMs) / 1000f
         val measuredCad = if (durSec > 0f) steps / durSec else 0f
+        // v318. Беговой замер идёт своим путём: у него другая величина,
+        // другие ворота и другой ключ. Ходьба не задета.
+        if (distCalIsRun) {
+            val msg = StrideModel.applyRunCalibration(this, distCalMetres, steps, false)
+            StepsState.calibrationState.value = msg
+            logEvent("Калибровка бегового шага: " + msg)
+            Voice.say(this, if (msg.startsWith("Готово")) "cal_stride_done" else "cal_rejected")
+            distCalIsRun = false
+            return
+        }
         StrideModel.applyCalibration(this, distCalMetres, steps,
             measuredCadence = measuredCad)
         scope.launch { ProfileHistory.record(this@StepService) }   // V11
@@ -2459,6 +2474,7 @@ class StepService : Service(), SensorEventListener {
          *  запросто. */
         const val SLOPE_IDLE_MS = 15 * 60 * 1000L
         const val EXTRA_METRES = "metres"
+        const val EXTRA_IS_RUN = "is_run"
         const val ACTION_DIAG_START = "diag_start"
         const val ACTION_DIAG_STOP = "diag_stop"
         /** v188: печать сверки с чипом по требованию, без остановки счёта. */
