@@ -142,4 +142,86 @@ object VaultText {
     fun formatTags(tags: List<String>): String = tags.joinToString(", ")
 
     const val MAX_TAGS = 20
+
+    // -------------------------------------------------- разметка страницы
+
+    /**
+     * Метка картинки в тексте. Картинка не лежит внутри строки: в тексте
+     * стоит только ссылка, сам файл зашифрован отдельно. Иначе страница
+     * с тремя фотографиями весила бы мегабайты и упиралась в предел
+     * символов, который задуман для ТЕКСТА.
+     */
+    const val IMG_OPEN = "[img:"
+    private const val IMG_CLOSE = "]"
+
+    fun imageMark(id: String): String = IMG_OPEN + id + IMG_CLOSE
+
+    /** Все картинки, на которые ссылается текст, в порядке появления. */
+    fun imageRefs(text: String): List<String> {
+        val out = ArrayList<String>()
+        var i = 0
+        while (true) {
+            val a = text.indexOf(IMG_OPEN, i)
+            if (a < 0) break
+            val b = text.indexOf(IMG_CLOSE, a + IMG_OPEN.length)
+            if (b < 0) break
+            val id = text.substring(a + IMG_OPEN.length, b)
+            if (id.isNotEmpty() && id.all { it.isLetterOrDigit() }) out.add(id)
+            i = b + 1
+        }
+        return out
+    }
+
+    /**
+     * Кусок страницы для режима просмотра.
+     *
+     * Правка идёт по обычному тексту — это сознательно: редактор, который
+     * рисует картинки прямо в поле ввода, ломает выделение, копирование и
+     * позицию курсора. Правишь текст, смотришь оформленное.
+     */
+    sealed class Block {
+        /** Заголовок. level 1..3, по числу решёток в начале строки. */
+        class Head(val level: Int, val text: String) : Block()
+        class Para(val text: String) : Block()
+        class Img(val id: String) : Block()
+    }
+
+    /** Разбор страницы на куски для просмотра. */
+    fun blocks(text: String): List<Block> {
+        val out = ArrayList<Block>()
+        val para = StringBuilder()
+
+        fun flush() {
+            val t = para.toString().trim()
+            if (t.isNotEmpty()) out.add(Block.Para(t))
+            para.setLength(0)
+        }
+
+        for (line in text.split("\n")) {
+            val trimmed = line.trimStart()
+            // Картинка на отдельной строке становится отдельным куском.
+            // Метка посреди абзаца остаётся текстом: разрывать предложение
+            // картинкой человек не просил.
+            if (trimmed.startsWith(IMG_OPEN) && trimmed.endsWith(IMG_CLOSE) &&
+                imageRefs(trimmed).size == 1) {
+                flush()
+                out.add(Block.Img(imageRefs(trimmed)[0]))
+                continue
+            }
+            val hashes = trimmed.takeWhile { it == '#' }.length
+            if (hashes in 1..3 && trimmed.length > hashes && trimmed[hashes] == ' ') {
+                flush()
+                out.add(Block.Head(hashes, trimmed.substring(hashes + 1).trim()))
+                continue
+            }
+            if (para.isNotEmpty()) para.append('\n')
+            para.append(line)
+        }
+        flush()
+        return out
+    }
+
+    /** Оглавление страницы — заголовки по порядку. */
+    fun outline(text: String): List<Block.Head> =
+        blocks(text).filterIsInstance<Block.Head>()
 }

@@ -92,6 +92,12 @@ interface VaultDao {
 
     @Query("SELECT * FROM v_pages WHERE noteId = :noteId AND idx = :idx")
     suspend fun page(noteId: Long, idx: Int): VPage?
+
+    @Query("DELETE FROM v_pages WHERE noteId = :noteId")
+    suspend fun dropPages(noteId: Long)
+
+    @Query("DELETE FROM v_notes WHERE id = :noteId")
+    suspend fun dropNote(noteId: Long)
 }
 
 @Database(entities = [VNote::class, VPage::class], version = 2, exportSchema = false)
@@ -248,6 +254,33 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
         val n = dao.note(noteId) ?: return
         val count = maxOf(n.pageCount, idx + 1)
         dao.setPageCount(noteId, count, now)
+    }
+
+    /**
+     * Удалить заметку насовсем: страницы, строку заметки и все её картинки.
+     *
+     * Правило проекта "не удалять - помечать" здесь НЕ действует. Vault -
+     * единственное место, где человек имеет право стереть своё
+     * по-настоящему, и обещание должно выполняться буквально. Помеченная
+     * заметка, которую видно в файле базы, - это невыполненное обещание.
+     *
+     * Порядок важен: сначала картинки (их адреса лежат в тексте страниц),
+     * потом страницы, потом сама заметка. Обратный порядок оставил бы
+     * файлы картинок сиротами навсегда.
+     */
+    suspend fun deleteNote(noteId: Long, images: VaultImages) {
+        val n = dao.note(noteId) ?: return
+        var from = 0
+        while (from < n.pageCount) {
+            for (p in dao.pagesRange(noteId, from, from + PAGE_CHUNK)) {
+                val text = VaultCrypto.decrypt(dataKey, p.body)?.toString(Charsets.UTF_8)
+                    ?: continue
+                for (id in VaultText.imageRefs(text)) images.delete(id)
+            }
+            from += PAGE_CHUNK
+        }
+        dao.dropPages(noteId)
+        dao.dropNote(noteId)
     }
 
     /** @return номер новой страницы, либо -1 если упёрлись в предел. */

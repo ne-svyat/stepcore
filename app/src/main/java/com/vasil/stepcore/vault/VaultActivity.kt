@@ -11,9 +11,11 @@ import android.view.WindowManager
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
@@ -55,6 +57,17 @@ class VaultActivity : AppCompatActivity() {
     private var openIdx = 0
     private var openPages = 1
     private var editor: EditText? = null
+    private var images: VaultImages? = null
+    private var preview = false
+
+    /**
+     * Выбор картинки у системы. Регистрируется один раз при создании
+     * экрана: регистрировать по нажатию Android не позволяет.
+     */
+    private val pickImage =
+        registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+            if (uri != null) insertImage(uri)
+        }
 
     /**
      * Бюджет ожидания при входе. Подобран под будущую анимацию двери:
@@ -80,7 +93,7 @@ class VaultActivity : AppCompatActivity() {
         })
 
         if (VaultSession.isOpen) {
-            repo = VaultSession.key()?.let { VaultRepo(this, it) }
+            VaultSession.key()?.let { repo = VaultRepo(this, it); images = VaultImages(this, it) }
             showNotes()
         } else showEntrance()
     }
@@ -101,6 +114,7 @@ class VaultActivity : AppCompatActivity() {
             }
             editor = null
             repo = null
+            images = null
             VaultSession.lock()
             finish()
         }
@@ -149,6 +163,7 @@ class VaultActivity : AppCompatActivity() {
             if (key != null) {
                 VaultSession.open(key)
                 repo = VaultRepo(this@VaultActivity, key)
+                images = VaultImages(this@VaultActivity, key)
                 showNotes()
             } else {
                 go.isEnabled = true
@@ -258,7 +273,10 @@ class VaultActivity : AppCompatActivity() {
             }
             busy = false
             if (res == VaultFile.AddResult.OK) {
-                repo = VaultSession.key()?.let { VaultRepo(this@VaultActivity, it) }
+                VaultSession.key()?.let {
+                    repo = VaultRepo(this@VaultActivity, it)
+                    images = VaultImages(this@VaultActivity, it)
+                }
                 showNotes()
                 return@launch
             }
@@ -279,6 +297,7 @@ class VaultActivity : AppCompatActivity() {
 
     private fun showNotes(query: String = "") {
         editor = null
+        preview = false
         openNoteId = 0L
         root.removeAllViews()
         title("Заметки")
@@ -384,7 +403,7 @@ class VaultActivity : AppCompatActivity() {
     /** Сохранить открытую страницу и уйти. Порядок важен: сначала запись. */
     private fun leavePage(then: () -> Unit) {
         val r = repo
-        val text = editor?.text?.toString()
+        val text = editor?.text?.toString()   // в просмотре null — сохранять нечего
         val id = openNoteId
         val idx = openIdx
         if (r == null || text == null || id == 0L) { then(); return }
@@ -408,6 +427,7 @@ class VaultActivity : AppCompatActivity() {
     }
 
     private fun drawPage(text: String, top: List<String> = emptyList()) {
+        if (preview) { drawPreview(text, top); return }
         root.removeAllViews()
         val r = repo ?: return
         val noteId = openNoteId
@@ -484,6 +504,18 @@ class VaultActivity : AppCompatActivity() {
             copy(part)
             toast(if (sel > 0) "Скопирован выделенный кусок" else "Скопирована страница")
         }
+        val tools = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        root.addView(tools, LinearLayout.LayoutParams(-1, -2))
+        tools.addView(navButton("Картинка") {
+            // Метка вставляется отдельной строкой: в просмотре картинка
+            // станет отдельным блоком, а не разорвёт предложение.
+            pickImage.launch("image/*")
+        })
+        tools.addView(navButton(if (preview) "Правка" else "Просмотр") {
+            preview = !preview
+            leavePage { openNote(noteId, openIdx) }
+        })
+
         flatButton("Теги заметки").setOnClickListener {
             if (busy) return@setOnClickListener
             val r2 = repo ?: return@setOnClickListener
@@ -495,6 +527,7 @@ class VaultActivity : AppCompatActivity() {
             }
         }
         flatButton("К списку заметок").setOnClickListener { leavePage { showNotes() } }
+        flatButton("Удалить заметку").setOnClickListener { askDelete(noteId) }
     }
 
     private fun askJump() {
@@ -526,8 +559,135 @@ class VaultActivity : AppCompatActivity() {
     private fun closeVault() {
         editor = null
         repo = null
+        images = null
         VaultSession.lock()
         finish()
+    }
+
+    /**
+     * Удаление с подтверждением. В окне показывается НАЗВАНИЕ заметки:
+     * "уверен?" без имени человек подтверждает не глядя, а увидев чужое
+     * название - останавливается.
+     */
+    private fun askDelete(noteId: Long) {
+        val r = repo ?: return
+        val im = images ?: return
+        lifecycleScope.launch {
+            val head = r.notes().firstOrNull { it.id == noteId } ?: return@launch
+            AlertDialog.Builder(this@VaultActivity)
+                .setTitle("Удалить заметку?")
+                .setMessage("«" + head.title + "», страниц: " + head.pageCount +
+                    "\n\nЭто навсегда. Восстановить будет нечем: копий нет, " +
+                    "корзины нет, картинки заметки тоже стираются.")
+                .setNegativeButton("Отмена", null)
+                .setPositiveButton("Удалить") { _, _ ->
+                    lifecycleScope.launch {
+                        editor = null
+                        openNoteId = 0L
+                        r.deleteNote(noteId, im)
+                        toast("Удалено")
+                        showNotes()
+                    }
+                }
+                .show()
+        }
+    }
+
+    /** Картинка уходит в зашифрованный файл, в текст встаёт только метка. */
+    private fun insertImage(uri: android.net.Uri) {
+        val im = images ?: return
+        val e = editor ?: return
+        val noteId = openNoteId
+        if (noteId == 0L) return
+        busy = true
+        toast("Готовлю картинку…")
+        lifecycleScope.launch {
+            val id = withContext(Dispatchers.Default) { im.store(uri) }
+            busy = false
+            if (id == null) { toast("Не удалось добавить картинку"); return@launch }
+            val mark = "\n" + VaultText.imageMark(id) + "\n"
+            val pos = e.selectionEnd.coerceIn(0, e.text.length)
+            if (e.text.length + mark.length > VaultRepo.MAX_PAGE_CHARS) {
+                im.delete(id)
+                toast("На странице не осталось места — начни новую")
+                return@launch
+            }
+            e.text.insert(pos, mark)
+            toast("Картинка вставлена")
+        }
+    }
+
+    /**
+     * Режим просмотра: заголовки крупнее, картинки нарисованы.
+     *
+     * Правка остаётся по обычному тексту сознательно. Редактор, рисующий
+     * картинки прямо в поле ввода, ломает выделение, копирование и позицию
+     * курсора — за красоту платит тем, ради чего блокнот и нужен.
+     */
+    private fun drawPreview(text: String, top: List<String>) {
+        root.removeAllViews()
+        val noteId = openNoteId
+        val im = images
+
+        root.addView(TextView(this).apply {
+            val sign = if (top.isEmpty()) "" else "   " + top.joinToString(" · ")
+            this.text = "Страница " + (openIdx + 1) + " из " + openPages + sign
+            textSize = 15f
+            setTextColor(getColor(R.color.accent_violet_bright))
+            setPadding(0, 0, 0, dp(12))
+            isClickable = true
+            setOnClickListener { askJump() }
+        })
+
+        for (b in VaultText.blocks(text)) {
+            when (b) {
+                is VaultText.Block.Head -> root.addView(TextView(this).apply {
+                    this.text = b.text
+                    textSize = when (b.level) { 1 -> 24f; 2 -> 20f; else -> 17f }
+                    setTextColor(0xFFF2F2F7.toInt())
+                    setPadding(0, dp(14), 0, dp(6))
+                })
+                is VaultText.Block.Para -> root.addView(TextView(this).apply {
+                    this.text = b.text
+                    textSize = 16f
+                    setTextColor(0xFFDDDDE5.toInt())
+                    setTextIsSelectable(true)
+                    setPadding(0, dp(4), 0, dp(8))
+                })
+                is VaultText.Block.Img -> {
+                    val bmp = im?.load(b.id)
+                    if (bmp == null) {
+                        root.addView(TextView(this).apply {
+                            this.text = "[картинка недоступна]"
+                            textSize = 14f
+                            setTextColor(0xFF7A7A88.toInt())
+                            setPadding(0, dp(6), 0, dp(6))
+                        })
+                    } else {
+                        root.addView(ImageView(this).apply {
+                            setImageBitmap(bmp)
+                            adjustViewBounds = true
+                        }, LinearLayout.LayoutParams(-1, -2).also {
+                            it.topMargin = dp(8); it.bottomMargin = dp(8)
+                        })
+                    }
+                }
+            }
+        }
+
+        val tools = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        root.addView(tools, LinearLayout.LayoutParams(-1, -2))
+        tools.addView(navButton("◀") {
+            if (openIdx > 0) openNote(noteId, openIdx - 1)
+        })
+        tools.addView(navButton("▶") {
+            if (openIdx + 1 < openPages) openNote(noteId, openIdx + 1)
+        })
+        tools.addView(navButton("Правка") {
+            preview = false
+            openNote(noteId, openIdx)
+        })
+        flatButton("К списку заметок").setOnClickListener { showNotes() }
     }
 
     private fun toast(t: String) {
