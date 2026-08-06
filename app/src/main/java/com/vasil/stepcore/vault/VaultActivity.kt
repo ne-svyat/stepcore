@@ -1,5 +1,8 @@
 package com.vasil.stepcore.vault
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.os.Bundle
 import android.text.InputType
 import android.view.Gravity
@@ -11,6 +14,7 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.vasil.stepcore.R
@@ -43,6 +47,14 @@ class VaultActivity : AppCompatActivity() {
     private val store by lazy { VaultStore(this) }
     private lateinit var root: LinearLayout
     private var busy = false
+    private var repo: VaultRepo? = null
+
+    // Открытая страница. Держим ровно одну: тысяча страниц по десять тысяч
+    // символов в памяти не поместится и не должна.
+    private var openNoteId = 0L
+    private var openIdx = 0
+    private var openPages = 1
+    private var editor: EditText? = null
 
     /**
      * Бюджет ожидания при входе. Подобран под будущую анимацию двери:
@@ -67,13 +79,28 @@ class VaultActivity : AppCompatActivity() {
             addView(root, LinearLayout.LayoutParams(-1, -2))
         })
 
-        if (VaultSession.isOpen) showInside() else showEntrance()
+        if (VaultSession.isOpen) {
+            repo = VaultSession.key()?.let { VaultRepo(this, it) }
+            showNotes()
+        } else showEntrance()
     }
 
     /** Уход с экрана запирает тайник. Ключ не переживает сворачивание. */
     override fun onStop() {
         super.onStop()
         if (!isChangingConfigurations) {
+            // Сохранить до запирания: несохранённый текст важнее скорости.
+            val text = editor?.text?.toString()
+            val id = openNoteId
+            val idx = openIdx
+            val r = repo
+            if (text != null && id != 0L && r != null) {
+                kotlinx.coroutines.runBlocking {
+                    try { r.writePage(id, idx, text) } catch (e: Exception) { }
+                }
+            }
+            editor = null
+            repo = null
             VaultSession.lock()
             finish()
         }
@@ -121,7 +148,8 @@ class VaultActivity : AppCompatActivity() {
             busy = false
             if (key != null) {
                 VaultSession.open(key)
-                showInside()
+                repo = VaultRepo(this@VaultActivity, key)
+                showNotes()
             } else {
                 go.isEnabled = true
                 go.text = "Открыть"
@@ -230,7 +258,8 @@ class VaultActivity : AppCompatActivity() {
             }
             busy = false
             if (res == VaultFile.AddResult.OK) {
-                showInside()
+                repo = VaultSession.key()?.let { VaultRepo(this@VaultActivity, it) }
+                showNotes()
                 return@launch
             }
             go.isEnabled = true
@@ -246,18 +275,192 @@ class VaultActivity : AppCompatActivity() {
         }
     }
 
-    // ---------------------------------------------------------- внутренность
+    // ------------------------------------------------------------- заметки
 
-    private fun showInside() {
+    private fun showNotes() {
+        editor = null
+        openNoteId = 0L
         root.removeAllViews()
-        title("Тайник открыт")
-        dim("Замок работает. Заметки, страницы, теги и поиск — следующий этап.\n\n" +
-            "Ключ живёт только в памяти: уйдёшь с этого экрана — тайник " +
-            "запрётся сам.")
-        button("Закрыть").setOnClickListener {
-            VaultSession.lock()
-            finish()
+        title("Заметки")
+        val r = repo ?: return
+        val holder = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        root.addView(holder)
+        button("Новая заметка").setOnClickListener {
+            if (!busy) askText("Название заметки", "") { name ->
+                lifecycleScope.launch {
+                    val id = r.createNote(if (name.isBlank()) "Без названия" else name)
+                    openNote(id, 0)
+                }
+            }
         }
+        flatButton("Закрыть").setOnClickListener { closeVault() }
+
+        lifecycleScope.launch {
+            val list = r.notes()
+            if (list.isEmpty()) {
+                holder.addView(TextView(this@VaultActivity).apply {
+                    text = "Пусто. Заметки этого тайника видны только с его паролем."
+                    textSize = 14f
+                    setTextColor(0xFF9A9AA5.toInt())
+                    setPadding(0, 0, 0, dp(12))
+                })
+            }
+            for (n in list) {
+                holder.addView(TextView(this@VaultActivity).apply {
+                    text = n.title + "\n" + n.pageCount + " стр."
+                    textSize = 17f
+                    setTextColor(0xFFEEEEEE.toInt())
+                    setBackgroundColor(0xFF17171C.toInt())
+                    setPadding(dp(14), dp(12), dp(14), dp(12))
+                    isClickable = true
+                    setOnClickListener { openNote(n.id, 0) }
+                }, LinearLayout.LayoutParams(-1, -2).also { it.bottomMargin = dp(8) })
+            }
+        }
+    }
+
+    /** Сохранить открытую страницу и уйти. Порядок важен: сначала запись. */
+    private fun leavePage(then: () -> Unit) {
+        val r = repo
+        val text = editor?.text?.toString()
+        val id = openNoteId
+        val idx = openIdx
+        if (r == null || text == null || id == 0L) { then(); return }
+        lifecycleScope.launch {
+            try { r.writePage(id, idx, text) } catch (e: Exception) { }
+            then()
+        }
+    }
+
+    private fun openNote(noteId: Long, idx: Int) {
+        val r = repo ?: return
+        lifecycleScope.launch {
+            openPages = maxOf(1, r.pageCount(noteId))
+            val safeIdx = idx.coerceIn(0, openPages - 1)
+            val text = r.readPage(noteId, safeIdx) ?: ""
+            openNoteId = noteId
+            openIdx = safeIdx
+            drawPage(text)
+        }
+    }
+
+    private fun drawPage(text: String) {
+        root.removeAllViews()
+        val r = repo ?: return
+        val noteId = openNoteId
+
+        val head = TextView(this).apply {
+            this.text = "Страница " + (openIdx + 1) + " из " + openPages
+            textSize = 15f
+            setTextColor(getColor(R.color.accent_violet_bright))
+            setPadding(0, 0, 0, dp(10))
+            isClickable = true
+            setOnClickListener { askJump() }
+        }
+        root.addView(head)
+
+        val e = EditText(this).apply {
+            setText(text)
+            textSize = 16f
+            gravity = Gravity.TOP
+            setTextColor(0xFFEEEEEE.toInt())
+            setBackgroundColor(0xFF15151A.toInt())
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            minLines = 12
+            isSingleLine = false
+            inputType = InputType.TYPE_CLASS_TEXT or
+                InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+                InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            // Предел не отказ, а граница страницы: дальше следующая.
+            filters = arrayOf(android.text.InputFilter.LengthFilter(VaultRepo.MAX_PAGE_CHARS))
+        }
+        root.addView(e, LinearLayout.LayoutParams(-1, -2))
+        editor = e
+
+        val counter = TextView(this).apply {
+            this.text = e.text.length.toString() + " / " + VaultRepo.MAX_PAGE_CHARS
+            textSize = 12f
+            setTextColor(0xFF7A7A88.toInt())
+            setPadding(0, dp(6), 0, dp(6))
+        }
+        root.addView(counter)
+        e.addTextChangedListener(object : android.text.TextWatcher {
+            override fun afterTextChanged(s: android.text.Editable?) {
+                counter.text = (s?.length ?: 0).toString() + " / " + VaultRepo.MAX_PAGE_CHARS
+            }
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+        })
+
+        val nav = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        root.addView(nav, LinearLayout.LayoutParams(-1, -2))
+        nav.addView(navButton("◀") {
+            if (openIdx > 0) leavePage { openNote(noteId, openIdx - 1) }
+        })
+        nav.addView(navButton("▶") {
+            if (openIdx + 1 < openPages) leavePage { openNote(noteId, openIdx + 1) }
+        })
+        nav.addView(navButton("+ стр.") {
+            leavePage {
+                lifecycleScope.launch {
+                    val idx = r.addPage(noteId)
+                    if (idx < 0) toast("Предел " + VaultRepo.MAX_PAGES + " страниц")
+                    else openNote(noteId, idx)
+                }
+            }
+        })
+
+        button("Копировать страницу").setOnClickListener {
+            val sel = e.selectionEnd - e.selectionStart
+            val whole = e.text.toString()
+            val part = if (sel > 0) whole.substring(e.selectionStart, e.selectionEnd) else whole
+            copy(part)
+            toast(if (sel > 0) "Скопирован выделенный кусок" else "Скопирована страница")
+        }
+        flatButton("К списку заметок").setOnClickListener { leavePage { showNotes() } }
+    }
+
+    private fun askJump() {
+        askText("На какую страницу? 1.." + openPages, (openIdx + 1).toString()) { v ->
+            val n = v.trim().toIntOrNull()
+            if (n == null || n < 1 || n > openPages) toast("Такой страницы нет")
+            else leavePage { openNote(openNoteId, n - 1) }
+        }
+    }
+
+    private fun askText(label: String, preset: String, done: (String) -> Unit) {
+        val input = EditText(this).apply {
+            setText(preset)
+            setPadding(dp(20), dp(12), dp(20), dp(12))
+        }
+        AlertDialog.Builder(this)
+            .setTitle(label)
+            .setView(input)
+            .setPositiveButton("Ок") { _, _ -> done(input.text.toString()) }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    private fun copy(text: String) {
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        cm.setPrimaryClip(ClipData.newPlainText("", text))
+    }
+
+    private fun closeVault() {
+        editor = null
+        repo = null
+        VaultSession.lock()
+        finish()
+    }
+
+    private fun navButton(label: String, action: () -> Unit): Button {
+        val b = Button(this).apply {
+            text = label
+            textSize = 15f
+            setOnClickListener { if (!busy) action() }
+        }
+        b.layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
+        return b
     }
 
     // ------------------------------------------------------------------ мелочи
