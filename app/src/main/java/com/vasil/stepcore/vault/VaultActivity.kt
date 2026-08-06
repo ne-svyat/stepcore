@@ -524,14 +524,14 @@ class VaultActivity : AppCompatActivity() {
         })
 
         val nav = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        root.addView(nav, LinearLayout.LayoutParams(-1, -2))
-        nav.addView(navButton("◀") {
+        root.addView(nav, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(10) })
+        nav.addView(tabButton("◀") {
             if (openIdx > 0) leavePage { openNote(noteId, openIdx - 1) }
         })
-        nav.addView(navButton("▶") {
+        nav.addView(tabButton("▶") {
             if (openIdx + 1 < openPages) leavePage { openNote(noteId, openIdx + 1) }
         })
-        nav.addView(navButton("+ стр.") {
+        nav.addView(tabButton("+ стр") {
             leavePage {
                 lifecycleScope.launch {
                     val idx = r.addPage(noteId)
@@ -549,21 +549,21 @@ class VaultActivity : AppCompatActivity() {
             toast(if (sel > 0) "Скопирован выделенный кусок" else "Скопирована страница")
         }
         val tools = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        root.addView(tools, LinearLayout.LayoutParams(-1, -2))
-        tools.addView(navButton("Картинка") {
+        root.addView(tools, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(6) })
+        tools.addView(tabButton("Фото") {
             // Метка вставляется отдельной строкой: в просмотре картинка
             // станет отдельным блоком, а не разорвёт предложение.
             pickImage.launch("image/*")
         })
-        tools.addView(navButton(if (preview) "Правка" else "Просмотр") {
+        tools.addView(tabButton(if (preview) "Правка" else "Просмотр") {
             preview = !preview
             leavePage { openNote(noteId, openIdx) }
         })
 
-        tools.addView(navButton("Тропы") {
+        tools.addView(tabButton("Тропы") {
             leavePage { showTrails(noteId, openIdx) }
         })
-        tools.addView(navButton("Оглавление") {
+        tools.addView(tabButton("Разделы") {
             showOutline(e)
         })
 
@@ -703,12 +703,20 @@ class VaultActivity : AppCompatActivity() {
                     setPadding(0, dp(14), 0, dp(6))
                 })
                 is VaultText.Block.Para -> root.addView(TextView(this).apply {
-                    this.text = linkify(b.text)
-                    movementMethod = android.text.method.LinkMovementMethod.getInstance()
                     textSize = 16f
                     setTextColor(0xFFDDDDE5.toInt())
-                    setTextIsSelectable(true)
                     setPadding(0, dp(4), 0, dp(8))
+                    // setTextIsSelectable сбрасывает movementMethod на свой
+                    // и убивает нажатие по ссылке. Поэтому абзац со
+                    // ссылками отдаём переходам, а без ссылок - выделению.
+                    // Совместить нельзя: это одно и то же поле.
+                    if (VaultText.linkSpans(b.text).isEmpty()) {
+                        this.text = b.text
+                        setTextIsSelectable(true)
+                    } else {
+                        this.text = linkify(b.text)
+                        movementMethod = android.text.method.LinkMovementMethod.getInstance()
+                    }
                 })
                 is VaultText.Block.Img -> {
                     val bmp = im?.load(b.id)
@@ -734,14 +742,14 @@ class VaultActivity : AppCompatActivity() {
         }
 
         val tools = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        root.addView(tools, LinearLayout.LayoutParams(-1, -2))
-        tools.addView(navButton("◀") {
+        root.addView(tools, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(6) })
+        tools.addView(tabButton("◀") {
             if (openIdx > 0) openNote(noteId, openIdx - 1)
         })
-        tools.addView(navButton("▶") {
+        tools.addView(tabButton("▶") {
             if (openIdx + 1 < openPages) openNote(noteId, openIdx + 1)
         })
-        tools.addView(navButton("Правка") {
+        tools.addView(tabButton("Правка") {
             preview = false
             openNote(noteId, openIdx)
         })
@@ -1134,14 +1142,50 @@ class VaultActivity : AppCompatActivity() {
         android.widget.Toast.makeText(this, t, android.widget.Toast.LENGTH_SHORT).show()
     }
 
-    private fun navButton(label: String, action: () -> Unit): Button {
-        val b = Button(this).apply {
+    /**
+     * Вкладка в ряду действий.
+     *
+     * Обычные Button в ряду с весом расползались: у кого текст перенёсся,
+     * тот стал выше соседа, и ряд превращался в лесенку. Здесь высота
+     * задана жёстко, текст в одну строку и сжимается, если не влезает.
+     *
+     * Тон приглушённее основных кнопок сознательно. Это не действия
+     * первого ряда, а инструменты под рукой: рамка тонкая, заливка почти
+     * чёрная, текст спокойный. Тайник и должен быть тише остального
+     * приложения - он для того, кто уже знает, что здесь.
+     */
+    private fun tabButton(label: String, action: () -> Unit): TextView {
+        val bg = GradientDrawable().apply {
+            cornerRadius = dp(9).toFloat()
+            setColor(0xFF121218.toInt())
+            setStroke(dp(1), 0xFF2E2A3A.toInt())
+        }
+        val t = TextView(this).apply {
             text = label
-            textSize = 15f
+            textSize = 13f
+            isSingleLine = true
+            maxLines = 1
+            includeFontPadding = false
+            gravity = Gravity.CENTER
+            minHeight = dp(46)
+            height = dp(46)
+            setTextColor(0xFFA9A4BC.toInt())
+            setPadding(dp(4), 0, dp(4), 0)
+            isClickable = true
+            background = android.graphics.drawable.RippleDrawable(
+                android.content.res.ColorStateList.valueOf(0x2AFFFFFF), bg, null
+            )
+            // Длинное слово ужимается, а не переносится: ряд обязан
+            // оставаться ровным при любой подписи.
+            setHorizontallyScrolling(false)
+            ellipsize = android.text.TextUtils.TruncateAt.END
             setOnClickListener { if (!busy) action() }
         }
-        b.layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
-        return b
+        t.layoutParams = LinearLayout.LayoutParams(0, dp(46), 1f).also {
+            it.marginStart = dp(3)
+            it.marginEnd = dp(3)
+        }
+        return t
     }
 
     // ------------------------------------------------------------------ мелочи
