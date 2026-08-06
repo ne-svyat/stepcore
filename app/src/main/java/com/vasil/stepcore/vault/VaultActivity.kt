@@ -16,6 +16,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
@@ -59,6 +60,7 @@ class VaultActivity : AppCompatActivity() {
     private var editor: EditText? = null
     private var images: VaultImages? = null
     private var preview = false
+    private var lastBackMs = 0L
 
     /**
      * Выбор картинки у системы. Регистрируется один раз при создании
@@ -90,6 +92,23 @@ class VaultActivity : AppCompatActivity() {
             setBackgroundColor(0xFF0A0A0A.toInt())
             isFillViewport = true
             addView(root, LinearLayout.LayoutParams(-1, -2))
+        })
+
+        // Случайный выход из заметки - самая обидная потеря, и она
+        // случается постоянно. Но спрашивать ВСЕГДА значит раздражать:
+        // вопрос задаётся только когда есть что терять.
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                val e = editor
+                if (e == null || openNoteId == 0L) { closeVault(); return }
+                val now = android.os.SystemClock.uptimeMillis()
+                if (now - lastBackMs < 2500L) {
+                    leavePage { showNotes() }
+                    return
+                }
+                lastBackMs = now
+                toast("Ещё раз — выйти к списку. Текст сохранится.")
+            }
         })
 
         if (VaultSession.isOpen) {
@@ -527,6 +546,9 @@ class VaultActivity : AppCompatActivity() {
             }
         }
         flatButton("К списку заметок").setOnClickListener { leavePage { showNotes() } }
+        flatButton("История правок").setOnClickListener {
+            leavePage { showHistory(noteId, openIdx) }
+        }
         flatButton("Удалить заметку").setOnClickListener { askDelete(noteId) }
     }
 
@@ -688,6 +710,139 @@ class VaultActivity : AppCompatActivity() {
             openNote(noteId, openIdx)
         })
         flatButton("К списку заметок").setOnClickListener { showNotes() }
+    }
+
+    /**
+     * История правок страницы.
+     *
+     * Сверху лента версий, снизу текст выбранной с подсветкой отличий от
+     * нынешней. Отсюда можно скопировать кусок, вставить кусок в страницу
+     * или вернуть версию целиком.
+     *
+     * Смысл именно в куске: чаще нужен один зря переписанный абзац, а не
+     * вся старая страница. Все известные блокноты дают только "откатить
+     * всё" — и поэтому их откатом не пользуются.
+     */
+    private fun showHistory(noteId: Long, idx: Int) {
+        val r = repo ?: return
+        root.removeAllViews()
+        editor = null
+        title("История правок")
+
+        val lane = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val body = TextView(this).apply {
+            textSize = 15f
+            setTextColor(0xFFDDDDE5.toInt())
+            setBackgroundColor(0xFF15151A.toInt())
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            setTextIsSelectable(true)
+        }
+        val note = TextView(this).apply {
+            textSize = 13f
+            setTextColor(0xFF9A9AA5.toInt())
+            setPadding(0, dp(10), 0, dp(6))
+        }
+
+        root.addView(note)
+        root.addView(lane)
+
+        lifecycleScope.launch {
+            val current = r.readPage(noteId, idx) ?: ""
+            val snaps = r.history(noteId, idx)
+            val forks = r.forks(noteId, idx)
+            val now = System.currentTimeMillis()
+
+            if (snaps.isEmpty() && forks.isEmpty()) {
+                note.text = "Правок пока нет. Снимок делается при каждом сохранении с изменениями."
+            } else {
+                note.text = "Версий: " + snaps.size + " · развилок: " + forks.size +
+                    "\nВыбери версию — внизу появится её текст."
+            }
+
+            var chosen: VaultRepo.Snap? = null
+
+            fun paint(s: VaultRepo.Snap) {
+                chosen = s
+                // Подсветка области, которой версии различаются: глаз
+                // ловит цветное пятно раньше, чем читает буквы.
+                val reg = VaultDiff.region(s.text, current)
+                val sp = android.text.SpannableString(s.text)
+                val to = minOf(s.text.length, maxOf(reg.oldEnd, reg.start))
+                if (reg.start < to) {
+                    sp.setSpan(android.text.style.BackgroundColorSpan(0xFF4A2B57.toInt()),
+                        reg.start, to, 0)
+                }
+                body.text = sp
+            }
+
+            for (s in snaps + forks) {
+                val label = (if (s.fork) "⑂ развилка · " else "") +
+                    VaultDiff.ago(s.ms, now) + " · " + VaultDiff.plural(s.text.length) +
+                    "\n" + VaultDiff.summary(s.text, current)
+                lane.addView(TextView(this@VaultActivity).apply {
+                    text = label
+                    textSize = 14f
+                    setTextColor(if (s.fork) 0xFFE0B96A.toInt() else 0xFFCFCFDA.toInt())
+                    setBackgroundColor(0xFF17171C.toInt())
+                    setPadding(dp(12), dp(10), dp(12), dp(10))
+                    isClickable = true
+                    setOnClickListener { paint(s); toast("Версия показана ниже") }
+                }, LinearLayout.LayoutParams(-1, -2).also { it.bottomMargin = dp(6) })
+            }
+
+            root.addView(body, LinearLayout.LayoutParams(-1, -2))
+
+            button("Копировать выделенное").setOnClickListener {
+                val t = selectionOf(body)
+                if (t.isEmpty()) toast("Выдели кусок в тексте версии")
+                else { copy(t); toast("Скопировано") }
+            }
+            button("Вставить выделенное в страницу").setOnClickListener {
+                val t = selectionOf(body)
+                if (t.isEmpty()) { toast("Выдели кусок в тексте версии"); return@setOnClickListener }
+                lifecycleScope.launch {
+                    val merged = current + (if (current.endsWith("\n")) "" else "\n") + t
+                    if (merged.length > VaultRepo.MAX_PAGE_CHARS) {
+                        toast("Не помещается — начни новую страницу")
+                        return@launch
+                    }
+                    // Нынешняя версия тоже уходит в ленту: вставка это
+                    // такая же правка, и её тоже должно быть чем отменить.
+                    r.writePage(noteId, idx, merged)
+                    toast("Вставлено в конец страницы")
+                    openNote(noteId, idx)
+                }
+            }
+            button("Вернуть версию целиком").setOnClickListener {
+                val s = chosen
+                if (s == null) { toast("Сначала выбери версию"); return@setOnClickListener }
+                AlertDialog.Builder(this@VaultActivity)
+                    .setTitle("Вернуть эту версию?")
+                    .setMessage("Нынешний текст не пропадёт — он уедет в развилку " +
+                        "и останется здесь же, в истории.")
+                    .setNegativeButton("Отмена", null)
+                    .setPositiveButton("Вернуть") { _, _ ->
+                        lifecycleScope.launch {
+                            r.fork(noteId, idx, current)
+                            r.writePage(noteId, idx, s.text)
+                            toast("Версия возвращена, прежняя в развилке")
+                            openNote(noteId, idx)
+                        }
+                    }
+                    .show()
+            }
+            flatButton("Назад к странице").setOnClickListener { openNote(noteId, idx) }
+        }
+    }
+
+    /** Выделенный кусок текста версии, либо пусто. */
+    private fun selectionOf(v: TextView): String {
+        val a = v.selectionStart
+        val b = v.selectionEnd
+        if (a < 0 || b < 0 || a == b) return ""
+        val from = minOf(a, b)
+        val to = maxOf(a, b)
+        return v.text.toString().substring(from, to)
     }
 
     private fun toast(t: String) {

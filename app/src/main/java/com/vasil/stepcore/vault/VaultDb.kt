@@ -59,6 +59,28 @@ data class VPage(
     val words: ByteArray = ByteArray(0),
 )
 
+/**
+ * Снимок страницы. Пятьдесят на страницу плюс три развилки.
+ *
+ * ЗАЧЕМ РАЗВИЛКИ
+ * --------------
+ * Обычная отмена — стек: откатился, начал править, старое будущее исчезло
+ * навсегда. Это и есть та потеря, из-за которой люди боятся откатывать.
+ * Здесь брошенное будущее не умирает: при возврате старой версии текущая
+ * уезжает в развилку и остаётся доступной.
+ *
+ * kind: 0 — снимок в ленте, 1 — развилка.
+ */
+@Entity(tableName = "v_history")
+data class VHist(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val noteId: Long,
+    val idx: Int,
+    val ms: Long,
+    val kind: Int,
+    val body: ByteArray,       // шифротекст
+)
+
 @Dao
 interface VaultDao {
 
@@ -93,6 +115,24 @@ interface VaultDao {
     @Query("SELECT * FROM v_pages WHERE noteId = :noteId AND idx = :idx")
     suspend fun page(noteId: Long, idx: Int): VPage?
 
+    @Insert
+    suspend fun addHist(h: VHist)
+
+    @Query("SELECT * FROM v_history WHERE noteId = :noteId AND idx = :idx AND kind = :kind ORDER BY ms DESC")
+    suspend fun hist(noteId: Long, idx: Int, kind: Int): List<VHist>
+
+    /** Обрезка по кругу: старейшее сверх предела уходит. */
+    @Query("""DELETE FROM v_history WHERE noteId = :noteId AND idx = :idx AND kind = :kind
+              AND id NOT IN (SELECT id FROM v_history WHERE noteId = :noteId AND idx = :idx
+                             AND kind = :kind ORDER BY ms DESC LIMIT :keep)""")
+    suspend fun trimHist(noteId: Long, idx: Int, kind: Int, keep: Int)
+
+    @Query("DELETE FROM v_history WHERE noteId = :noteId")
+    suspend fun dropHist(noteId: Long)
+
+    @Query("DELETE FROM v_history WHERE id = :id")
+    suspend fun dropHistOne(id: Long)
+
     @Query("DELETE FROM v_pages WHERE noteId = :noteId")
     suspend fun dropPages(noteId: Long)
 
@@ -100,7 +140,7 @@ interface VaultDao {
     suspend fun dropNote(noteId: Long)
 }
 
-@Database(entities = [VNote::class, VPage::class], version = 2, exportSchema = false)
+@Database(entities = [VNote::class, VPage::class, VHist::class], version = 3, exportSchema = false)
 abstract class VaultDb : RoomDatabase() {
     abstract fun dao(): VaultDao
 
@@ -118,12 +158,27 @@ abstract class VaultDb : RoomDatabase() {
             }
         }
 
+        /** История правок. Прошлое неизменно: старые заметки не трогаем. */
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS v_history (" +
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "noteId INTEGER NOT NULL, idx INTEGER NOT NULL, " +
+                    "ms INTEGER NOT NULL, kind INTEGER NOT NULL, body BLOB NOT NULL)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS idx_hist ON v_history (noteId, idx, kind, ms)"
+                )
+            }
+        }
+
         @Volatile private var instance: VaultDb? = null
         fun get(context: Context): VaultDb =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
                     context.applicationContext, VaultDb::class.java, "vault.db"
-                ).addMigrations(MIGRATION_1_2).build().also { instance = it }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { instance = it }
             }
     }
 }
@@ -242,9 +297,50 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
         return VaultCrypto.decrypt(dataKey, p.body)?.toString(Charsets.UTF_8)
     }
 
+    /** Один снимок страницы: что было и когда. */
+    class Snap(val id: Long, val ms: Long, val text: String, val fork: Boolean)
+
+    suspend fun history(noteId: Long, idx: Int): List<Snap> = load(noteId, idx, KIND_SNAP)
+    suspend fun forks(noteId: Long, idx: Int): List<Snap> = load(noteId, idx, KIND_FORK)
+
+    private suspend fun load(noteId: Long, idx: Int, kind: Int): List<Snap> =
+        dao.hist(noteId, idx, kind).mapNotNull { h ->
+            val t = VaultCrypto.decrypt(dataKey, h.body)?.toString(Charsets.UTF_8)
+            if (t == null) null else Snap(h.id, h.ms, t, kind == KIND_FORK)
+        }
+
+    private suspend fun keep(noteId: Long, idx: Int, kind: Int, text: String, limit: Int) {
+        dao.addHist(VHist(
+            noteId = noteId, idx = idx, ms = System.currentTimeMillis(), kind = kind,
+            body = VaultCrypto.encrypt(dataKey, text.toByteArray())
+        ))
+        dao.trimHist(noteId, idx, kind, limit)
+    }
+
+    /**
+     * Отложить текущую версию в развилку.
+     *
+     * Вызывается перед возвратом старой версии. Именно это делает потерю
+     * текста правкой невозможной, а не просто маловероятной.
+     */
+    suspend fun fork(noteId: Long, idx: Int, currentText: String) {
+        if (currentText.isEmpty()) return
+        keep(noteId, idx, KIND_FORK, currentText, MAX_FORKS)
+    }
+
+    suspend fun dropSnap(id: Long) = dao.dropHistOne(id)
+
     suspend fun writePage(noteId: Long, idx: Int, text: String) {
         require(text.length <= MAX_PAGE_CHARS) { "страница длиннее предела" }
         val now = System.currentTimeMillis()
+
+        // Прежняя версия уходит в ленту ДО перезаписи. Снимок делается
+        // только при реальном отличии: сохранение без правок не должно
+        // вытеснять полезные снимки из полусотни.
+        val prev = dao.page(noteId, idx)?.let {
+            VaultCrypto.decrypt(dataKey, it.body)?.toString(Charsets.UTF_8)
+        }
+        if (prev != null && prev != text) keep(noteId, idx, KIND_SNAP, prev, MAX_HISTORY)
         val top = VaultText.formatTags(VaultText.topWords(text)).replace(", ", " ")
         dao.putPage(VPage(
             noteId, idx, now,
@@ -279,6 +375,7 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
             }
             from += PAGE_CHUNK
         }
+        dao.dropHist(noteId)
         dao.dropPages(noteId)
         dao.dropNote(noteId)
     }
@@ -299,5 +396,11 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
         const val MAX_PAGES = 1000
         /** Сколько страниц поиск держит в памяти за раз. */
         const val PAGE_CHUNK = 20
+        /** Глубина ленты правок на страницу. */
+        const val MAX_HISTORY = 50
+        /** Брошенных будущих на страницу. */
+        const val MAX_FORKS = 3
+        const val KIND_SNAP = 0
+        const val KIND_FORK = 1
     }
 }
