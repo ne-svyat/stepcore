@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
@@ -71,7 +72,14 @@ data class VPage(
  *
  * kind: 0 — снимок в ленте, 1 — развилка.
  */
-@Entity(tableName = "v_history")
+@Entity(
+    tableName = "v_history",
+    // Индекс объявлен ЗДЕСЬ, а не только в миграции. Room сверяет схему
+    // буквально: индекс, созданный миграцией, но не описанный в сущности,
+    // роняет приложение при открытии базы. Имя задано явно и совпадает с
+    // именем в миграции — иначе Room сгенерирует своё и снова не сойдётся.
+    indices = [Index(name = "idx_hist", value = ["noteId", "idx", "kind", "ms"])]
+)
 data class VHist(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val noteId: Long,
