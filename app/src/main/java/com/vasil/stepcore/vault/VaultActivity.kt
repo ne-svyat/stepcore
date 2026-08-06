@@ -63,6 +63,21 @@ class VaultActivity : AppCompatActivity() {
     private var lastBackMs = 0L
 
     /**
+     * Где мы сейчас. Без этого "Назад" не знает, куда возвращаться, и
+     * закрывает тайник с любого экрана — именно так и вышло на истории
+     * правок: там нет редактора, и обработчик считал, что мы на входе.
+     *
+     * Свой стек экранов, а не системный, потому что весь Vault живёт в
+     * одной Activity: класть каждый экран в отдельную Activity значило бы
+     * плодить записи в списке задач, которых у скрытого модуля быть не
+     * должно.
+     */
+    private enum class Screen { ENTRANCE, CREATE, NOTES, PAGE, PREVIEW, HISTORY }
+    private var screen = Screen.ENTRANCE
+    private var histNoteId = 0L
+    private var histIdx = 0
+
+    /**
      * Выбор картинки у системы. Регистрируется один раз при создании
      * экрана: регистрировать по нажатию Android не позволяет.
      */
@@ -98,17 +113,7 @@ class VaultActivity : AppCompatActivity() {
         // случается постоянно. Но спрашивать ВСЕГДА значит раздражать:
         // вопрос задаётся только когда есть что терять.
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
-            override fun handleOnBackPressed() {
-                val e = editor
-                if (e == null || openNoteId == 0L) { closeVault(); return }
-                val now = android.os.SystemClock.uptimeMillis()
-                if (now - lastBackMs < 2500L) {
-                    leavePage { showNotes() }
-                    return
-                }
-                lastBackMs = now
-                toast("Ещё раз — выйти к списку. Текст сохранится.")
-            }
+            override fun handleOnBackPressed() = goBack()
         })
 
         if (VaultSession.isOpen) {
@@ -142,6 +147,7 @@ class VaultActivity : AppCompatActivity() {
     // ------------------------------------------------------------------- вход
 
     private fun showEntrance() {
+        screen = Screen.ENTRANCE
         root.removeAllViews()
         title("Тайник")
 
@@ -199,6 +205,7 @@ class VaultActivity : AppCompatActivity() {
     // --------------------------------------------------------------- создание
 
     private fun showCreate() {
+        screen = Screen.CREATE
         root.removeAllViews()
         title("Новый тайник")
         dim("Заметки шифруются на этом устройстве и никуда не отправляются.")
@@ -233,7 +240,7 @@ class VaultActivity : AppCompatActivity() {
             "Тайников может быть несколько, у каждого свои секреты и свои " +
             "заметки. Пароль одного не открывает другой.")
 
-        back.setOnClickListener { if (!busy) showEntrance() }
+        back.setOnClickListener { if (!busy) goBack() }
         go.setOnClickListener {
             if (busy) return@setOnClickListener
             val p = pass.chars(); val p2 = pass2.chars()
@@ -315,6 +322,7 @@ class VaultActivity : AppCompatActivity() {
     // ------------------------------------------------------------- заметки
 
     private fun showNotes(query: String = "") {
+        screen = Screen.NOTES
         editor = null
         preview = false
         openNoteId = 0L
@@ -447,6 +455,7 @@ class VaultActivity : AppCompatActivity() {
 
     private fun drawPage(text: String, top: List<String> = emptyList()) {
         if (preview) { drawPreview(text, top); return }
+        screen = Screen.PAGE
         root.removeAllViews()
         val r = repo ?: return
         val noteId = openNoteId
@@ -647,6 +656,7 @@ class VaultActivity : AppCompatActivity() {
      * курсора — за красоту платит тем, ради чего блокнот и нужен.
      */
     private fun drawPreview(text: String, top: List<String>) {
+        screen = Screen.PREVIEW
         root.removeAllViews()
         val noteId = openNoteId
         val im = images
@@ -725,6 +735,9 @@ class VaultActivity : AppCompatActivity() {
      */
     private fun showHistory(noteId: Long, idx: Int) {
         val r = repo ?: return
+        screen = Screen.HISTORY
+        histNoteId = noteId
+        histIdx = idx
         root.removeAllViews()
         editor = null
         title("История правок")
@@ -831,8 +844,52 @@ class VaultActivity : AppCompatActivity() {
                     }
                     .show()
             }
-            flatButton("Назад к странице").setOnClickListener { openNote(noteId, idx) }
+            flatButton("Назад к странице").setOnClickListener { goBack() }
         }
+    }
+
+    /**
+     * Один шаг назад по экранам Vault.
+     *
+     * Наружу, к шагомеру, тайник закрывается ТОЛЬКО со списка заметок и
+     * только по второму нажатию. Раньше выход случался с любого экрана,
+     * где не было редактора, — и с истории правок выбрасывало прямо на
+     * главный экран приложения.
+     */
+    private fun goBack() {
+        when (screen) {
+            Screen.HISTORY -> openNote(histNoteId, histIdx)
+
+            Screen.PREVIEW -> {
+                preview = false
+                openNote(openNoteId, openIdx)
+            }
+
+            // Со страницы уходим только по второму нажатию: текст под
+            // рукой, и случайный свайп не должен его прятать.
+            Screen.PAGE -> if (confirmedBack("Ещё раз — к списку заметок. Текст сохранится.")) {
+                leavePage { showNotes() }
+            }
+
+            Screen.CREATE -> showEntrance()
+
+            // Со списка выходим к шагомеру — тоже со второго раза.
+            Screen.NOTES -> if (confirmedBack("Ещё раз — закрыть тайник.")) closeVault()
+
+            Screen.ENTRANCE -> closeVault()
+        }
+    }
+
+    /** @return true, если это второе нажатие подряд в пределах окна. */
+    private fun confirmedBack(hint: String): Boolean {
+        val now = android.os.SystemClock.uptimeMillis()
+        if (now - lastBackMs < 2500L) {
+            lastBackMs = 0L
+            return true
+        }
+        lastBackMs = now
+        toast(hint)
+        return false
     }
 
     /** Выделенный кусок текста версии, либо пусто. */
