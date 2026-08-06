@@ -43,6 +43,13 @@ data class VNote(
     val updatedMs: Long,
     val pageCount: Int,
     val title: ByteArray,      // шифротекст
+    /**
+     * Тепло и когда его считали. Числа, не шифротекст: по ним видно, что
+     * какая-то заметка активна, но не какая и не о чём. Та же цена, что у
+     * updatedMs, - за возможность сортировать, не расшифровывая тайник.
+     */
+    val heat: Float = 0f,
+    val heatAtMs: Long = 0L,
     // Теги заметки одной строкой, шифротекстом. Отдельной таблицей их
     // держать незачем: по зашифрованному тегу всё равно нельзя сделать
     // WHERE, а расшифровывать пришлось бы то же самое.
@@ -101,6 +108,9 @@ interface VaultDao {
     @Query("UPDATE v_notes SET title = :title, updatedMs = :ms WHERE id = :id")
     suspend fun renameNote(id: Long, title: ByteArray, ms: Long)
 
+    @Query("UPDATE v_notes SET heat = :heat, heatAtMs = :ms WHERE id = :id")
+    suspend fun setHeat(id: Long, heat: Float, ms: Long)
+
     @Query("UPDATE v_notes SET pageCount = :count, updatedMs = :ms WHERE id = :id")
     suspend fun setPageCount(id: Long, count: Int, ms: Long)
 
@@ -148,7 +158,7 @@ interface VaultDao {
     suspend fun dropNote(noteId: Long)
 }
 
-@Database(entities = [VNote::class, VPage::class, VHist::class], version = 3, exportSchema = false)
+@Database(entities = [VNote::class, VPage::class, VHist::class], version = 4, exportSchema = false)
 abstract class VaultDb : RoomDatabase() {
     abstract fun dao(): VaultDao
 
@@ -181,12 +191,22 @@ abstract class VaultDb : RoomDatabase() {
             }
         }
 
+        /** Тепло. Старые заметки начинают с нуля и разогреваются
+         *  первым же касанием: прошлое неизменно, выдумывать историю
+         *  задним числом мы не станем. */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE v_notes ADD COLUMN heat REAL NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE v_notes ADD COLUMN heatAtMs INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         @Volatile private var instance: VaultDb? = null
         fun get(context: Context): VaultDb =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
                     context.applicationContext, VaultDb::class.java, "vault.db"
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { instance = it }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build().also { instance = it }
             }
     }
 }
@@ -204,7 +224,7 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
 
     /** Заметка в разобранном виде. Текст страниц сюда не попадает. */
     class NoteHead(val id: Long, val title: String, val pageCount: Int,
-                   val updatedMs: Long, val tags: List<String>)
+                   val updatedMs: Long, val tags: List<String>, val heat: Float = 0f)
 
     /** Находка поиска: где именно и что видно вокруг. */
     class Hit(val noteId: Long, val noteTitle: String, val page: Int, val snippet: String)
@@ -218,8 +238,20 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
     suspend fun notes(): List<NoteHead> =
         dao.allNotes().mapNotNull { n ->
             val t = VaultCrypto.decrypt(dataKey, n.title)?.toString(Charsets.UTF_8)
-            if (t == null) null else NoteHead(n.id, t, n.pageCount, n.updatedMs, tagsOf(n))
+            if (t == null) null else NoteHead(
+                n.id, t, n.pageCount, n.updatedMs, tagsOf(n),
+                // Остывание считается при ЧТЕНИИ: хранить приходится два
+                // числа вместо журнала касаний.
+                VaultHeat.decay(n.heat, n.heatAtMs, System.currentTimeMillis())
+            )
         }
+
+    /** Отметить касание заметки: открыли, дописали или завели. */
+    suspend fun touch(noteId: Long, weight: Float) {
+        val n = dao.note(noteId) ?: return
+        val now = System.currentTimeMillis()
+        dao.setHeat(noteId, VaultHeat.bump(n.heat, n.heatAtMs, now, weight), now)
+    }
 
     private fun tagsOf(n: VNote): List<String> {
         val raw = VaultCrypto.decrypt(dataKey, n.tags)?.toString(Charsets.UTF_8) ?: return emptyList()
@@ -382,7 +414,8 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
     }
 
     /** Класс со своим весом и тоном. */
-    class ClassInfo(val name: String, val count: Int, val hue: Float)
+    class ClassInfo(val name: String, val count: Int, val hue: Float,
+                    val heat: Float = 0f)
 
     /**
      * Классы тайника и их сплетения.
@@ -393,10 +426,10 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
      *
      * Считается по заголовкам заметок, текст страниц не читается вовсе.
      */
-    /** Заметки каждого класса: id и название, свежие первыми. */
+    /** Заметки каждого класса, САМЫЕ ЖИВЫЕ первыми. */
     suspend fun classMembers(): Map<String, List<Pair<Long, String>>> {
         val out = HashMap<String, ArrayList<Pair<Long, String>>>()
-        for (h in notes()) {
+        for (h in notes().sortedByDescending { it.heat }) {
             for (t in h.tags.map { it.trim().lowercase() }.distinct()) {
                 out.getOrPut(t) { ArrayList() }.add(h.id to h.title)
             }
@@ -408,9 +441,15 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
         val heads = notes()
         val count = HashMap<String, Int>()
         val together = HashMap<Pair<String, String>, Int>()
+        val warmth = HashMap<String, Float>()
         for (h in heads) {
             val tags = h.tags.map { it.trim().lowercase() }.distinct().sorted()
-            for (t in tags) count[t] = (count[t] ?: 0) + 1
+            for (t in tags) {
+                count[t] = (count[t] ?: 0) + 1
+                // Тепло класса - сумма тепла его заметок. Класс из трёх
+                // живых заметок должен обгонять класс из тридцати мёртвых.
+                warmth[t] = (warmth[t] ?: 0f) + h.heat
+            }
             for (i in tags.indices) for (j in i + 1 until tags.size) {
                 val k = tags[i] to tags[j]
                 together[k] = (together[k] ?: 0) + 1
@@ -420,7 +459,7 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
         val list = count.entries
             .sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }
                 .thenBy { it.key })
-            .map { ClassInfo(it.key, it.value, hues[it.key] ?: 0f) }
+            .map { ClassInfo(it.key, it.value, hues[it.key] ?: 0f, warmth[it.key] ?: 0f) }
         return list to together
     }
 

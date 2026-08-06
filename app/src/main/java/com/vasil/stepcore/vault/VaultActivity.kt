@@ -95,8 +95,8 @@ class VaultActivity : AppCompatActivity() {
     private var lockOuterScroll = false
 
     /** Порядок заметок в списке. */
-    private enum class SortBy { NEW, OLD, TITLE, EDITED }
-    private var sortBy = SortBy.NEW
+    private enum class SortBy { HOT, NEW, OLD, TITLE }
+    private var sortBy = SortBy.HOT
 
     /**
      * Выбор картинки у системы. Регистрируется один раз при создании
@@ -422,8 +422,8 @@ class VaultActivity : AppCompatActivity() {
         // Порядок: четыре положения, «Новые» по умолчанию.
         val sortRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         root.addView(sortRow, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(8) })
-        for ((mode, label) in listOf(SortBy.NEW to "Новые", SortBy.OLD to "Старые",
-                                     SortBy.TITLE to "А-Я", SortBy.EDITED to "Правка")) {
+        for ((mode, label) in listOf(SortBy.HOT to "Живые", SortBy.NEW to "Новые",
+                                     SortBy.OLD to "Старые", SortBy.TITLE to "А-Я")) {
             sortRow.addView(tabButton(label, mode == sortBy) {
                 sortBy = mode
                 lifecycleScope.launch { fillNotes(holder, status, r.notes()) }
@@ -450,14 +450,21 @@ class VaultActivity : AppCompatActivity() {
         val rootsHint = TextView(this).apply {
             textSize = 11f
             setTextColor(0xFF7A7A88.toInt())
-            text = "Корни · тап по жиле — отбор класса, по узелку — заметка"
+            text = "Корни · живое слева · тап по жиле — отбор, по узелку — заметка"
             setPadding(dp(2), 0, 0, dp(4))
         }
         root.addView(rootsHint)
 
+        // Горизонтальная прокрутка вместо зума: пятьдесят классов на
+        // ширину телефона - это по восемь точек на жилу, каша при любом
+        // приближении. Прокрутка - одно движение и ничего не теряется.
         val rootsView = VaultRootsView(this)
-        root.addView(rootsView, LinearLayout.LayoutParams(-1,
-            (resources.displayMetrics.heightPixels * 0.26f).toInt()))
+        val rootsHeight = (resources.displayMetrics.heightPixels * 0.26f).toInt()
+        val rootsScroll = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            addView(rootsView, LinearLayout.LayoutParams(-1, rootsHeight))
+        }
+        root.addView(rootsScroll, LinearLayout.LayoutParams(-1, rootsHeight))
 
         val bottom = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         root.addView(bottom, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(6) })
@@ -468,6 +475,7 @@ class VaultActivity : AppCompatActivity() {
             if (!busy) askText("Название заметки", "") { name ->
                 lifecycleScope.launch {
                     val id = r.createNote(if (name.isBlank()) "Без названия" else name)
+                    r.touch(id, VaultHeat.W_CREATE)
                     openForRead(id, 0)
                 }
             }
@@ -489,7 +497,16 @@ class VaultActivity : AppCompatActivity() {
 
             if (list.isNotEmpty()) {
                 val members = r.classMembers()
-                val ordered = list.sortedBy { it.hue }
+                // Порядок жил ПО ТЕПЛУ: живое слева, под большим пальцем.
+                // Раньше сортировалось по тону - красиво, но бесполезно:
+                // самое нужное могло оказаться в конце.
+                val ordered = list.sortedByDescending { it.heat }
+                // Ширина под число классов: жила уже 56dp читается плохо.
+                val need = dp(56) * ordered.size + dp(24)
+                rootsView.layoutParams = LinearLayout.LayoutParams(
+                    maxOf(need, resources.displayMetrics.widthPixels - dp(32)),
+                    rootsHeight
+                )
                 rootsView.setData(
                     ordered.map { c ->
                         VaultRootsView.Strand(
@@ -512,10 +529,14 @@ class VaultActivity : AppCompatActivity() {
     private fun fillNotes(holder: LinearLayout, status: TextView,
                           raw: List<VaultRepo.NoteHead>) {
         val list = when (sortBy) {
+            // «Живые» по умолчанию: то, чем занимаешься сейчас, а не то,
+            // что случайно завёл последним.
+            SortBy.HOT -> raw.sortedWith(
+                compareByDescending<VaultRepo.NoteHead> { it.heat }
+                    .thenByDescending { it.updatedMs })
             SortBy.NEW -> raw.sortedByDescending { it.id }
             SortBy.OLD -> raw.sortedBy { it.id }
             SortBy.TITLE -> raw.sortedBy { it.title.lowercase() }
-            SortBy.EDITED -> raw.sortedByDescending { it.updatedMs }
         }
         holder.removeAllViews()
         status.text = if (list.isEmpty()) "Пусто. Заметки этого тайника видны только с его паролем."
@@ -601,6 +622,8 @@ class VaultActivity : AppCompatActivity() {
     /** Открыть заметку на чтение. Правка - по вкладке. */
     private fun openForRead(noteId: Long, idx: Int) {
         openingForRead = true
+        // Открытие греет заметку. Слабо: открывают и случайно.
+        repo?.let { r -> lifecycleScope.launch { r.touch(noteId, VaultHeat.W_OPEN) } }
         openNote(noteId, idx)
     }
 
@@ -612,7 +635,13 @@ class VaultActivity : AppCompatActivity() {
         val idx = openIdx
         if (r == null || text == null || id == 0L) { then(); return }
         lifecycleScope.launch {
-            try { r.writePage(id, idx, text) } catch (e: Exception) { }
+            try {
+                val before = r.readPage(id, idx)
+                r.writePage(id, idx, text)
+                // Греем только при РЕАЛЬНОЙ правке: заход и выход без
+                // изменений не должен поднимать заметку наверх.
+                if (before != text) r.touch(id, VaultHeat.W_EDIT)
+            } catch (e: Exception) { }
             then()
         }
     }
