@@ -3,6 +3,7 @@ package com.vasil.stepcore.vault
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.text.InputType
 import android.view.Gravity
@@ -72,10 +73,13 @@ class VaultActivity : AppCompatActivity() {
      * плодить записи в списке задач, которых у скрытого модуля быть не
      * должно.
      */
-    private enum class Screen { ENTRANCE, CREATE, NOTES, PAGE, PREVIEW, HISTORY }
+    private enum class Screen { ENTRANCE, CREATE, NOTES, PAGE, PREVIEW, HISTORY, IMAGE }
     private var screen = Screen.ENTRANCE
     private var histNoteId = 0L
     private var histIdx = 0
+
+    /** Что подсветить на странице после перехода из поиска. */
+    private var pendingFind: String? = null
 
     /**
      * Выбор картинки у системы. Регистрируется один раз при создании
@@ -421,7 +425,7 @@ class VaultActivity : AppCompatActivity() {
                     setBackgroundColor(0xFF17171C.toInt())
                     setPadding(dp(14), dp(10), dp(14), dp(10))
                     isClickable = true
-                    setOnClickListener { openNote(h.noteId, h.page) }
+                    setOnClickListener { pendingFind = text; openNote(h.noteId, h.page) }
                 }, LinearLayout.LayoutParams(-1, -2).also { it.bottomMargin = dp(8) })
             }
         }
@@ -491,6 +495,7 @@ class VaultActivity : AppCompatActivity() {
         }
         root.addView(e, LinearLayout.LayoutParams(-1, -2))
         editor = e
+        pendingFind?.let { q -> pendingFind = null; flashMatch(e, q) }
 
         val counter = TextView(this).apply {
             this.text = e.text.length.toString() + " / " + VaultRepo.MAX_PAGE_CHARS
@@ -558,7 +563,7 @@ class VaultActivity : AppCompatActivity() {
         flatButton("История правок").setOnClickListener {
             leavePage { showHistory(noteId, openIdx) }
         }
-        flatButton("Удалить заметку").setOnClickListener { askDelete(noteId) }
+        dangerButton("Удалить заметку").setOnClickListener { askDelete(noteId) }
     }
 
     private fun askJump() {
@@ -699,6 +704,8 @@ class VaultActivity : AppCompatActivity() {
                         root.addView(ImageView(this).apply {
                             setImageBitmap(bmp)
                             adjustViewBounds = true
+                            isClickable = true
+                            setOnClickListener { showImage(b.id) }
                         }, LinearLayout.LayoutParams(-1, -2).also {
                             it.topMargin = dp(8); it.bottomMargin = dp(8)
                         })
@@ -860,6 +867,11 @@ class VaultActivity : AppCompatActivity() {
         when (screen) {
             Screen.HISTORY -> openNote(histNoteId, histIdx)
 
+            Screen.IMAGE -> {
+                preview = true
+                openNote(openNoteId, openIdx)
+            }
+
             Screen.PREVIEW -> {
                 preview = false
                 openNote(openNoteId, openIdx)
@@ -892,6 +904,66 @@ class VaultActivity : AppCompatActivity() {
         return false
     }
 
+    /**
+     * Картинка на весь экран.
+     *
+     * Отдельный экран внутри той же Activity, а не диалог: диалог обрезал
+     * бы жесты по своим краям, а картинка должна занимать всё.
+     */
+    private fun showImage(id: String) {
+        val im = images ?: return
+        val bmp = im.load(id)
+        if (bmp == null) { toast("Картинка недоступна"); return }
+        screen = Screen.IMAGE
+        root.removeAllViews()
+        editor = null
+
+        val zoom = VaultZoomView(this)
+        zoom.setBitmap(bmp)
+        // Высота под экран: вьюха сама вписывает и центрирует картинку.
+        root.addView(zoom, LinearLayout.LayoutParams(-1,
+            (resources.displayMetrics.heightPixels * 0.78f).toInt()))
+
+        root.addView(TextView(this).apply {
+            text = "Щипок — приблизить · двойной тап — туда и обратно · " +
+                "перетаскивание — двигать"
+            textSize = 12f
+            setTextColor(0xFF7A7A88.toInt())
+            setPadding(0, dp(8), 0, dp(8))
+        })
+        secondaryButton("Вписать целиком").setOnClickListener { zoom.reset() }
+        secondaryButton("Назад к странице").setOnClickListener { goBack() }
+    }
+
+    /**
+     * Подсветить найденное и погасить подсветку за полторы секунды.
+     *
+     * Глаз ловит движение раньше, чем читает буквы. Постоянная подсветка
+     * через минуту становится мусором на экране, поэтому она гаснет сама:
+     * своё дело она уже сделала.
+     */
+    private fun flashMatch(e: EditText, query: String) {
+        val pos = VaultText.find(e.text.toString(), query)
+        if (pos < 0) return
+        val end = minOf(e.text.length, pos + query.length)
+        val span = android.text.style.BackgroundColorSpan(0xFF6A3B7A.toInt())
+        e.text.setSpan(span, pos, end, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        e.setSelection(pos)
+
+        val anim = android.animation.ValueAnimator.ofFloat(1f, 0f)
+        anim.duration = 1500L
+        anim.startDelay = 400L
+        anim.addUpdateListener { v ->
+            val k = v.animatedValue as Float
+            val alpha = (k * 255).toInt().coerceIn(0, 255)
+            e.text.setSpan(
+                android.text.style.BackgroundColorSpan((alpha shl 24) or 0x6A3B7A),
+                pos, end, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+        }
+        anim.start()
+    }
+
     /** Выделенный кусок текста версии, либо пусто. */
     private fun selectionOf(v: TextView): String {
         val a = v.selectionStart
@@ -900,6 +972,12 @@ class VaultActivity : AppCompatActivity() {
         val from = minOf(a, b)
         val to = maxOf(a, b)
         return v.text.toString().substring(from, to)
+    }
+
+    private companion object {
+        const val LEVEL_PRIMARY = 0
+        const val LEVEL_SECONDARY = 1
+        const val LEVEL_DANGER = 2
     }
 
     private fun toast(t: String) {
@@ -976,14 +1054,50 @@ class VaultActivity : AppCompatActivity() {
         return t
     }
 
-    private fun button(label: String): Button {
+    /**
+     * Три уровня кнопок вместо одного.
+     *
+     * Раньше всё было одного цвета, и глаз не отличал «Открыть» от
+     * «Удалить». Теперь: главное действие залито, второстепенное только
+     * обведено, опасное — приглушённо-красное, без фона и отделённое
+     * пустотой. Форма несёт смысл, а не украшает.
+     */
+    private fun button(label: String): Button = styledButton(label, LEVEL_PRIMARY)
+
+    private fun secondaryButton(label: String): Button = styledButton(label, LEVEL_SECONDARY)
+
+    private fun dangerButton(label: String): Button = styledButton(label, LEVEL_DANGER)
+
+    private fun styledButton(label: String, level: Int): Button {
+        val accent = getColor(R.color.accent_violet_bright)
+        val danger = getColor(R.color.accent_red_bright)
+        val bg = GradientDrawable().apply {
+            cornerRadius = dp(10).toFloat()
+            when (level) {
+                LEVEL_PRIMARY -> setColor(accent)
+                LEVEL_SECONDARY -> {
+                    setColor(0x00000000)
+                    setStroke(dp(1), 0xFF3A3A46.toInt())
+                }
+                else -> setColor(0x00000000)
+            }
+        }
         val b = Button(this).apply {
             text = label
-            textSize = 16f
+            textSize = if (level == LEVEL_DANGER) 15f else 16f
             gravity = Gravity.CENTER
+            background = bg
+            stateListAnimator = null
+            setTextColor(when (level) {
+                LEVEL_PRIMARY -> 0xFF14101A.toInt()
+                LEVEL_SECONDARY -> 0xFFCFCFDA.toInt()
+                else -> danger
+            })
         }
         val lp = LinearLayout.LayoutParams(-1, -2)
-        lp.topMargin = dp(8)
+        // Опасное действие отделено пустотой: промахнуться пальцем по
+        // соседней кнопке не должно стоить заметки.
+        lp.topMargin = if (level == LEVEL_DANGER) dp(28) else dp(8)
         root.addView(b, lp)
         return b
     }

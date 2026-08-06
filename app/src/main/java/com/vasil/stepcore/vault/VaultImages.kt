@@ -111,7 +111,7 @@ class VaultImages(private val context: Context, private val dataKey: ByteArray) 
     }
 
     companion object {
-        const val MAX_SIDE = 1600
+        const val MAX_SIDE = 2000
         const val QUALITY = 85
         /** Потолок на одну картинку после сжатия. */
         const val MAX_BYTES = 4 * 1024 * 1024
