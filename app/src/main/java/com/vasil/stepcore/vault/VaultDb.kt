@@ -381,6 +381,38 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
         ).take(limit)
     }
 
+    /** Класс со своим весом и тоном. */
+    class ClassInfo(val name: String, val count: Int, val hue: Float)
+
+    /**
+     * Классы тайника и их сплетения.
+     *
+     * Классы - это теги. Отдельного поля "тип записи" нет сознательно:
+     * человек уже вводит эти слова, и заводить второе поле того же смысла
+     * значит заставлять его помнить, где что.
+     *
+     * Считается по заголовкам заметок, текст страниц не читается вовсе.
+     */
+    suspend fun classes(): Pair<List<ClassInfo>, Map<Pair<String, String>, Int>> {
+        val heads = notes()
+        val count = HashMap<String, Int>()
+        val together = HashMap<Pair<String, String>, Int>()
+        for (h in heads) {
+            val tags = h.tags.map { it.trim().lowercase() }.distinct().sorted()
+            for (t in tags) count[t] = (count[t] ?: 0) + 1
+            for (i in tags.indices) for (j in i + 1 until tags.size) {
+                val k = tags[i] to tags[j]
+                together[k] = (together[k] ?: 0) + 1
+            }
+        }
+        val hues = VaultHues.layout(count.keys.toList(), together)
+        val list = count.entries
+            .sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }
+                .thenBy { it.key })
+            .map { ClassInfo(it.key, it.value, hues[it.key] ?: 0f) }
+        return list to together
+    }
+
     /** Один снимок страницы: что было и когда. */
     class Snap(val id: Long, val ms: Long, val text: String, val fork: Boolean)
 

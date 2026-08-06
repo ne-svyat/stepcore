@@ -73,13 +73,19 @@ class VaultActivity : AppCompatActivity() {
      * плодить записи в списке задач, которых у скрытого модуля быть не
      * должно.
      */
-    private enum class Screen { ENTRANCE, CREATE, NOTES, PAGE, PREVIEW, HISTORY, IMAGE, TRAILS }
+    private enum class Screen { ENTRANCE, CREATE, NOTES, PAGE, PREVIEW, HISTORY, IMAGE, TRAILS, ROOTS }
     private var screen = Screen.ENTRANCE
     private var histNoteId = 0L
     private var histIdx = 0
 
     /** Что подсветить на странице после перехода из поиска. */
     private var pendingFind: String? = null
+
+    /** Тоны классов. Считаются при открытии списка и живут до ухода. */
+    private var classHues: Map<String, Float> = emptyMap()
+
+    /** Класс, выбранный тапом по жиле: список откроется уже отобранным. */
+    private var pendingTag: String? = null
 
     /**
      * Выбор картинки у системы. Регистрируется один раз при создании
@@ -327,6 +333,7 @@ class VaultActivity : AppCompatActivity() {
 
     private fun showNotes(query: String = "") {
         screen = Screen.NOTES
+        val preset = pendingTag?.let { pendingTag = null; "#" + it } ?: query
         editor = null
         preview = false
         openNoteId = 0L
@@ -336,7 +343,7 @@ class VaultActivity : AppCompatActivity() {
 
         val q = EditText(this).apply {
             hint = "Поиск по тексту, или #тег"
-            setText(query)
+            setText(preset)
             textSize = 15f
             isSingleLine = true
             setTextColor(0xFFEEEEEE.toInt())
@@ -360,6 +367,7 @@ class VaultActivity : AppCompatActivity() {
         button("Найти").setOnClickListener {
             if (!busy) runSearch(q.text.toString(), holder, status)
         }
+        secondaryButton("Корни").setOnClickListener { if (!busy) showRoots() }
         secondaryButton("Новая заметка").setOnClickListener {
             if (!busy) askText("Название заметки", "") { name ->
                 lifecycleScope.launch {
@@ -379,7 +387,11 @@ class VaultActivity : AppCompatActivity() {
             true
         }
 
-        lifecycleScope.launch { fillNotes(holder, status, r.notes()) }
+        lifecycleScope.launch {
+            classHues = r.classes().first.associate { it.name to it.hue }
+            if (preset.isBlank()) fillNotes(holder, status, r.notes())
+            else runSearch(preset, holder, status)
+        }
     }
 
     private fun fillNotes(holder: LinearLayout, status: TextView,
@@ -389,14 +401,37 @@ class VaultActivity : AppCompatActivity() {
                       else "Заметок: " + list.size
         for (n in list) {
             val tags = if (n.tags.isEmpty()) "" else "\n#" + n.tags.joinToString(" #")
+            // Полоса слева - тон первого класса. Список перестаёт быть
+            // стеной одинаковых прямоугольников: тему видно боковым
+            // зрением, ещё не читая названий.
+            val hue = n.tags.firstOrNull()?.let { classHues[it.trim().lowercase()] }
+            val row = GradientDrawable().apply {
+                cornerRadius = dp(8).toFloat()
+                setColor(0xFF17171C.toInt())
+                if (hue != null) {
+                    setStroke(dp(1), VaultHues.color(hue, 12) and 0x66FFFFFF.toInt())
+                }
+            }
             holder.addView(TextView(this).apply {
                 text = n.title + "\n" + n.pageCount + " стр." + tags
                 textSize = 17f
                 setTextColor(0xFFEEEEEE.toInt())
-                setBackgroundColor(0xFF17171C.toInt())
+                background = row
                 setPadding(dp(14), dp(12), dp(14), dp(12))
                 isClickable = true
                 setOnClickListener { openNote(n.id, 0) }
+                if (hue != null) {
+                    val bar = android.text.SpannableString(text)
+                    setText(bar)
+                    setCompoundDrawablesRelativeWithIntrinsicBounds(
+                        GradientDrawable().apply {
+                            setColor(VaultHues.color(hue, 12))
+                            cornerRadius = dp(2).toFloat()
+                            setSize(dp(4), dp(38))
+                        }, null, null, null
+                    )
+                    compoundDrawablePadding = dp(12)
+                }
             }, LinearLayout.LayoutParams(-1, -2).also { it.bottomMargin = dp(8) })
         }
     }
@@ -894,6 +929,8 @@ class VaultActivity : AppCompatActivity() {
         when (screen) {
             Screen.HISTORY -> openNote(histNoteId, histIdx)
 
+            Screen.ROOTS -> showNotes()
+
             Screen.TRAILS -> openNote(histNoteId, histIdx)
 
             Screen.IMAGE -> {
@@ -1120,6 +1157,62 @@ class VaultActivity : AppCompatActivity() {
                 }
             }
             .show()
+    }
+
+    /**
+     * Корни: все классы тайника одним срезом.
+     *
+     * Тап по жиле фильтрует список заметок по этому классу — картинка не
+     * просто красивая, она рабочий указатель.
+     */
+    private fun showRoots() {
+        val r = repo ?: return
+        screen = Screen.ROOTS
+        root.removeAllViews()
+        editor = null
+        title("Корни")
+
+        val status = TextView(this).apply {
+            textSize = 13f
+            setTextColor(0xFF9A9AA5.toInt())
+            setPadding(0, 0, 0, dp(8))
+            text = "Считаю классы…"
+        }
+        root.addView(status)
+
+        val view = VaultRootsView(this)
+        root.addView(view, LinearLayout.LayoutParams(-1,
+            (resources.displayMetrics.heightPixels * 0.46f).toInt()))
+        secondaryButton("К списку заметок").setOnClickListener { goBack() }
+
+        lifecycleScope.launch {
+            val (list, together) = r.classes()
+            classHues = list.associate { it.name to it.hue }
+            if (list.isEmpty()) {
+                status.text = "Классов пока нет. Открой заметку, нажми «Теги заметки» " +
+                    "и впиши слово — оно станет классом и получит свой оттенок."
+                return@launch
+            }
+            status.text = "Классов: " + list.size + " · заметок с классами: " +
+                list.sumOf { it.count } + "\nТолще жила — больше заметок. " +
+                "Дуга внизу — классы часто идут вместе. Тап по жиле — отбор."
+
+            // Порядок жил по тону, а не по весу: тогда соседние жилы
+            // похожи по цвету, и близкие темы стоят рядом физически.
+            val ordered = list.sortedBy { it.hue }
+            view.setData(
+                ordered.map {
+                    VaultRootsView.Strand(it.name, it.count, VaultHues.color(it.hue, it.count))
+                },
+                together.entries
+                    .sortedByDescending { it.value }
+                    .take(24)
+                    .map { VaultRootsView.Weave(it.key.first, it.key.second, it.value) }
+            ) { name ->
+                pendingTag = name
+                showNotes()
+            }
+        }
     }
 
     /** Выделенный кусок текста версии, либо пусто. */
