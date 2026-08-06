@@ -12,6 +12,7 @@ import android.view.WindowManager
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
+import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -58,6 +59,7 @@ class VaultActivity : AppCompatActivity() {
     private var openNoteId = 0L
     private var openIdx = 0
     private var openPages = 1
+    private var openTags: List<String> = emptyList()
     private var editor: EditText? = null
     private var images: VaultImages? = null
     private var preview = false
@@ -138,7 +140,7 @@ class VaultActivity : AppCompatActivity() {
         // Внешняя прокрутка отключается на главном экране: там две
         // половины со своей жизнью, и внешний скролл дёргал бы обе.
         val outer = ScrollView(this).apply {
-            setBackgroundColor(0xFF0A0A0A.toInt())
+            setBackgroundColor(SURFACE_BASE)
             isFillViewport = true
             addView(root, LinearLayout.LayoutParams(-1, -2))
             setOnTouchListener { _, _ -> lockOuterScroll }
@@ -403,8 +405,8 @@ class VaultActivity : AppCompatActivity() {
             setHintTextColor(0xFF6A6A75.toInt())
             background = GradientDrawable().apply {
                 cornerRadius = dp(9).toFloat()
-                setColor(0xFF1B1B22.toInt())
-                setStroke(dp(1), 0xFF2E2A3A.toInt())
+                setColor(SURFACE_RAISED)
+                setStroke(dp(1), LINE_EDGE)
             }
             setPadding(dp(12), dp(10), dp(12), dp(10))
         }
@@ -440,7 +442,7 @@ class VaultActivity : AppCompatActivity() {
 
         // Черта: две половины не должны сливаться в одно полотно.
         root.addView(View(this).apply {
-            setBackgroundColor(0xFF26232E.toInt())
+            setBackgroundColor(LINE_SOFT)
         }, LinearLayout.LayoutParams(-1, dp(1)).also {
             it.topMargin = dp(10); it.bottomMargin = dp(8)
         })
@@ -526,7 +528,7 @@ class VaultActivity : AppCompatActivity() {
             val hue = n.tags.firstOrNull()?.let { classHues[it.trim().lowercase()] }
             val row = GradientDrawable().apply {
                 cornerRadius = dp(8).toFloat()
-                setColor(0xFF17171C.toInt())
+                setColor(SURFACE_RAISED)
                 if (hue != null) {
                     setStroke(dp(1), VaultHues.color(hue, 12) and 0x66FFFFFF.toInt())
                 }
@@ -587,7 +589,7 @@ class VaultActivity : AppCompatActivity() {
                     this.text = h.noteTitle + "  ·  стр. " + (h.page + 1) + "\n" + h.snippet
                     textSize = 15f
                     setTextColor(0xFFDDDDE5.toInt())
-                    setBackgroundColor(0xFF17171C.toInt())
+                    setBackgroundColor(SURFACE_RAISED)
                     setPadding(dp(14), dp(10), dp(14), dp(10))
                     isClickable = true
                     setOnClickListener { pendingFind = text; openForRead(h.noteId, h.page) }
@@ -619,6 +621,7 @@ class VaultActivity : AppCompatActivity() {
         val r = repo ?: return
         lifecycleScope.launch {
             openPages = maxOf(1, r.pageCount(noteId))
+            openTags = r.notes().firstOrNull { it.id == noteId }?.tags ?: emptyList()
             val safeIdx = idx.coerceIn(0, openPages - 1)
             val text = r.readPage(noteId, safeIdx) ?: ""
             val top = r.wordsOf(noteId, safeIdx)
@@ -658,12 +661,14 @@ class VaultActivity : AppCompatActivity() {
         }
         root.addView(head)
 
+        chipsRow(openTags, noteId)
+
         val e = EditText(this).apply {
             setText(text)
             textSize = 16f
             gravity = Gravity.TOP
             setTextColor(0xFFEEEEEE.toInt())
-            setBackgroundColor(0xFF15151A.toInt())
+            setBackgroundColor(SURFACE_SUNKEN)
             setPadding(dp(12), dp(12), dp(12), dp(12))
             minLines = 12
             isSingleLine = false
@@ -676,6 +681,8 @@ class VaultActivity : AppCompatActivity() {
         root.addView(e, LinearLayout.LayoutParams(-1, -2))
         editor = e
         pendingFind?.let { q -> pendingFind = null; flashMatch(e, q) }
+
+        linksRow(text)
 
         val counter = TextView(this).apply {
             this.text = e.text.length.toString() + " / " + VaultRepo.MAX_PAGE_CHARS
@@ -736,16 +743,6 @@ class VaultActivity : AppCompatActivity() {
             showOutline(e)
         })
 
-        flatButton("Теги заметки").setOnClickListener {
-            if (busy) return@setOnClickListener
-            val r2 = repo ?: return@setOnClickListener
-            lifecycleScope.launch {
-                val cur = r2.notes().firstOrNull { it.id == noteId }?.tags ?: emptyList()
-                askText("Теги через запятую", cur.joinToString(", ")) { v ->
-                    lifecycleScope.launch { r2.setTags(noteId, v); toast("Теги сохранены") }
-                }
-            }
-        }
         flatButton("К списку заметок").setOnClickListener { leavePage { showNotes() } }
         flatButton("История правок").setOnClickListener {
             leavePage { showHistory(noteId, openIdx) }
@@ -864,6 +861,8 @@ class VaultActivity : AppCompatActivity() {
             setOnClickListener { askJump() }
         })
 
+        chipsRow(openTags, noteId)
+
         for (b in VaultText.blocks(text)) {
             when (b) {
                 is VaultText.Block.Head -> root.addView(TextView(this).apply {
@@ -951,7 +950,7 @@ class VaultActivity : AppCompatActivity() {
         val body = TextView(this).apply {
             textSize = 15f
             setTextColor(0xFFDDDDE5.toInt())
-            setBackgroundColor(0xFF15151A.toInt())
+            setBackgroundColor(SURFACE_SUNKEN)
             setPadding(dp(12), dp(12), dp(12), dp(12))
             setTextIsSelectable(true)
         }
@@ -1001,7 +1000,7 @@ class VaultActivity : AppCompatActivity() {
                     text = label
                     textSize = 14f
                     setTextColor(if (s.fork) 0xFFE0B96A.toInt() else 0xFFCFCFDA.toInt())
-                    setBackgroundColor(0xFF17171C.toInt())
+                    setBackgroundColor(SURFACE_RAISED)
                     setPadding(dp(12), dp(10), dp(12), dp(10))
                     isClickable = true
                     setOnClickListener { paint(s); toast("Версия показана ниже") }
@@ -1262,7 +1261,7 @@ class VaultActivity : AppCompatActivity() {
                         VaultRepo.TrailKind.BACK -> 0xFFCFCFDA.toInt()
                         else -> 0xFF9A9AA5.toInt()
                     })
-                    setBackgroundColor(0xFF17171C.toInt())
+                    setBackgroundColor(SURFACE_RAISED)
                     setPadding(dp(14), dp(10), dp(14), dp(10))
                     isClickable = true
                     setOnClickListener { openForRead(t.noteId, t.page) }
@@ -1354,6 +1353,87 @@ class VaultActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Чипы классов заметки: тап — сразу список этого класса.
+     *
+     * Раньше теги были кнопкой в самом низу и одной серой строкой. Теперь
+     * они наверху, каждый своим оттенком, и работают переходом. Чип «＋»
+     * открывает правку тегов — отдельная кнопка внизу больше не нужна.
+     */
+    private fun chipsRow(tags: List<String>, noteId: Long) {
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val scroll = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            addView(row, LinearLayout.LayoutParams(-2, -2))
+        }
+        root.addView(scroll, LinearLayout.LayoutParams(-1, -2).also { it.bottomMargin = dp(8) })
+
+        for (t in tags) {
+            val hue = classHues[t.trim().lowercase()]
+            val c = if (hue == null) 0xFF8A8A98.toInt() else VaultHues.color(hue, 12)
+            row.addView(chip("#" + t, c) { pendingTag = t; showNotes() })
+        }
+        row.addView(chip(if (tags.isEmpty()) "＋ класс" else "＋", 0xFF8A8A98.toInt()) {
+            val r = repo ?: return@chip
+            askText("Классы через запятую", tags.joinToString(", ")) { v ->
+                lifecycleScope.launch {
+                    r.setTags(noteId, v)
+                    openTags = VaultText.parseTags(v)
+                    classHues = r.classes().first.associate { it.name to it.hue }
+                    toast("Классы сохранены")
+                    openNote(noteId, openIdx)
+                }
+            }
+        })
+    }
+
+    /**
+     * Полоска ссылок страницы под редактором.
+     *
+     * В правке текст обычный, и нажать [[ссылку]] прямо в нём нельзя:
+     * поле ввода отдано набору. Иконки внутри строки ломали бы набор ещё
+     * сильнее. Поэтому ссылки собраны отдельной полоской - переход есть,
+     * а текст не тронут.
+     */
+    private fun linksRow(text: String) {
+        val names = VaultText.linkRefs(text)
+        if (names.isEmpty()) return
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val scroll = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            addView(row, LinearLayout.LayoutParams(-2, -2))
+        }
+        root.addView(scroll, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(8) })
+        val accent = getColor(R.color.accent_violet_bright)
+        for (n in names) row.addView(chip("→ " + n, accent) { openByTitle(n) })
+    }
+
+    /** Маленькая нажимаемая метка. Цвет несёт смысл, форма одинакова. */
+    private fun chip(label: String, color: Int, action: () -> Unit): TextView {
+        val bg = GradientDrawable().apply {
+            cornerRadius = dp(14).toFloat()
+            setColor(SURFACE_SUNKEN)
+            setStroke(dp(1), (color and 0xFFFFFF) or 0x77000000)
+        }
+        val t = TextView(this).apply {
+            text = label
+            textSize = 12f
+            isSingleLine = true
+            includeFontPadding = false
+            gravity = Gravity.CENTER
+            minHeight = dp(34)
+            setTextColor(color)
+            setPadding(dp(12), 0, dp(12), 0)
+            isClickable = true
+            background = android.graphics.drawable.RippleDrawable(
+                android.content.res.ColorStateList.valueOf(0x22FFFFFF), bg, null
+            )
+            setOnClickListener { if (!busy) action() }
+        }
+        t.layoutParams = LinearLayout.LayoutParams(-2, dp(34)).also { it.marginEnd = dp(6) }
+        return t
+    }
+
     /** Выделенный кусок текста версии, либо пусто. */
     private fun selectionOf(v: TextView): String {
         val a = v.selectionStart
@@ -1365,6 +1445,24 @@ class VaultActivity : AppCompatActivity() {
     }
 
     private companion object {
+        /**
+         * Три глубины фона. Раньше всё было одним тоном, и глаз терялся:
+         * непонятно, где кончается одно и начинается другое.
+         *
+         * BASE   - подложка экрана, самая тёмная.
+         * RAISED - то, что лежит НА ней: карточки заметок, поля ввода.
+         * SUNKEN - то, что утоплено: вкладки и чипы, они тише всего.
+         *
+         * Глубина задаётся здесь одним местом: цвет, вписанный руками в
+         * десяти местах, через месяц расходится и перестаёт что-либо
+         * означать.
+         */
+        const val SURFACE_BASE = 0xFF0A0A0A.toInt()
+        const val SURFACE_RAISED = 0xFF17171C.toInt()
+        const val SURFACE_SUNKEN = 0xFF121218.toInt()
+        const val LINE_SOFT = 0xFF26232E.toInt()
+        const val LINE_EDGE = 0xFF2E2A3A.toInt()
+
         const val LEVEL_PRIMARY = 0
         const val LEVEL_SECONDARY = 1
         const val LEVEL_DANGER = 2
@@ -1464,7 +1562,7 @@ class VaultActivity : AppCompatActivity() {
             textSize = 16f
             setTextColor(0xFFEEEEEE.toInt())
             setHintTextColor(0xFF6A6A75.toInt())
-            setBackgroundColor(0xFF1F1F26.toInt())
+            setBackgroundColor(SURFACE_RAISED)
             setPadding(dp(14), dp(14), dp(14), dp(14))
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
         }
