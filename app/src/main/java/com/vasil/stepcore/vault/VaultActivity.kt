@@ -19,13 +19,23 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Экран Vault. Три состояния: создание хранилища, вход, внутренность.
+ * Экран Vault.
  *
- * Разметка собирается кодом, а не XML, сознательно: экран существует только
- * для тех, кто знает жест, и не должен появляться в ресурсах отдельным
- * файлом рядом с обычными экранами.
+ * ГЛАВНОЕ ТРЕБОВАНИЕ К ВХОДУ
+ * --------------------------
+ * Вид экрана входа ОДИНАКОВ независимо от того, создан хоть один тайник или
+ * ни одного. Ни текстом, ни расположением, ни поведением кнопок нельзя
+ * узнать, есть ли тут что-нибудь. Поэтому файл не читается до нажатия
+ * "Открыть", а сообщение об ошибке одно на все случаи.
  *
- * FLAG_SECURE обязателен. Без него система кладёт превью экрана в список
+ * ПОЧЕМУ СОЗДАНИЕ — ОТДЕЛЬНЫЙ ЭКРАН
+ * ---------------------------------
+ * Форма создания требует четырёх полей и галки. Если держать её на одном
+ * экране с входом, вход уезжает под скролл — а он нужен каждый день, тогда
+ * как создание случается несколько раз в жизни. Частое действие наверху и
+ * без прокрутки, редкое — за одно нажатие.
+ *
+ * FLAG_SECURE обязателен: без него система кладёт превью экрана в список
  * задач, и заметки утекают мимо всей криптографии.
  */
 class VaultActivity : AppCompatActivity() {
@@ -36,7 +46,7 @@ class VaultActivity : AppCompatActivity() {
 
     /**
      * Бюджет ожидания при входе. Подобран под будущую анимацию двери:
-     * пользователь смотрит на открывающийся механизм, а не на пустой экран.
+     * человек смотрит на открывающийся механизм, а не на пустой экран.
      * Чем дороже вход, тем дороже перебор — здесь красота и стойкость
      * совпадают.
      */
@@ -49,20 +59,18 @@ class VaultActivity : AppCompatActivity() {
 
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(0xFF0A0A0A.toInt())
-            setPadding(dp(24), dp(32), dp(24), dp(32))
+            setPadding(dp(24), dp(40), dp(24), dp(32))
         }
         setContentView(ScrollView(this).apply {
             setBackgroundColor(0xFF0A0A0A.toInt())
+            isFillViewport = true
             addView(root, LinearLayout.LayoutParams(-1, -2))
         })
 
-        if (VaultSession.isOpen) showInside()
-        else if (store.exists()) showUnlock()
-        else showSetup()
+        if (VaultSession.isOpen) showInside() else showEntrance()
     }
 
-    /** Уход с экрана запирает хранилище. Ключ не переживает сворачивание. */
+    /** Уход с экрана запирает тайник. Ключ не переживает сворачивание. */
     override fun onStop() {
         super.onStop()
         if (!isChangingConfigurations) {
@@ -71,13 +79,67 @@ class VaultActivity : AppCompatActivity() {
         }
     }
 
-    // ---------------------------------------------------------------- создание
+    // ------------------------------------------------------------------- вход
 
-    private fun showSetup() {
+    private fun showEntrance() {
         root.removeAllViews()
         title("Тайник")
-        dim("Здесь ничего нет, пока ты не создашь хранилище. " +
-            "Заметки шифруются на этом устройстве и никуда не отправляются.")
+
+        val field = secretField("Пароль или секрет восстановления")
+        val warn = warnLabel()
+        val go = button("Открыть")
+
+        // Создание — вторым и тише: вход нужен каждый день, создание редко.
+        val make = flatButton("Создать новый тайник")
+
+        go.setOnClickListener {
+            if (busy) return@setOnClickListener
+            val s = field.chars()
+            if (s.isEmpty()) return@setOnClickListener
+            warn.visibility = View.GONE
+            unlock(s, field, go, warn)
+        }
+        make.setOnClickListener { if (!busy) showCreate() }
+    }
+
+    private fun unlock(secret: CharArray, field: EditText, go: Button, warn: TextView) {
+        busy = true
+        go.isEnabled = false
+        go.text = "Открываю…"
+        lifecycleScope.launch {
+            val key = withContext(Dispatchers.Default) {
+                try {
+                    // Один прогон scrypt на попытку независимо от числа
+                    // тайников: соль общая на файл.
+                    store.read()?.let { VaultFile.open(it, secret) }
+                } catch (e: Exception) {
+                    null
+                } finally {
+                    secret.fill('\u0000')
+                }
+            }
+            busy = false
+            if (key != null) {
+                VaultSession.open(key)
+                showInside()
+            } else {
+                go.isEnabled = true
+                go.text = "Открыть"
+                field.setText("")
+                // Одно сообщение на все случаи: пароль не тот, файла нет,
+                // файл испорчен. Разные ответы выдали бы состояние тайника.
+                warn.text = "Не подходит"
+                warn.visibility = View.VISIBLE
+            }
+        }
+    }
+
+    // --------------------------------------------------------------- создание
+
+    private fun showCreate() {
+        root.removeAllViews()
+        title("Новый тайник")
+        dim("Заметки шифруются на этом устройстве и никуда не отправляются.")
 
         val pass = secretField("Пароль")
         val pass2 = secretField("Пароль ещё раз")
@@ -99,13 +161,17 @@ class VaultActivity : AppCompatActivity() {
         root.addView(ack)
 
         val warn = warnLabel()
-        val go = button("Создать тайник")
+        val go = button("Создать")
+        val back = flatButton("Назад")
 
         gap()
         dim("Восстановить пароль невозможно — это не недоработка. Если бы " +
             "приложение умело его вернуть, вернуть его смог бы и посторонний. " +
-            "Забыл оба секрета — заметки потеряны навсегда.")
+            "Забыл оба секрета — заметки потеряны навсегда.\n\n" +
+            "Тайников может быть несколько, у каждого свои секреты и свои " +
+            "заметки. Пароль одного не открывает другой.")
 
+        back.setOnClickListener { if (!busy) showEntrance() }
         go.setOnClickListener {
             if (busy) return@setOnClickListener
             val p = pass.chars(); val p2 = pass2.chars()
@@ -114,118 +180,78 @@ class VaultActivity : AppCompatActivity() {
             val problem: String? = when {
                 VaultCrypto.checkSecret(p) != null -> "Пароль: " + VaultCrypto.checkSecret(p)
                 !p.contentEquals(p2) -> "Пароли не совпадают"
-                VaultCrypto.checkSecret(r) != null -> "Секрет восстановления: " + VaultCrypto.checkSecret(r)
+                VaultCrypto.checkSecret(r) != null ->
+                    "Секрет восстановления: " + VaultCrypto.checkSecret(r)
                 !r.contentEquals(r2) -> "Секреты восстановления не совпадают"
-                p.contentEquals(r) -> "Пароль и секрет восстановления совпадают — тогда второго ключа нет"
+                p.contentEquals(r) ->
+                    "Пароль и секрет восстановления совпадают — тогда второго ключа нет"
                 !ack.isChecked -> "Подтверди, что секрет восстановления не потеряется"
                 else -> null
             }
-
-            if (problem != null) { warn.text = problem; warn.visibility = View.VISIBLE; return@setOnClickListener }
+            if (problem != null) {
+                warn.text = problem
+                warn.visibility = View.VISIBLE
+                return@setOnClickListener
+            }
             warn.visibility = View.GONE
-            createVault(p, r, go)
+            create(p, r, go, warn)
         }
     }
 
-    private fun createVault(pass: CharArray, phrase: CharArray, go: Button) {
+    private fun create(pass: CharArray, phrase: CharArray, go: Button, warn: TextView) {
         busy = true
         go.isEnabled = false
         go.text = "Кую замок…"
         lifecycleScope.launch {
-            val ok = withContext(Dispatchers.Default) {
+            val res = withContext(Dispatchers.Default) {
                 try {
-                    // N меряется здесь и запоминается внутри обёрток: замок
-                    // настраивается по этому телефону, а не по константе.
-                    val n = VaultCrypto.calibrateN(unlockBudgetMs)
-                    val dataKey = VaultCrypto.newDataKey()
-                    val keys = VaultKeyFile.Keys(
-                        VaultCrypto.wrap(dataKey, pass, n),
-                        VaultCrypto.wrap(dataKey, phrase, n)
-                    )
-                    store.writeKeys(keys)
-                    VaultSession.open(dataKey)
-                    true
+                    val existing = store.read()
+                    if (existing == null) {
+                        // N меряется здесь: замок настраивается по этому
+                        // телефону, а не по константе из прошлого десятилетия.
+                        val n = VaultCrypto.calibrateN(unlockBudgetMs)
+                        val box = VaultFile.createFirst(n, pass, phrase)
+                        store.write(box)
+                        VaultSession.open(VaultFile.open(box, pass)!!)
+                        VaultFile.AddResult.OK
+                    } else {
+                        val added = VaultFile.addVault(existing, pass, phrase)
+                        if (added.result == VaultFile.AddResult.OK) {
+                            store.write(added.box!!)
+                            VaultSession.open(VaultFile.open(added.box, pass)!!)
+                        }
+                        added.result
+                    }
                 } catch (e: Exception) {
-                    false
+                    null
                 } finally {
                     pass.fill('\u0000'); phrase.fill('\u0000')
                 }
             }
             busy = false
-            if (ok) showInside() else {
-                go.isEnabled = true
-                go.text = "Создать тайник"
-                toast("Не удалось создать хранилище")
-            }
-        }
-    }
-
-    // -------------------------------------------------------------------- вход
-
-    private fun showUnlock() {
-        root.removeAllViews()
-        title("Тайник")
-        dim("Введи пароль или секрет восстановления.")
-
-        val field = secretField("Пароль или секрет восстановления")
-        val warn = warnLabel()
-        val go = button("Открыть")
-
-        gap()
-        dim("Проверка занимает секунду-другую намеренно: она стоит памяти и " +
-            "времени, поэтому перебор паролей бессмысленен. Количество попыток " +
-            "не ограничено — счётчик позволил бы постороннему уничтожить твои " +
-            "заметки чужими руками.")
-
-        go.setOnClickListener {
-            if (busy) return@setOnClickListener
-            val s = field.chars()
-            if (s.isEmpty()) return@setOnClickListener
-            warn.visibility = View.GONE
-            unlock(s, field, go, warn)
-        }
-    }
-
-    private fun unlock(secret: CharArray, field: EditText, go: Button, warn: TextView) {
-        busy = true
-        go.isEnabled = false
-        go.text = "Открываю…"
-        lifecycleScope.launch {
-            val key = withContext(Dispatchers.Default) {
-                try {
-                    val keys = store.readKeys()
-                    // Сначала пароль: обычный вход не должен ждать дважды.
-                    // Секрет восстановления пробуется вторым — он редкий.
-                    keys?.let {
-                        VaultCrypto.unwrap(it.byPassword, secret)
-                            ?: VaultCrypto.unwrap(it.byPhrase, secret)
-                    }
-                } catch (e: Exception) {
-                    null
-                } finally {
-                    secret.fill('\u0000')
-                }
-            }
-            busy = false
-            if (key != null) {
-                VaultSession.open(key)
+            if (res == VaultFile.AddResult.OK) {
                 showInside()
-            } else {
-                go.isEnabled = true
-                go.text = "Открыть"
-                field.setText("")
-                warn.text = "Не подходит"
-                warn.visibility = View.VISIBLE
+                return@launch
             }
+            go.isEnabled = true
+            go.text = "Создать"
+            warn.text = when (res) {
+                // Честное объяснение: человек всё равно узнает, перебрав
+                // пароли, а молчание заставило бы его думать, что сломано.
+                VaultFile.AddResult.SECRET_ALREADY_USED ->
+                    "Этот секрет уже используется. Возьми другой."
+                else -> "Не удалось создать"
+            }
+            warn.visibility = View.VISIBLE
         }
     }
 
-    // -------------------------------------------------------------- внутренность
+    // ---------------------------------------------------------- внутренность
 
     private fun showInside() {
         root.removeAllViews()
         title("Тайник открыт")
-        dim("Замок работает. Заметки, теги и поиск — следующий этап.\n\n" +
+        dim("Замок работает. Заметки, страницы, теги и поиск — следующий этап.\n\n" +
             "Ключ живёт только в памяти: уйдёшь с этого экрана — тайник " +
             "запрётся сам.")
         button("Закрыть").setOnClickListener {
@@ -234,7 +260,7 @@ class VaultActivity : AppCompatActivity() {
         }
     }
 
-    // ------------------------------------------------------------------- мелочи
+    // ------------------------------------------------------------------ мелочи
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
@@ -250,7 +276,7 @@ class VaultActivity : AppCompatActivity() {
             text = t
             textSize = 26f
             setTextColor(getColor(R.color.accent_violet_bright))
-            setPadding(0, 0, 0, dp(12))
+            setPadding(0, 0, 0, dp(20))
         })
     }
 
@@ -274,7 +300,7 @@ class VaultActivity : AppCompatActivity() {
             setTextColor(0xFFEEEEEE.toInt())
             setHintTextColor(0xFF6A6A75.toInt())
             setBackgroundColor(0xFF1F1F26.toInt())
-            setPadding(dp(12), dp(12), dp(12), dp(12))
+            setPadding(dp(14), dp(14), dp(14), dp(14))
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
         }
         val lp = LinearLayout.LayoutParams(-1, -2)
@@ -301,12 +327,22 @@ class VaultActivity : AppCompatActivity() {
             gravity = Gravity.CENTER
         }
         val lp = LinearLayout.LayoutParams(-1, -2)
-        lp.topMargin = dp(12)
+        lp.topMargin = dp(8)
         root.addView(b, lp)
         return b
     }
 
-    private fun toast(t: String) {
-        android.widget.Toast.makeText(this, t, android.widget.Toast.LENGTH_SHORT).show()
+    /** Второстепенное действие: без заливки, тише основной кнопки. */
+    private fun flatButton(label: String): TextView {
+        val t = TextView(this).apply {
+            text = label
+            textSize = 15f
+            gravity = Gravity.CENTER
+            setTextColor(0xFF8F8FA0.toInt())
+            setPadding(dp(8), dp(16), dp(8), dp(8))
+            isClickable = true
+        }
+        root.addView(t, LinearLayout.LayoutParams(-1, -2))
+        return t
     }
 }

@@ -4,15 +4,15 @@ import android.content.Context
 import java.io.File
 
 /**
- * Файловое хранилище ключей Vault.
+ * Файловое хранилище тайников.
  *
- * Отдельная папка files/vault/ — не общая база StepCore и не SharedPreferences.
- * Изоляция здесь не про красоту архитектуры: общий бэкап приложения не должен
- * содержать заметки, иначе пароль обходится через экспорт.
+ * Отдельная папка files/vault/ — не общая база StepCore. Изоляция здесь не
+ * про красоту архитектуры: общий бэкап приложения не должен содержать
+ * заметки, иначе пароль обходится через экспорт.
  *
- * Запись атомарная (временный файл + переименование). Обрыв питания посреди
- * смены пароля не должен превращать ключ данных в мусор: либо старый файл,
- * либо новый, третьего нет.
+ * Запись атомарная (временный файл + переименование + fsync). Обрыв питания
+ * посреди добавления тайника не должен превращать ключи в мусор: либо
+ * старый файл целиком, либо новый целиком, третьего нет.
  */
 class VaultStore(context: Context) {
 
@@ -22,18 +22,18 @@ class VaultStore(context: Context) {
 
     fun exists(): Boolean = keyFile.isFile && keyFile.length() > 0
 
-    /** @return null если хранилища нет или файл испорчен. */
-    fun readKeys(): VaultKeyFile.Keys? =
+    /** @return null если файла нет или он не разбирается. */
+    fun read(): VaultFile.Box? =
         if (!exists()) null
         else try {
-            VaultKeyFile.decode(keyFile.readBytes())
+            VaultFile.decode(keyFile.readBytes())
         } catch (e: Exception) {
             null
         }
 
-    fun writeKeys(keys: VaultKeyFile.Keys) {
+    fun write(box: VaultFile.Box) {
         dir.mkdirs()
-        val bytes = VaultKeyFile.encode(keys)
+        val bytes = VaultFile.encode(box)
         tmpFile.outputStream().use { out ->
             out.write(bytes)
             out.flush()
@@ -44,10 +44,10 @@ class VaultStore(context: Context) {
 }
 
 /**
- * Ключ данных, живущий только в оперативной памяти.
+ * Ключ данных открытого тайника. Живёт только в оперативной памяти.
  *
- * Ключ появляется при успешном входе и умирает при уходе с экрана Vault.
- * Ни SharedPreferences, ни файла, ни статического кэша "на всякий случай":
+ * Ключ появляется при успешном входе и умирает при уходе с экрана. Ни
+ * SharedPreferences, ни файла, ни статического кэша "на всякий случай":
  * сохранённый ключ обесценил бы пароль целиком.
  */
 object VaultSession {
