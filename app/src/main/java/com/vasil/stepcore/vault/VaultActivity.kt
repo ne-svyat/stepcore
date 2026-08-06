@@ -277,14 +277,37 @@ class VaultActivity : AppCompatActivity() {
 
     // ------------------------------------------------------------- заметки
 
-    private fun showNotes() {
+    private fun showNotes(query: String = "") {
         editor = null
         openNoteId = 0L
         root.removeAllViews()
         title("Заметки")
         val r = repo ?: return
+
+        val q = EditText(this).apply {
+            hint = "Поиск по тексту, или #тег"
+            setText(query)
+            textSize = 15f
+            isSingleLine = true
+            setTextColor(0xFFEEEEEE.toInt())
+            setHintTextColor(0xFF6A6A75.toInt())
+            setBackgroundColor(0xFF1F1F26.toInt())
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+        }
+        root.addView(q, LinearLayout.LayoutParams(-1, -2))
+
         val holder = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val status = TextView(this).apply {
+            textSize = 13f
+            setTextColor(0xFF9A9AA5.toInt())
+            setPadding(0, dp(10), 0, dp(8))
+        }
+        root.addView(status)
         root.addView(holder)
+
+        button("Найти").setOnClickListener {
+            if (!busy) runSearch(q.text.toString(), holder, status)
+        }
         button("Новая заметка").setOnClickListener {
             if (!busy) askText("Название заметки", "") { name ->
                 lifecycleScope.launch {
@@ -295,25 +318,64 @@ class VaultActivity : AppCompatActivity() {
         }
         flatButton("Закрыть").setOnClickListener { closeVault() }
 
+        lifecycleScope.launch { fillNotes(holder, status, r.notes()) }
+    }
+
+    private fun fillNotes(holder: LinearLayout, status: TextView,
+                          list: List<VaultRepo.NoteHead>) {
+        holder.removeAllViews()
+        status.text = if (list.isEmpty()) "Пусто. Заметки этого тайника видны только с его паролем."
+                      else "Заметок: " + list.size
+        for (n in list) {
+            val tags = if (n.tags.isEmpty()) "" else "\n#" + n.tags.joinToString(" #")
+            holder.addView(TextView(this).apply {
+                text = n.title + "\n" + n.pageCount + " стр." + tags
+                textSize = 17f
+                setTextColor(0xFFEEEEEE.toInt())
+                setBackgroundColor(0xFF17171C.toInt())
+                setPadding(dp(14), dp(12), dp(14), dp(12))
+                isClickable = true
+                setOnClickListener { openNote(n.id, 0) }
+            }, LinearLayout.LayoutParams(-1, -2).also { it.bottomMargin = dp(8) })
+        }
+    }
+
+    /**
+     * Поиск. Пустой запрос возвращает список заметок целиком, запрос с
+     * решётки фильтрует по тегу (это дёшево — теги уже расшифрованы),
+     * остальное идёт в полнотекстовый обход с расшифровкой на лету.
+     */
+    private fun runSearch(query: String, holder: LinearLayout, status: TextView) {
+        val r = repo ?: return
+        val text = query.trim()
+        busy = true
+        status.text = "Ищу…"
+        holder.removeAllViews()
         lifecycleScope.launch {
-            val list = r.notes()
-            if (list.isEmpty()) {
-                holder.addView(TextView(this@VaultActivity).apply {
-                    text = "Пусто. Заметки этого тайника видны только с его паролем."
-                    textSize = 14f
-                    setTextColor(0xFF9A9AA5.toInt())
-                    setPadding(0, 0, 0, dp(12))
-                })
+            if (text.isEmpty()) {
+                fillNotes(holder, status, r.notes())
+                busy = false
+                return@launch
             }
-            for (n in list) {
+            if (text.startsWith("#")) {
+                val tag = text.removePrefix("#").trim().lowercase()
+                fillNotes(holder, status, r.notes().filter { h -> h.tags.any { it.contains(tag) } })
+                busy = false
+                return@launch
+            }
+            val hits = withContext(Dispatchers.Default) { r.search(text) }
+            busy = false
+            holder.removeAllViews()
+            status.text = if (hits.isEmpty()) "Ничего не нашлось" else "Найдено: " + hits.size
+            for (h in hits) {
                 holder.addView(TextView(this@VaultActivity).apply {
-                    text = n.title + "\n" + n.pageCount + " стр."
-                    textSize = 17f
-                    setTextColor(0xFFEEEEEE.toInt())
+                    this.text = h.noteTitle + "  ·  стр. " + (h.page + 1) + "\n" + h.snippet
+                    textSize = 15f
+                    setTextColor(0xFFDDDDE5.toInt())
                     setBackgroundColor(0xFF17171C.toInt())
-                    setPadding(dp(14), dp(12), dp(14), dp(12))
+                    setPadding(dp(14), dp(10), dp(14), dp(10))
                     isClickable = true
-                    setOnClickListener { openNote(n.id, 0) }
+                    setOnClickListener { openNote(h.noteId, h.page) }
                 }, LinearLayout.LayoutParams(-1, -2).also { it.bottomMargin = dp(8) })
             }
         }
@@ -338,19 +400,24 @@ class VaultActivity : AppCompatActivity() {
             openPages = maxOf(1, r.pageCount(noteId))
             val safeIdx = idx.coerceIn(0, openPages - 1)
             val text = r.readPage(noteId, safeIdx) ?: ""
+            val top = r.wordsOf(noteId, safeIdx)
             openNoteId = noteId
             openIdx = safeIdx
-            drawPage(text)
+            drawPage(text, top)
         }
     }
 
-    private fun drawPage(text: String) {
+    private fun drawPage(text: String, top: List<String> = emptyList()) {
         root.removeAllViews()
         val r = repo ?: return
         val noteId = openNoteId
 
         val head = TextView(this).apply {
-            this.text = "Страница " + (openIdx + 1) + " из " + openPages
+            // Подпись страницы: три частых слова. Пусто у страниц, не
+            // пересохранявшихся после появления подписи, — это честнее,
+            // чем выдумывать её задним числом.
+            val sign = if (top.isEmpty()) "" else "   " + top.joinToString(" · ")
+            this.text = "Страница " + (openIdx + 1) + " из " + openPages + sign
             textSize = 15f
             setTextColor(getColor(R.color.accent_violet_bright))
             setPadding(0, 0, 0, dp(10))
@@ -416,6 +483,16 @@ class VaultActivity : AppCompatActivity() {
             val part = if (sel > 0) whole.substring(e.selectionStart, e.selectionEnd) else whole
             copy(part)
             toast(if (sel > 0) "Скопирован выделенный кусок" else "Скопирована страница")
+        }
+        flatButton("Теги заметки").setOnClickListener {
+            if (busy) return@setOnClickListener
+            val r2 = repo ?: return@setOnClickListener
+            lifecycleScope.launch {
+                val cur = r2.notes().firstOrNull { it.id == noteId }?.tags ?: emptyList()
+                askText("Теги через запятую", cur.joinToString(", ")) { v ->
+                    lifecycleScope.launch { r2.setTags(noteId, v); toast("Теги сохранены") }
+                }
+            }
         }
         flatButton("К списку заметок").setOnClickListener { leavePage { showNotes() } }
     }

@@ -10,6 +10,8 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 
 /**
  * Хранилище заметок Vault. Отдельная база vault.db, отдельная от stepcore.db.
@@ -40,6 +42,10 @@ data class VNote(
     val updatedMs: Long,
     val pageCount: Int,
     val title: ByteArray,      // шифротекст
+    // Теги заметки одной строкой, шифротекстом. Отдельной таблицей их
+    // держать незачем: по зашифрованному тегу всё равно нельзя сделать
+    // WHERE, а расшифровывать пришлось бы то же самое.
+    val tags: ByteArray = ByteArray(0),
 )
 
 @Entity(tableName = "v_pages", primaryKeys = ["noteId", "idx"])
@@ -48,6 +54,9 @@ data class VPage(
     val idx: Int,              // 0-based номер страницы
     val updatedMs: Long,
     val body: ByteArray,       // шифротекст
+    // Три частых слова страницы, шифротекстом. Считаются при сохранении,
+    // чтобы список страниц не расшифровывал весь текст ради подписи.
+    val words: ByteArray = ByteArray(0),
 )
 
 @Dao
@@ -68,6 +77,16 @@ interface VaultDao {
     @Query("SELECT * FROM v_notes WHERE id = :id")
     suspend fun note(id: Long): VNote?
 
+    @Query("UPDATE v_notes SET tags = :tags, updatedMs = :ms WHERE id = :id")
+    suspend fun setTags(id: Long, tags: ByteArray, ms: Long)
+
+    /**
+     * Страницы куском. Поиск обязан читать порциями: тысяча страниц по
+     * десять тысяч символов разом в память не поместится.
+     */
+    @Query("SELECT * FROM v_pages WHERE noteId = :noteId AND idx >= :from AND idx < :to ORDER BY idx")
+    suspend fun pagesRange(noteId: Long, from: Int, to: Int): List<VPage>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun putPage(p: VPage)
 
@@ -75,17 +94,30 @@ interface VaultDao {
     suspend fun page(noteId: Long, idx: Int): VPage?
 }
 
-@Database(entities = [VNote::class, VPage::class], version = 1, exportSchema = false)
+@Database(entities = [VNote::class, VPage::class], version = 2, exportSchema = false)
 abstract class VaultDb : RoomDatabase() {
     abstract fun dao(): VaultDao
 
     companion object {
+        /**
+         * Прошлое неизменно: заметки, созданные до появления тегов и
+         * частых слов, не пересоздаются. Новые колонки добавляются
+         * пустыми, пустой блоб расшифровывается в null и трактуется как
+         * "признака нет" — не как "признак пустой".
+         */
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE v_notes ADD COLUMN tags BLOB NOT NULL DEFAULT x''")
+                db.execSQL("ALTER TABLE v_pages ADD COLUMN words BLOB NOT NULL DEFAULT x''")
+            }
+        }
+
         @Volatile private var instance: VaultDb? = null
         fun get(context: Context): VaultDb =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
                     context.applicationContext, VaultDb::class.java, "vault.db"
-                ).build().also { instance = it }
+                ).addMigrations(MIGRATION_1_2).build().also { instance = it }
             }
     }
 }
@@ -102,7 +134,11 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
     private val dao = VaultDb.get(context).dao()
 
     /** Заметка в разобранном виде. Текст страниц сюда не попадает. */
-    class NoteHead(val id: Long, val title: String, val pageCount: Int, val updatedMs: Long)
+    class NoteHead(val id: Long, val title: String, val pageCount: Int,
+                   val updatedMs: Long, val tags: List<String>)
+
+    /** Находка поиска: где именно и что видно вокруг. */
+    class Hit(val noteId: Long, val noteTitle: String, val page: Int, val snippet: String)
 
     /**
      * Список заметок ЭТОГО тайника.
@@ -113,8 +149,64 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
     suspend fun notes(): List<NoteHead> =
         dao.allNotes().mapNotNull { n ->
             val t = VaultCrypto.decrypt(dataKey, n.title)?.toString(Charsets.UTF_8)
-            if (t == null) null else NoteHead(n.id, t, n.pageCount, n.updatedMs)
+            if (t == null) null else NoteHead(n.id, t, n.pageCount, n.updatedMs, tagsOf(n))
         }
+
+    private fun tagsOf(n: VNote): List<String> {
+        val raw = VaultCrypto.decrypt(dataKey, n.tags)?.toString(Charsets.UTF_8) ?: return emptyList()
+        return VaultText.parseTags(raw)
+    }
+
+    suspend fun setTags(id: Long, raw: String) {
+        val clean = VaultText.formatTags(VaultText.parseTags(raw))
+        dao.setTags(id, VaultCrypto.encrypt(dataKey, clean.toByteArray()), System.currentTimeMillis())
+    }
+
+    /** Подпись страницы: три частых слова. Пусто, если страница ещё не
+     *  пересохранялась после появления этой возможности. */
+    suspend fun wordsOf(noteId: Long, idx: Int): List<String> {
+        val p = dao.page(noteId, idx) ?: return emptyList()
+        val raw = VaultCrypto.decrypt(dataKey, p.words)?.toString(Charsets.UTF_8) ?: return emptyList()
+        return raw.split(' ').filter { it.isNotEmpty() }
+    }
+
+    /**
+     * Поиск по всем заметкам тайника.
+     *
+     * Индекса на диске нет и не будет: открытый индекс отдал бы содержимое
+     * без пароля. Страницы читаются порциями и расшифровываются на лету.
+     *
+     * @param onProgress вызывается по мере обхода заметок.
+     * @param cancelled даёт прервать долгий поиск, не дожидаясь конца.
+     */
+    suspend fun search(
+        query: String,
+        limit: Int = 200,
+        onProgress: (Int, Int) -> Unit = { _, _ -> },
+        cancelled: () -> Boolean = { false },
+    ): List<Hit> {
+        if (query.isBlank()) return emptyList()
+        val out = ArrayList<Hit>()
+        val heads = notes()
+        for ((i, h) in heads.withIndex()) {
+            if (cancelled() || out.size >= limit) break
+            onProgress(i, heads.size)
+            var from = 0
+            while (from < h.pageCount) {
+                if (cancelled() || out.size >= limit) break
+                val chunk = dao.pagesRange(h.id, from, from + PAGE_CHUNK)
+                for (p in chunk) {
+                    val text = VaultCrypto.decrypt(dataKey, p.body)?.toString(Charsets.UTF_8)
+                        ?: continue
+                    val pos = VaultText.find(text, query)
+                    if (pos >= 0) out.add(Hit(h.id, h.title, p.idx, VaultText.snippet(text, pos)))
+                    if (out.size >= limit) break
+                }
+                from += PAGE_CHUNK
+            }
+        }
+        return out
+    }
 
     suspend fun createNote(title: String): Long {
         val now = System.currentTimeMillis()
@@ -147,7 +239,12 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
     suspend fun writePage(noteId: Long, idx: Int, text: String) {
         require(text.length <= MAX_PAGE_CHARS) { "страница длиннее предела" }
         val now = System.currentTimeMillis()
-        dao.putPage(VPage(noteId, idx, now, VaultCrypto.encrypt(dataKey, text.toByteArray())))
+        val top = VaultText.formatTags(VaultText.topWords(text)).replace(", ", " ")
+        dao.putPage(VPage(
+            noteId, idx, now,
+            VaultCrypto.encrypt(dataKey, text.toByteArray()),
+            VaultCrypto.encrypt(dataKey, top.toByteArray())
+        ))
         val n = dao.note(noteId) ?: return
         val count = maxOf(n.pageCount, idx + 1)
         dao.setPageCount(noteId, count, now)
@@ -167,5 +264,7 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
         const val MAX_PAGE_CHARS = 10_000
         /** Предел страниц в одной заметке. */
         const val MAX_PAGES = 1000
+        /** Сколько страниц поиск держит в памяти за раз. */
+        const val PAGE_CHUNK = 20
     }
 }
