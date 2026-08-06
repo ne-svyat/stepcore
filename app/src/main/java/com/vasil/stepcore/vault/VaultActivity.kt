@@ -647,19 +647,16 @@ class VaultActivity : AppCompatActivity() {
         val r = repo ?: return
         val noteId = openNoteId
 
-        val head = TextView(this).apply {
-            // Подпись страницы: три частых слова. Пусто у страниц, не
-            // пересохранявшихся после появления подписи, — это честнее,
-            // чем выдумывать её задним числом.
-            val sign = if (top.isEmpty()) "" else "   " + top.joinToString(" · ")
-            this.text = "Страница " + (openIdx + 1) + " из " + openPages + sign
-            textSize = 15f
-            setTextColor(getColor(R.color.accent_violet_bright))
-            setPadding(0, 0, 0, dp(10))
-            isClickable = true
-            setOnClickListener { askJump() }
+        // Подпись страницы: три частых слова. Пусто у страниц, не
+        // пересохранявшихся после появления подписи, — это честнее, чем
+        // выдумывать её задним числом.
+        title("Правка · стр. " + (openIdx + 1) + "/" + openPages,
+            if (top.isEmpty()) "Тап по заголовку — перейти на страницу"
+            else top.joinToString(" · ") + "   ·   тап по заголовку — перейти")
+        root.getChildAt(0).also {
+            it.isClickable = true
+            it.setOnClickListener { askJump() }
         }
-        root.addView(head)
 
         chipsRow(openTags, noteId)
 
@@ -669,7 +666,8 @@ class VaultActivity : AppCompatActivity() {
             gravity = Gravity.TOP
             setTextColor(0xFFEEEEEE.toInt())
             setBackgroundColor(SURFACE_SUNKEN)
-            setPadding(dp(12), dp(12), dp(12), dp(12))
+            setPadding(dp(14), dp(14), dp(14), dp(14))
+            setLineSpacing(dp(4).toFloat(), 1f)
             minLines = 12
             isSingleLine = false
             inputType = InputType.TYPE_CLASS_TEXT or
@@ -701,10 +699,10 @@ class VaultActivity : AppCompatActivity() {
 
         val nav = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         root.addView(nav, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(10) })
-        nav.addView(tabButton("◀") {
+        nav.addView(tabButton("◀", true) {
             if (openIdx > 0) leavePage { openNote(noteId, openIdx - 1) }
         })
-        nav.addView(tabButton("▶") {
+        nav.addView(tabButton("▶", true) {
             if (openIdx + 1 < openPages) leavePage { openNote(noteId, openIdx + 1) }
         })
         nav.addView(tabButton("+ стр") {
@@ -731,7 +729,7 @@ class VaultActivity : AppCompatActivity() {
             // станет отдельным блоком, а не разорвёт предложение.
             pickImage.launch("image/*")
         })
-        tools.addView(tabButton(if (preview) "Правка" else "Просмотр") {
+        tools.addView(tabButton(if (preview) "✎ Правка" else "◉ Чтение", true) {
             preview = !preview
             leavePage { openNote(noteId, openIdx) }
         })
@@ -743,8 +741,8 @@ class VaultActivity : AppCompatActivity() {
             showOutline(e)
         })
 
-        flatButton("К списку заметок").setOnClickListener { leavePage { showNotes() } }
-        flatButton("История правок").setOnClickListener {
+        secondaryButton("←  К списку заметок").setOnClickListener { leavePage { showNotes() } }
+        secondaryButton("История правок").setOnClickListener {
             leavePage { showHistory(noteId, openIdx) }
         }
         dangerButton("Удалить заметку").setOnClickListener { askDelete(noteId) }
@@ -851,15 +849,13 @@ class VaultActivity : AppCompatActivity() {
         val noteId = openNoteId
         val im = images
 
-        root.addView(TextView(this).apply {
-            val sign = if (top.isEmpty()) "" else "   " + top.joinToString(" · ")
-            this.text = "Страница " + (openIdx + 1) + " из " + openPages + sign
-            textSize = 15f
-            setTextColor(getColor(R.color.accent_violet_bright))
-            setPadding(0, 0, 0, dp(12))
-            isClickable = true
-            setOnClickListener { askJump() }
-        })
+        title("Стр. " + (openIdx + 1) + "/" + openPages,
+            if (top.isEmpty()) "Тап по заголовку — перейти на страницу"
+            else top.joinToString(" · ") + "   ·   тап по заголовку — перейти")
+        root.getChildAt(0).also {
+            it.isClickable = true
+            it.setOnClickListener { askJump() }
+        }
 
         chipsRow(openTags, noteId)
 
@@ -912,17 +908,17 @@ class VaultActivity : AppCompatActivity() {
 
         val tools = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         root.addView(tools, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(6) })
-        tools.addView(tabButton("◀") {
+        tools.addView(tabButton("◀", true) {
             if (openIdx > 0) openNote(noteId, openIdx - 1)
         })
-        tools.addView(tabButton("▶") {
+        tools.addView(tabButton("▶", true) {
             if (openIdx + 1 < openPages) openNote(noteId, openIdx + 1)
         })
-        tools.addView(tabButton("Правка") {
+        tools.addView(tabButton("✎ Правка", true) {
             preview = false
             openNote(noteId, openIdx)
         })
-        flatButton("К списку заметок").setOnClickListener { showNotes() }
+        secondaryButton("←  К списку заметок").setOnClickListener { showNotes() }
     }
 
     /**
@@ -1048,7 +1044,7 @@ class VaultActivity : AppCompatActivity() {
                     }
                     .show()
             }
-            flatButton("Назад к странице").setOnClickListener { goBack() }
+            secondaryButton("←  Назад к странице").setOnClickListener { goBack() }
         }
     }
 
@@ -1073,15 +1069,23 @@ class VaultActivity : AppCompatActivity() {
                 openNote(openNoteId, openIdx)
             }
 
-            Screen.PREVIEW -> {
-                preview = false
-                openNote(openNoteId, openIdx)
-            }
+            // Чтение - главный вид заметки, из него выходим к списку.
+            // Раньше отсюда возвращало в ПРАВКУ: открыл заметку, нажал
+            // назад - и оказался в редакторе, которого не просил.
+            Screen.PREVIEW -> showNotes()
 
-            // Со страницы уходим только по второму нажатию: текст под
-            // рукой, и случайный свайп не должен его прятать.
-            Screen.PAGE -> if (confirmedBack("Ещё раз — к списку заметок. Текст сохранится.")) {
-                leavePage { showNotes() }
+            // Правка возвращает в чтение, а не сразу к списку: цепочка
+            // читается как правка -> чтение -> список, в обе стороны
+            // одинаково. Подтверждение больше не нужно - текст
+            // сохраняется, и назад ведёт не наружу, а на шаг.
+            Screen.PAGE -> leavePage {
+                val hadText = (editor?.text?.length ?: 0) > 0
+                if (hadText) {
+                    preview = true
+                    openNote(openNoteId, openIdx)
+                } else {
+                    showNotes()
+                }
             }
 
             Screen.CREATE -> showEntrance()
@@ -1134,7 +1138,7 @@ class VaultActivity : AppCompatActivity() {
             setPadding(0, dp(8), 0, dp(8))
         })
         secondaryButton("Вписать целиком").setOnClickListener { zoom.reset() }
-        secondaryButton("Назад к странице").setOnClickListener { goBack() }
+        secondaryButton("←  Назад к странице").setOnClickListener { goBack() }
     }
 
     /**
@@ -1233,7 +1237,7 @@ class VaultActivity : AppCompatActivity() {
         root.addView(status)
         val holder = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(holder)
-        secondaryButton("Назад к странице").setOnClickListener { goBack() }
+        secondaryButton("←  Назад к странице").setOnClickListener { goBack() }
 
         lifecycleScope.launch {
             val list = withContext(Dispatchers.Default) { r.trails(noteId, idx) }
@@ -1319,7 +1323,7 @@ class VaultActivity : AppCompatActivity() {
         val view = VaultRootsView(this)
         root.addView(view, LinearLayout.LayoutParams(-1,
             (resources.displayMetrics.heightPixels * 0.46f).toInt()))
-        secondaryButton("К списку заметок").setOnClickListener { goBack() }
+        secondaryButton("←  К списку заметок").setOnClickListener { goBack() }
 
         lifecycleScope.launch {
             val (list, together) = r.classes()
@@ -1534,13 +1538,34 @@ class VaultActivity : AppCompatActivity() {
         return out
     }
 
-    private fun title(t: String) {
+    private fun title(t: String) = title(t, null)
+
+    /**
+     * Заголовок экрана. Крупный и жирный: он единственная точка, по
+     * которой глаз понимает, где находится, а раньше терялся среди
+     * прочего текста того же веса.
+     */
+    private fun title(t: String, sub: String?) {
         root.addView(TextView(this).apply {
             text = t
-            textSize = 26f
-            setTextColor(getColor(R.color.accent_violet_bright))
-            setPadding(0, 0, 0, dp(20))
+            textSize = 27f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            letterSpacing = 0.01f
+            setTextColor(0xFFF2F0F7.toInt())
+            setPadding(0, 0, 0, if (sub == null) dp(18) else dp(2))
         })
+        if (sub != null) {
+            root.addView(TextView(this).apply {
+                text = sub
+                textSize = 12f
+                setTextColor(0xFF8A8A98.toInt())
+                setPadding(0, 0, 0, dp(16))
+            })
+        }
+        // Тонкая черта под заголовком: отделяет шапку от содержимого без
+        // лишнего отступа, которого на телефоне и так не хватает.
+        root.addView(View(this).apply { setBackgroundColor(LINE_SOFT) },
+            LinearLayout.LayoutParams(-1, dp(1)).also { it.bottomMargin = dp(12) })
     }
 
     private fun dim(t: String) {
