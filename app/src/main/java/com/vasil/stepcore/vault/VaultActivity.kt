@@ -1344,11 +1344,13 @@ class VaultActivity : AppCompatActivity() {
                 together.entries
                     .sortedByDescending { it.value }
                     .take(24)
-                    .map { VaultRootsView.Weave(it.key.first, it.key.second, it.value) }
-            ) { name ->
-                pendingTag = name
-                showNotes()
-            }
+                    .map { VaultRootsView.Weave(it.key.first, it.key.second, it.value) },
+                // Оба обработчика ЯВНО. Висячая лямбда после появления
+                // четвёртого параметра стала привязываться к note вместо
+                // pick, и это не поймал бы никакой беглый взгляд.
+                { name -> pendingTag = name; showNotes() },
+                { id -> openForRead(id, 0) }
+            )
         }
     }
 

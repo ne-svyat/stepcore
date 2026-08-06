@@ -165,7 +165,7 @@ class VaultRootsView(context: Context) : View(context) {
                     val y = top + (bottom - top) * (0.06f + 0.88f * t)
                     val label = if (shown[n].title.length > 11)
                         shown[n].title.take(10) + "…" else shown[n].title
-                    canvas.drawText(label, x + thick, y + 3f * d)
+                    canvas.drawText(label, x + thick, y + 3f * d, textPaint)
                 }
                 textPaint.textAlign = Paint.Align.CENTER
             }
