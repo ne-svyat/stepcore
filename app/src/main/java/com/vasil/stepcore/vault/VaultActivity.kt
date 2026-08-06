@@ -89,6 +89,12 @@ class VaultActivity : AppCompatActivity() {
 
     /** Следующее открытие заметки - чтение, а не продолжение правки. */
     private var openingForRead = false
+    private var outerScroll: ScrollView? = null
+    private var lockOuterScroll = false
+
+    /** Порядок заметок в списке. */
+    private enum class SortBy { NEW, OLD, TITLE, EDITED }
+    private var sortBy = SortBy.NEW
 
     /**
      * Выбор картинки у системы. Регистрируется один раз при создании
@@ -129,11 +135,16 @@ class VaultActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(24), dp(40), dp(24), dp(32))
         }
-        setContentView(ScrollView(this).apply {
+        // Внешняя прокрутка отключается на главном экране: там две
+        // половины со своей жизнью, и внешний скролл дёргал бы обе.
+        val outer = ScrollView(this).apply {
             setBackgroundColor(0xFF0A0A0A.toInt())
             isFillViewport = true
             addView(root, LinearLayout.LayoutParams(-1, -2))
-        })
+            setOnTouchListener { _, _ -> lockOuterScroll }
+        }
+        outerScroll = outer
+        setContentView(outer)
 
         // Случайный выход из заметки - самая обидная потеря, и она
         // случается постоянно. Но спрашивать ВСЕГДА значит раздражать:
@@ -186,6 +197,7 @@ class VaultActivity : AppCompatActivity() {
     // ------------------------------------------------------------------- вход
 
     private fun showEntrance() {
+        lockOuterScroll = false
         screen = Screen.ENTRANCE
         root.removeAllViews()
         title("Тайник")
@@ -244,6 +256,7 @@ class VaultActivity : AppCompatActivity() {
     // --------------------------------------------------------------- создание
 
     private fun showCreate() {
+        lockOuterScroll = false
         screen = Screen.CREATE
         root.removeAllViews()
         title("Новый тайник")
@@ -360,15 +373,26 @@ class VaultActivity : AppCompatActivity() {
 
     // ------------------------------------------------------------- заметки
 
+    /**
+     * Главный экран тайника: список сверху, корни снизу.
+     *
+     * Верх - заметки со своей прокруткой, низ - живая карта классов.
+     * Половина экрана раньше пустовала, а карта была отдельной кнопкой,
+     * куда никто не заходит. Теперь низ управляет верхом: тап по жиле
+     * отбирает класс, тап по узелку открывает заметку.
+     */
     private fun showNotes(query: String = "") {
         screen = Screen.NOTES
-        val preset = pendingTag?.let { pendingTag = null; "#" + it } ?: query
         editor = null
         preview = false
         openNoteId = 0L
+        lockOuterScroll = true
         root.removeAllViews()
-        title("Заметки")
+        root.setPadding(dp(16), dp(20), dp(16), dp(10))
         val r = repo ?: return
+        val preset = pendingTag?.let { pendingTag = null; "#" + it } ?: query
+
+        title("Тайник")
 
         val q = EditText(this).apply {
             hint = "Поиск по тексту, или #тег"
@@ -377,39 +401,78 @@ class VaultActivity : AppCompatActivity() {
             isSingleLine = true
             setTextColor(0xFFEEEEEE.toInt())
             setHintTextColor(0xFF6A6A75.toInt())
-            setBackgroundColor(0xFF1F1F26.toInt())
+            background = GradientDrawable().apply {
+                cornerRadius = dp(9).toFloat()
+                setColor(0xFF1B1B22.toInt())
+                setStroke(dp(1), 0xFF2E2A3A.toInt())
+            }
             setPadding(dp(12), dp(10), dp(12), dp(10))
         }
         root.addView(q, LinearLayout.LayoutParams(-1, -2))
 
         val holder = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val status = TextView(this).apply {
-            textSize = 13f
-            setTextColor(0xFF9A9AA5.toInt())
-            setPadding(0, dp(10), 0, dp(8))
+            textSize = 12f
+            setTextColor(0xFF8A8A98.toInt())
+            setPadding(dp(2), dp(8), 0, dp(6))
         }
 
-        // ВАЖЕН ПОРЯДОК. Раньше кнопки стояли под списком: при поиске
-        // список схлопывался, кнопка уезжала вверх из-под пальца, и
-        // выглядело это как "не нажимается". Действия закреплены сверху,
-        // меняется только то, что ниже.
-        button("Найти").setOnClickListener {
-            if (!busy) runSearch(q.text.toString(), holder, status)
+        // Порядок: четыре положения, «Новые» по умолчанию.
+        val sortRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        root.addView(sortRow, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(8) })
+        for ((mode, label) in listOf(SortBy.NEW to "Новые", SortBy.OLD to "Старые",
+                                     SortBy.TITLE to "А-Я", SortBy.EDITED to "Правка")) {
+            sortRow.addView(tabButton(label, mode == sortBy) {
+                sortBy = mode
+                lifecycleScope.launch { fillNotes(holder, status, r.notes()) }
+                showNotes(q.text.toString())
+            })
         }
-        secondaryButton("Корни").setOnClickListener { if (!busy) showRoots() }
-        secondaryButton("Новая заметка").setOnClickListener {
+        root.addView(status)
+
+        // Список со своей прокруткой: примерно до середины экрана.
+        val listPane = ScrollView(this).apply {
+            isFillViewport = false
+            addView(holder, LinearLayout.LayoutParams(-1, -2))
+        }
+        root.addView(listPane, LinearLayout.LayoutParams(-1,
+            (resources.displayMetrics.heightPixels * 0.34f).toInt()))
+
+        // Черта: две половины не должны сливаться в одно полотно.
+        root.addView(View(this).apply {
+            setBackgroundColor(0xFF26232E.toInt())
+        }, LinearLayout.LayoutParams(-1, dp(1)).also {
+            it.topMargin = dp(10); it.bottomMargin = dp(8)
+        })
+
+        val rootsHint = TextView(this).apply {
+            textSize = 11f
+            setTextColor(0xFF7A7A88.toInt())
+            text = "Корни · тап по жиле — отбор класса, по узелку — заметка"
+            setPadding(dp(2), 0, 0, dp(4))
+        }
+        root.addView(rootsHint)
+
+        val rootsView = VaultRootsView(this)
+        root.addView(rootsView, LinearLayout.LayoutParams(-1,
+            (resources.displayMetrics.heightPixels * 0.26f).toInt()))
+
+        val bottom = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        root.addView(bottom, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(6) })
+        bottom.addView(tabButton("Найти") {
+            if (!busy) runSearch(q.text.toString(), holder, status)
+        })
+        bottom.addView(tabButton("Новая") {
             if (!busy) askText("Название заметки", "") { name ->
                 lifecycleScope.launch {
                     val id = r.createNote(if (name.isBlank()) "Без названия" else name)
-                    openNote(id, 0)
+                    openForRead(id, 0)
                 }
             }
-        }
-        root.addView(status)
-        root.addView(holder)
-        flatButton("Закрыть тайник").setOnClickListener { closeVault() }
+        })
+        bottom.addView(tabButton("Корни") { if (!busy) showRoots() })
+        bottom.addView(tabButton("Закрыть") { closeVault() })
 
-        // Кнопка "искать" на клавиатуре: тянуться к экрану лишний раз незачем.
         q.imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
         q.setOnEditorActionListener { _, _, _ ->
             if (!busy) runSearch(q.text.toString(), holder, status)
@@ -417,14 +480,41 @@ class VaultActivity : AppCompatActivity() {
         }
 
         lifecycleScope.launch {
-            classHues = r.classes().first.associate { it.name to it.hue }
+            val (list, together) = r.classes()
+            classHues = list.associate { it.name to it.hue }
             if (preset.isBlank()) fillNotes(holder, status, r.notes())
             else runSearch(preset, holder, status)
+
+            if (list.isNotEmpty()) {
+                val members = r.classMembers()
+                val ordered = list.sortedBy { it.hue }
+                rootsView.setData(
+                    ordered.map { c ->
+                        VaultRootsView.Strand(
+                            c.name, c.count, VaultHues.color(c.hue, c.count),
+                            (members[c.name] ?: emptyList())
+                                .map { VaultRootsView.Node(it.first, it.second) }
+                        )
+                    },
+                    together.entries.sortedByDescending { it.value }.take(24)
+                        .map { VaultRootsView.Weave(it.key.first, it.key.second, it.value) },
+                    { name -> pendingTag = name; showNotes() },
+                    { id -> openForRead(id, 0) }
+                )
+            } else {
+                rootsHint.text = "Корни пусты. Проставь тег заметке — он станет классом."
+            }
         }
     }
 
     private fun fillNotes(holder: LinearLayout, status: TextView,
-                          list: List<VaultRepo.NoteHead>) {
+                          raw: List<VaultRepo.NoteHead>) {
+        val list = when (sortBy) {
+            SortBy.NEW -> raw.sortedByDescending { it.id }
+            SortBy.OLD -> raw.sortedBy { it.id }
+            SortBy.TITLE -> raw.sortedBy { it.title.lowercase() }
+            SortBy.EDITED -> raw.sortedByDescending { it.updatedMs }
+        }
         holder.removeAllViews()
         status.text = if (list.isEmpty()) "Пусто. Заметки этого тайника видны только с его паролем."
                       else "Заметок: " + list.size
@@ -549,6 +639,7 @@ class VaultActivity : AppCompatActivity() {
     private fun drawPage(text: String, top: List<String> = emptyList()) {
         if (preview) { drawPreview(text, top); return }
         screen = Screen.PAGE
+        lockOuterScroll = false
         root.removeAllViews()
         val r = repo ?: return
         val noteId = openNoteId
@@ -758,6 +849,7 @@ class VaultActivity : AppCompatActivity() {
      */
     private fun drawPreview(text: String, top: List<String>) {
         screen = Screen.PREVIEW
+        lockOuterScroll = false
         root.removeAllViews()
         val noteId = openNoteId
         val im = images
@@ -846,6 +938,7 @@ class VaultActivity : AppCompatActivity() {
      * всё" — и поэтому их откатом не пользуются.
      */
     private fun showHistory(noteId: Long, idx: Int) {
+        lockOuterScroll = false
         val r = repo ?: return
         screen = Screen.HISTORY
         histNoteId = noteId
@@ -1020,6 +1113,7 @@ class VaultActivity : AppCompatActivity() {
      * бы жесты по своим краям, а картинка должна занимать всё.
      */
     private fun showImage(id: String) {
+        lockOuterScroll = false
         val im = images ?: return
         val bmp = im.load(id)
         if (bmp == null) { toast("Картинка недоступна"); return }
@@ -1122,6 +1216,7 @@ class VaultActivity : AppCompatActivity() {
      * чтобы список не был стеной одинаковых строк.
      */
     private fun showTrails(noteId: Long, idx: Int) {
+        lockOuterScroll = false
         val r = repo ?: return
         screen = Screen.TRAILS
         histNoteId = noteId
@@ -1207,6 +1302,7 @@ class VaultActivity : AppCompatActivity() {
      * просто красивая, она рабочий указатель.
      */
     private fun showRoots() {
+        lockOuterScroll = false
         val r = repo ?: return
         screen = Screen.ROOTS
         root.removeAllViews()
@@ -1288,11 +1384,15 @@ class VaultActivity : AppCompatActivity() {
      * чёрная, текст спокойный. Тайник и должен быть тише остального
      * приложения - он для того, кто уже знает, что здесь.
      */
-    private fun tabButton(label: String, action: () -> Unit): TextView {
+    private fun tabButton(label: String, action: () -> Unit): TextView =
+        tabButton(label, false, action)
+
+    private fun tabButton(label: String, active: Boolean, action: () -> Unit): TextView {
         val bg = GradientDrawable().apply {
             cornerRadius = dp(9).toFloat()
-            setColor(0xFF121218.toInt())
-            setStroke(dp(1), 0xFF2E2A3A.toInt())
+            setColor(if (active) 0xFF1E1A2A.toInt() else 0xFF121218.toInt())
+            setStroke(dp(1), if (active) getColor(R.color.accent_violet_bright)
+                             else 0xFF2E2A3A.toInt())
         }
         val t = TextView(this).apply {
             text = label
@@ -1303,7 +1403,8 @@ class VaultActivity : AppCompatActivity() {
             gravity = Gravity.CENTER
             minHeight = dp(46)
             height = dp(46)
-            setTextColor(0xFFA9A4BC.toInt())
+            setTextColor(if (active) getColor(R.color.accent_violet_bright)
+                         else 0xFFA9A4BC.toInt())
             setPadding(dp(4), 0, dp(4), 0)
             isClickable = true
             background = android.graphics.drawable.RippleDrawable(

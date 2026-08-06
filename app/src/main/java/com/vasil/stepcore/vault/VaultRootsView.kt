@@ -29,8 +29,12 @@ import android.view.View
  */
 class VaultRootsView(context: Context) : View(context) {
 
+    /** Узелок на жиле — конкретная заметка. */
+    class Node(val id: Long, val title: String)
+
     /** Одна жила. */
-    class Strand(val name: String, val count: Int, val color: Int)
+    class Strand(val name: String, val count: Int, val color: Int,
+                 val nodes: List<Node> = emptyList())
 
     /** Сплетение: два класса встретились на одной заметке. */
     class Weave(val a: String, val b: String, val weight: Int)
@@ -38,6 +42,10 @@ class VaultRootsView(context: Context) : View(context) {
     private var strands: List<Strand> = emptyList()
     private var weaves: List<Weave> = emptyList()
     private var onPick: ((String) -> Unit)? = null
+    private var onNote: ((Long) -> Unit)? = null
+
+    /** Где нарисован каждый узелок: нужно для попадания пальцем. */
+    private val hits = ArrayList<Triple<Float, Float, Node>>()
 
     private val veinPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val nodePaint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -49,10 +57,12 @@ class VaultRootsView(context: Context) : View(context) {
     }
     private val d = resources.displayMetrics.density
 
-    fun setData(s: List<Strand>, w: List<Weave>, pick: (String) -> Unit) {
+    fun setData(s: List<Strand>, w: List<Weave>,
+                pick: (String) -> Unit, note: (Long) -> Unit = {}) {
         strands = s
         weaves = w
         onPick = pick
+        onNote = note
         invalidate()
     }
 
@@ -64,6 +74,22 @@ class VaultRootsView(context: Context) : View(context) {
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (event.action != MotionEvent.ACTION_UP || strands.isEmpty()) return true
+
+        // Сначала узелки: попал в заметку - открываем её. Узелок меньше
+        // жилы, поэтому проверяется первым, иначе до него не дотянуться.
+        var bestNode: Node? = null
+        var bestDist = Float.MAX_VALUE
+        for ((nx, ny, node) in hits) {
+            val dx = event.x - nx
+            val dy = event.y - ny
+            val dist = kotlin.math.sqrt(dx * dx + dy * dy)
+            if (dist < bestDist) { bestDist = dist; bestNode = node }
+        }
+        if (bestNode != null && bestDist < 22f * d) {
+            onNote?.invoke(bestNode.id)
+            return true
+        }
+
         // Ближайшая жила, но не дальше половины шага: промах не должен
         // молча открывать соседний класс.
         var best = -1
@@ -79,6 +105,7 @@ class VaultRootsView(context: Context) : View(context) {
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
+        hits.clear()
         if (strands.isEmpty() || width == 0) return
 
         val top = 14f * d
@@ -116,12 +143,31 @@ class VaultRootsView(context: Context) : View(context) {
             canvas.drawLine(x, top, x, bottom, veinPaint)
 
             // Узелки: до двенадцати, дальше глаз всё равно не считает.
-            val nodes = s.count.coerceAtMost(12)
+            val shown = s.nodes.take(12)
+            val nodes = if (shown.isEmpty()) s.count.coerceAtMost(12) else shown.size
             nodePaint.color = s.color
             for (n in 0 until nodes) {
                 val t = if (nodes == 1) 0.5f else n.toFloat() / (nodes - 1)
                 val y = top + (bottom - top) * (0.06f + 0.88f * t)
                 canvas.drawCircle(x, y, thick * 0.62f, nodePaint)
+                if (n < shown.size) hits.add(Triple(x, y, shown[n]))
+            }
+
+            // Названия заметок подписываются только там, где их мало.
+            // На жиле из двадцати узелков подписи налезут друг на друга и
+            // превратят карту в кашу - лучше честно ничего не писать.
+            if (shown.size in 1..4) {
+                textPaint.textSize = 9f * d
+                textPaint.color = (0x99 shl 24) or (s.color and 0xFFFFFF)
+                textPaint.textAlign = Paint.Align.LEFT
+                for (n in shown.indices) {
+                    val t = if (shown.size == 1) 0.5f else n.toFloat() / (shown.size - 1)
+                    val y = top + (bottom - top) * (0.06f + 0.88f * t)
+                    val label = if (shown[n].title.length > 11)
+                        shown[n].title.take(10) + "…" else shown[n].title
+                    canvas.drawText(label, x + thick, y + 3f * d)
+                }
+                textPaint.textAlign = Paint.Align.CENTER
             }
 
             textPaint.color = s.color

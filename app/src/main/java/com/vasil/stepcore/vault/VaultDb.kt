@@ -393,6 +393,17 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
      *
      * Считается по заголовкам заметок, текст страниц не читается вовсе.
      */
+    /** Заметки каждого класса: id и название, свежие первыми. */
+    suspend fun classMembers(): Map<String, List<Pair<Long, String>>> {
+        val out = HashMap<String, ArrayList<Pair<Long, String>>>()
+        for (h in notes()) {
+            for (t in h.tags.map { it.trim().lowercase() }.distinct()) {
+                out.getOrPut(t) { ArrayList() }.add(h.id to h.title)
+            }
+        }
+        return out
+    }
+
     suspend fun classes(): Pair<List<ClassInfo>, Map<Pair<String, String>, Int>> {
         val heads = notes()
         val count = HashMap<String, Int>()
