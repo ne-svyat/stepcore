@@ -73,7 +73,7 @@ class VaultActivity : AppCompatActivity() {
      * плодить записи в списке задач, которых у скрытого модуля быть не
      * должно.
      */
-    private enum class Screen { ENTRANCE, CREATE, NOTES, PAGE, PREVIEW, HISTORY, IMAGE }
+    private enum class Screen { ENTRANCE, CREATE, NOTES, PAGE, PREVIEW, HISTORY, IMAGE, TRAILS }
     private var screen = Screen.ENTRANCE
     private var histNoteId = 0L
     private var histIdx = 0
@@ -560,6 +560,13 @@ class VaultActivity : AppCompatActivity() {
             leavePage { openNote(noteId, openIdx) }
         })
 
+        tools.addView(navButton("Тропы") {
+            leavePage { showTrails(noteId, openIdx) }
+        })
+        tools.addView(navButton("Оглавление") {
+            showOutline(e)
+        })
+
         flatButton("Теги заметки").setOnClickListener {
             if (busy) return@setOnClickListener
             val r2 = repo ?: return@setOnClickListener
@@ -696,7 +703,8 @@ class VaultActivity : AppCompatActivity() {
                     setPadding(0, dp(14), 0, dp(6))
                 })
                 is VaultText.Block.Para -> root.addView(TextView(this).apply {
-                    this.text = b.text
+                    this.text = linkify(b.text)
+                    movementMethod = android.text.method.LinkMovementMethod.getInstance()
                     textSize = 16f
                     setTextColor(0xFFDDDDE5.toInt())
                     setTextIsSelectable(true)
@@ -878,6 +886,8 @@ class VaultActivity : AppCompatActivity() {
         when (screen) {
             Screen.HISTORY -> openNote(histNoteId, histIdx)
 
+            Screen.TRAILS -> openNote(histNoteId, histIdx)
+
             Screen.IMAGE -> {
                 preview = true
                 openNote(openNoteId, openIdx)
@@ -973,6 +983,135 @@ class VaultActivity : AppCompatActivity() {
             )
         }
         anim.start()
+    }
+
+    /**
+     * Ссылки [[так]] в режиме просмотра: цветные и нажимаемые.
+     *
+     * Скобки не прячем. Спрятать их значило бы сделать вид, что заметка
+     * набрана в каком-то особом редакторе, — а она набрана обычным
+     * текстом, и в правке ты видишь ровно то же, что здесь.
+     */
+    private fun linkify(text: String): CharSequence {
+        val spans = VaultText.linkSpans(text)
+        if (spans.isEmpty()) return text
+        val sp = android.text.SpannableString(text)
+        val accent = getColor(R.color.accent_violet_bright)
+        for (r in spans) {
+            val name = text.substring(r[0] + 2, r[1] - 2).trim()
+            sp.setSpan(object : android.text.style.ClickableSpan() {
+                override fun onClick(w: View) = openByTitle(name)
+                override fun updateDrawState(ds: android.text.TextPaint) {
+                    ds.color = accent
+                    ds.isUnderlineText = false
+                }
+            }, r[0], r[1], android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        return sp
+    }
+
+    private fun openByTitle(name: String) {
+        val r = repo ?: return
+        lifecycleScope.launch {
+            val target = r.notes().firstOrNull { VaultText.sameTitle(it.title, name) }
+            if (target == null) {
+                // Ссылка на несуществующую заметку - не ошибка, а замысел:
+                // человек записал название раньше, чем завёл её.
+                askText("Заметки «" + name + "» нет. Создать?", name) { v ->
+                    lifecycleScope.launch {
+                        val id = r.createNote(if (v.isBlank()) name else v)
+                        preview = false
+                        openNote(id, 0)
+                    }
+                }
+            } else {
+                preview = false
+                openNote(target.id, 0)
+            }
+        }
+    }
+
+    /**
+     * Тропы от этой страницы. Три уровня близости рисуются по-разному,
+     * чтобы список не был стеной одинаковых строк.
+     */
+    private fun showTrails(noteId: Long, idx: Int) {
+        val r = repo ?: return
+        screen = Screen.TRAILS
+        histNoteId = noteId
+        histIdx = idx
+        root.removeAllViews()
+        editor = null
+        title("Тропы")
+
+        val status = TextView(this).apply {
+            textSize = 13f
+            setTextColor(0xFF9A9AA5.toInt())
+            setPadding(0, 0, 0, dp(10))
+            text = "Ищу связи…"
+        }
+        root.addView(status)
+        val holder = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        root.addView(holder)
+        secondaryButton("Назад к странице").setOnClickListener { goBack() }
+
+        lifecycleScope.launch {
+            val list = withContext(Dispatchers.Default) { r.trails(noteId, idx) }
+            status.text = if (list.isEmpty())
+                "Связей пока нет. Поставь [[Название]] в тексте — появится тропа."
+            else "Связей: " + list.size +
+                "\n│ поставил сам   ┆ сослались на тебя   · похожее по словам"
+            for (t in list) {
+                val mark = when (t.kind) {
+                    VaultRepo.TrailKind.DIRECT -> "│  "
+                    VaultRepo.TrailKind.BACK -> "┆  "
+                    VaultRepo.TrailKind.KIN -> "·  "
+                }
+                val tail = when (t.kind) {
+                    VaultRepo.TrailKind.DIRECT -> "ты сослался"
+                    VaultRepo.TrailKind.BACK -> "сослались на тебя · стр. " + (t.page + 1)
+                    VaultRepo.TrailKind.KIN -> "общих слов: " + t.strength +
+                        " · стр. " + (t.page + 1)
+                }
+                holder.addView(TextView(this@VaultActivity).apply {
+                    text = mark + t.title + "\n" + mark + tail
+                    textSize = 15f
+                    setTextColor(when (t.kind) {
+                        VaultRepo.TrailKind.DIRECT -> 0xFFEEEEEE.toInt()
+                        VaultRepo.TrailKind.BACK -> 0xFFCFCFDA.toInt()
+                        else -> 0xFF9A9AA5.toInt()
+                    })
+                    setBackgroundColor(0xFF17171C.toInt())
+                    setPadding(dp(14), dp(10), dp(14), dp(10))
+                    isClickable = true
+                    setOnClickListener { openNote(t.noteId, t.page) }
+                }, LinearLayout.LayoutParams(-1, -2).also { it.bottomMargin = dp(6) })
+            }
+        }
+    }
+
+    /**
+     * Оглавление страницы по заголовкам. Не отдельный экран, а список:
+     * выбрал — курсор встал на заголовок, страница прокрутилась туда.
+     */
+    private fun showOutline(e: EditText) {
+        val text = e.text.toString()
+        val heads = VaultText.outline(text)
+        if (heads.isEmpty()) {
+            toast("Заголовков нет. Начни строку с # или ##")
+            return
+        }
+        val labels = heads.map { h -> "  ".repeat(h.level - 1) + h.text }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("Оглавление")
+            .setItems(labels) { _, which ->
+                val pos = text.indexOf(heads[which].text)
+                if (pos >= 0) {
+                    e.requestFocus()
+                    e.setSelection(pos)
+                }
+            }
+            .show()
     }
 
     /** Выделенный кусок текста версии, либо пусто. */

@@ -305,6 +305,82 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
         return VaultCrypto.decrypt(dataKey, p.body)?.toString(Charsets.UTF_8)
     }
 
+    /**
+     * Тропа — связь между страницами. Три уровня близости, и они читаются
+     * глазом мгновенно, потому что рисуются по-разному.
+     *
+     * DIRECT — ты сам поставил [[ссылку]].
+     * BACK   — на тебя сослались откуда-то ещё.
+     * KIN    — просто похожие темы, по частым словам.
+     *
+     * Графа не будет. Граф красив на скриншоте и бесполезен на телефоне
+     * после сотни узлов: он показывает, что связи ЕСТЬ, но не отвечает на
+     * вопрос "куда мне сейчас". Список, отсортированный по силе, отвечает.
+     */
+    enum class TrailKind { DIRECT, BACK, KIN }
+
+    class Trail(
+        val noteId: Long,
+        val title: String,
+        val page: Int,
+        val kind: TrailKind,
+        val strength: Int,
+    )
+
+    /**
+     * Тропы от конкретной страницы.
+     *
+     * Родство считается по УЖЕ сохранённым подписям страниц: текст чужих
+     * страниц ради этого не расшифровывается. Прямые и обратные ссылки
+     * требуют чтения текста, поэтому идут порциями, как поиск.
+     */
+    suspend fun trails(noteId: Long, idx: Int, limit: Int = 60): List<Trail> {
+        val heads = notes()
+        val me = heads.firstOrNull { it.id == noteId } ?: return emptyList()
+        val myText = readPage(noteId, idx) ?: ""
+        val myWords = wordsOf(noteId, idx)
+        val myLinks = VaultText.linkRefs(myText)
+
+        val out = ArrayList<Trail>()
+
+        // 1. Прямые: названия, на которые ссылается эта страница.
+        for (name in myLinks) {
+            val target = heads.firstOrNull { VaultText.sameTitle(it.title, name) } ?: continue
+            if (target.id == noteId) continue
+            out.add(Trail(target.id, target.title, 0, TrailKind.DIRECT, 1000))
+        }
+
+        // 2. Обратные и родство — одним обходом, чтобы не читать всё дважды.
+        for (h in heads) {
+            if (h.id == noteId) continue
+            var from = 0
+            while (from < h.pageCount) {
+                for (p in dao.pagesRange(h.id, from, from + PAGE_CHUNK)) {
+                    val words = VaultCrypto.decrypt(dataKey, p.words)
+                        ?.toString(Charsets.UTF_8)?.split(' ')?.filter { it.isNotEmpty() }
+                        ?: emptyList()
+                    val kin = VaultText.kinship(myWords, words)
+
+                    // Текст читаем только если ищем обратную ссылку.
+                    val text = VaultCrypto.decrypt(dataKey, p.body)?.toString(Charsets.UTF_8)
+                    val backs = if (text == null) false
+                        else VaultText.linkRefs(text).any { VaultText.sameTitle(it, me.title) }
+
+                    if (backs) out.add(Trail(h.id, h.title, p.idx, TrailKind.BACK, 500))
+                    else if (kin > 0) out.add(Trail(h.id, h.title, p.idx, TrailKind.KIN, kin))
+                }
+                from += PAGE_CHUNK
+                if (out.size > limit * 4) break
+            }
+        }
+
+        // Сортировка ровно та, в какой человек их читает: сначала что я
+        // связал сам, потом кто пришёл ко мне, потом просто похожее.
+        return out.sortedWith(
+            compareBy<Trail> { it.kind.ordinal }.thenByDescending { it.strength }
+        ).take(limit)
+    }
+
     /** Один снимок страницы: что было и когда. */
     class Snap(val id: Long, val ms: Long, val text: String, val fork: Boolean)
 

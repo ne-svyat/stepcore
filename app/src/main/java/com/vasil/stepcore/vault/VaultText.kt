@@ -221,6 +221,85 @@ object VaultText {
         return out
     }
 
+
+    // ------------------------------------------------------------- связи
+
+    /**
+     * Ссылка на другую заметку: [[Название]].
+     *
+     * Форма взята у Obsidian сознательно — это единственная запись связи,
+     * которую человек набирает не задумываясь, прямо в потоке письма.
+     * Меню "добавить связь" в тот же поток не помещается: пока выбираешь
+     * из списка, мысль уходит.
+     */
+    const val LINK_OPEN = "[["
+    private const val LINK_CLOSE = "]]"
+
+    fun linkMark(title: String): String = LINK_OPEN + title + LINK_CLOSE
+
+    /** Названия, на которые ссылается текст, в порядке появления. */
+    fun linkRefs(text: String): List<String> {
+        val out = ArrayList<String>()
+        var i = 0
+        while (true) {
+            val a = text.indexOf(LINK_OPEN, i)
+            if (a < 0) break
+            val b = text.indexOf(LINK_CLOSE, a + 2)
+            if (b < 0) break
+            val name = text.substring(a + 2, b).trim()
+            // Перевод строки внутри скобок означает, что закрывающие
+            // скобки от другой ссылки: незакрытая не должна проглатывать
+            // половину страницы.
+            if (name.isNotEmpty() && name.length <= 120 && !name.contains('\n')) {
+                out.add(name)
+            }
+            i = b + 2
+        }
+        return out.distinct()
+    }
+
+    /** Границы ссылок для подсветки: пары (начало, конец) вместе со скобками. */
+    fun linkSpans(text: String): List<IntArray> {
+        val out = ArrayList<IntArray>()
+        var i = 0
+        while (true) {
+            val a = text.indexOf(LINK_OPEN, i)
+            if (a < 0) break
+            val b = text.indexOf(LINK_CLOSE, a + 2)
+            if (b < 0) break
+            val name = text.substring(a + 2, b)
+            if (name.isNotEmpty() && !name.contains('\n')) out.add(intArrayOf(a, b + 2))
+            i = b + 2
+        }
+        return out
+    }
+
+    /** Совпадает ли название без учёта регистра, ё/е и краевых пробелов. */
+    fun sameTitle(a: String, b: String): Boolean =
+        normalizeTitle(a) == normalizeTitle(b)
+
+    private fun normalizeTitle(s: String): String {
+        val sb = StringBuilder(s.length)
+        for (c in s.trim().lowercase()) sb.append(if (c == 'ё') 'е' else c)
+        return sb.toString()
+    }
+
+    /**
+     * Родство двух страниц по их частым словам.
+     *
+     * Считается по УЖЕ сохранённым подписям страниц, а не по тексту:
+     * значит связи ничего не стоят — ни нового хранилища, ни лишней
+     * расшифровки текста. Это и есть та ценность графа, ради которой
+     * граф обычно и рисуют, только без графа.
+     *
+     * @return число общих слов.
+     */
+    fun kinship(aWords: List<String>, bWords: List<String>): Int {
+        if (aWords.isEmpty() || bWords.isEmpty()) return 0
+        val set = aWords.map { it.lowercase() }.toHashSet()
+        return bWords.count { it.lowercase() in set }
+    }
+
     /** Оглавление страницы — заголовки по порядку. */
     fun outline(text: String): List<Block.Head> =
         blocks(text).filterIsInstance<Block.Head>()
