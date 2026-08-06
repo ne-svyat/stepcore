@@ -453,6 +453,10 @@ class VaultActivity : AppCompatActivity() {
         finish()
     }
 
+    private fun toast(t: String) {
+        android.widget.Toast.makeText(this, t, android.widget.Toast.LENGTH_SHORT).show()
+    }
+
     private fun navButton(label: String, action: () -> Unit): Button {
         val b = Button(this).apply {
             text = label
