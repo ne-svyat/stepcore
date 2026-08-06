@@ -25,6 +25,74 @@ import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
 
+    // --- секретный жест Vault -------------------------------------------
+    // Ловится здесь, а не во вьюхах: dispatchTouchEvent только СМОТРИТ на
+    // события и всегда пропускает их дальше, поэтому ни одна существующая
+    // кнопка и ни один скролл не меняют поведения.
+    private val vaultGate = com.vasil.stepcore.vault.VaultGate()
+    private val vaultLoc = IntArray(2)
+    private var vaultDownX = 0f
+    private var vaultDownY = 0f
+    private var vaultDownMs = 0L
+
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        when (ev.actionMasked) {
+            android.view.MotionEvent.ACTION_DOWN -> {
+                vaultDownX = ev.rawX
+                vaultDownY = ev.rawY
+                vaultDownMs = android.os.SystemClock.uptimeMillis()
+            }
+            android.view.MotionEvent.ACTION_UP -> {
+                val now = android.os.SystemClock.uptimeMillis()
+                val slop = 24f * resources.displayMetrics.density
+                val moved = kotlin.math.abs(ev.rawX - vaultDownX) > slop ||
+                        kotlin.math.abs(ev.rawY - vaultDownY) > slop
+                // Протяжка и долгое удержание - не тап. Иначе прокрутка
+                // экрана, кончившаяся над свитком, считалась бы касанием.
+                if (!moved && now - vaultDownMs < 500L) vaultTap(ev.rawX, ev.rawY, now)
+            }
+        }
+        return super.dispatchTouchEvent(ev)
+    }
+
+    private fun vaultTap(rawX: Float, rawY: Float, now: Long) {
+        val spot = when {
+            vaultHitMoon(rawX, rawY) -> com.vasil.stepcore.vault.VaultGate.Spot.MOON
+            vaultHitScroll(rawX, rawY) -> com.vasil.stepcore.vault.VaultGate.Spot.SCROLL
+            else -> com.vasil.stepcore.vault.VaultGate.Spot.ELSEWHERE
+        }
+        when (vaultGate.onTap(spot, now)) {
+            com.vasil.stepcore.vault.VaultGate.Signal.ARMED -> vaultBuzz(30L)
+            com.vasil.stepcore.vault.VaultGate.Signal.OPEN -> {
+                vaultBuzz(40L)
+                startActivity(Intent(this, com.vasil.stepcore.vault.VaultActivity::class.java))
+            }
+            com.vasil.stepcore.vault.VaultGate.Signal.NONE -> Unit
+        }
+    }
+
+    private fun vaultHitMoon(rawX: Float, rawY: Float): Boolean {
+        if (!this::ring.isInitialized || ring.width == 0) return false
+        ring.getLocationOnScreen(vaultLoc)
+        return ring.moonHit(rawX - vaultLoc[0], rawY - vaultLoc[1])
+    }
+
+    private fun vaultHitScroll(rawX: Float, rawY: Float): Boolean {
+        if (!this::motiveScroll.isInitialized || motiveScroll.width == 0) return false
+        motiveScroll.getLocationOnScreen(vaultLoc)
+        return rawX >= vaultLoc[0] && rawX <= vaultLoc[0] + motiveScroll.width &&
+                rawY >= vaultLoc[1] && rawY <= vaultLoc[1] + motiveScroll.height
+    }
+
+    private fun vaultBuzz(ms: Long) {
+        try {
+            val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+            vm.defaultVibrator.vibrate(VibrationEffect.createOneShot(ms, 160))
+        } catch (e: Exception) {
+            // Вибрации может не быть - жест обязан работать и молча.
+        }
+    }
+
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
             if (result.values.all { it }) startTracking()

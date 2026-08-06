@@ -38,6 +38,21 @@ class CrystalRingView @JvmOverloads constructor(
 
     private val d = resources.displayMetrics.density
 
+    /**
+     * Попала ли точка (в координатах этой вьюхи) в зону луны.
+     *
+     * Только чтение геометрии. Вьюха рисует гору и ничего не решает: знание
+     * о том, зачем кому-то луна, живёт снаружи. Обработчика касаний здесь
+     * намеренно нет, чтобы не перехватывать события у существующего экрана.
+     */
+    fun moonHit(x: Float, y: Float): Boolean {
+        if (moonR <= 0f) return false
+        val dx = x - moonCx
+        val dy = y - moonCy
+        val r = moonR * 2.0f      // палец крупнее полумесяца, зона с запасом
+        return dx * dx + dy * dy <= r * r
+    }
+
     // Палитра камня (цел-шейдинг, свет сверху-слева -> лево светлее).
     private val stoneLit = 0xFF6D7F98.toInt()
     private val stoneMid = 0xFF58697F.toInt()
