@@ -352,13 +352,15 @@ class VaultActivity : AppCompatActivity() {
             setTextColor(0xFF9A9AA5.toInt())
             setPadding(0, dp(10), 0, dp(8))
         }
-        root.addView(status)
-        root.addView(holder)
 
+        // ВАЖЕН ПОРЯДОК. Раньше кнопки стояли под списком: при поиске
+        // список схлопывался, кнопка уезжала вверх из-под пальца, и
+        // выглядело это как "не нажимается". Действия закреплены сверху,
+        // меняется только то, что ниже.
         button("Найти").setOnClickListener {
             if (!busy) runSearch(q.text.toString(), holder, status)
         }
-        button("Новая заметка").setOnClickListener {
+        secondaryButton("Новая заметка").setOnClickListener {
             if (!busy) askText("Название заметки", "") { name ->
                 lifecycleScope.launch {
                     val id = r.createNote(if (name.isBlank()) "Без названия" else name)
@@ -366,7 +368,16 @@ class VaultActivity : AppCompatActivity() {
                 }
             }
         }
-        flatButton("Закрыть").setOnClickListener { closeVault() }
+        root.addView(status)
+        root.addView(holder)
+        flatButton("Закрыть тайник").setOnClickListener { closeVault() }
+
+        // Кнопка "искать" на клавиатуре: тянуться к экрану лишний раз незачем.
+        q.imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
+        q.setOnEditorActionListener { _, _, _ ->
+            if (!busy) runSearch(q.text.toString(), holder, status)
+            true
+        }
 
         lifecycleScope.launch { fillNotes(holder, status, r.notes()) }
     }
@@ -1082,12 +1093,23 @@ class VaultActivity : AppCompatActivity() {
                 else -> setColor(0x00000000)
             }
         }
+        // Рябь поверх своей заливки. Заменив фон, я убрал стандартный
+        // отклик — кнопка нажималась, но выглядела мёртвой, и человек
+        // жал ещё раз. Отдача на касание не украшение: без неё непонятно,
+        // услышало ли приложение.
+        val ripple = android.graphics.drawable.RippleDrawable(
+            android.content.res.ColorStateList.valueOf(
+                if (level == LEVEL_PRIMARY) 0x33000000 else 0x33FFFFFF
+            ),
+            bg, null
+        )
         val b = Button(this).apply {
             text = label
             textSize = if (level == LEVEL_DANGER) 15f else 16f
             gravity = Gravity.CENTER
-            background = bg
+            background = ripple
             stateListAnimator = null
+            minHeight = dp(48)   // палец, а не курсор
             setTextColor(when (level) {
                 LEVEL_PRIMARY -> 0xFF14101A.toInt()
                 LEVEL_SECONDARY -> 0xFFCFCFDA.toInt()
@@ -1109,8 +1131,12 @@ class VaultActivity : AppCompatActivity() {
             textSize = 15f
             gravity = Gravity.CENTER
             setTextColor(0xFF8F8FA0.toInt())
-            setPadding(dp(8), dp(16), dp(8), dp(8))
+            setPadding(dp(8), dp(14), dp(8), dp(14))
+            minHeight = dp(48)
             isClickable = true
+            background = android.graphics.drawable.RippleDrawable(
+                android.content.res.ColorStateList.valueOf(0x22FFFFFF), null, null
+            )
         }
         root.addView(t, LinearLayout.LayoutParams(-1, -2))
         return t
