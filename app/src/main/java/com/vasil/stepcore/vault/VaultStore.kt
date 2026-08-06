@@ -53,12 +53,47 @@ class VaultStore(context: Context) {
 object VaultSession {
 
     @Volatile private var dataKey: ByteArray? = null
+    @Volatile private var leftAtMs = 0L
+
+    /**
+     * Льготное окно после ухода с экрана.
+     *
+     * Прежде тайник запирался мгновенно, и скриншот, ответ в мессенджере
+     * или случайный свайп стоили повторного ввода пароля. Это не
+     * безопасность, а наказание за обычное пользование телефоном.
+     *
+     * Честная цена: полторы минуты ключ живёт в памяти при свёрнутом
+     * приложении. Против того, кто выхватил телефон из рук, эти секунды
+     * работают. Против случайного взгляда - нет, потому что превью в
+     * списке задач запрещено отдельно.
+     */
+    const val GRACE_MS = 90_000L
 
     val isOpen: Boolean get() = dataKey != null
 
     fun open(key: ByteArray) {
         lock()
         dataKey = key
+        leftAtMs = 0L
+    }
+
+    /** Ушли с экрана: ключ пока живёт, но время пошло. */
+    fun leave(nowMs: Long) {
+        if (dataKey != null) leftAtMs = nowMs
+    }
+
+    /**
+     * Вернулись. Если льгота истекла - запираем.
+     * @return true, если тайник всё ещё открыт.
+     */
+    fun resume(nowMs: Long): Boolean {
+        if (dataKey == null) return false
+        if (leftAtMs != 0L && nowMs - leftAtMs > GRACE_MS) {
+            lock()
+            return false
+        }
+        leftAtMs = 0L
+        return true
     }
 
     /** @return копия ключа для операции, либо null если заперто. */
@@ -68,5 +103,6 @@ object VaultSession {
     fun lock() {
         dataKey?.fill(0)
         dataKey = null
+        leftAtMs = 0L
     }
 }

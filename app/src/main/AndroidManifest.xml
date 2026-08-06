@@ -45,7 +45,6 @@
             android:name=".vault.VaultActivity"
             android:screenOrientation="portrait"
             android:excludeFromRecents="true"
-            android:noHistory="true"
             android:exported="false" />
 
         <service

@@ -87,6 +87,9 @@ class VaultActivity : AppCompatActivity() {
     /** Класс, выбранный тапом по жиле: список откроется уже отобранным. */
     private var pendingTag: String? = null
 
+    /** Следующее открытие заметки - чтение, а не продолжение правки. */
+    private var openingForRead = false
+
     /**
      * Выбор картинки у системы. Регистрируется один раз при создании
      * экрана: регистрировать по нажатию Android не позволяет.
@@ -106,8 +109,21 @@ class VaultActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.setFlags(WindowManager.LayoutParams.FLAG_SECURE,
-            WindowManager.LayoutParams.FLAG_SECURE)
+        // Скриншоты РАЗРЕШЕНЫ сознательно.
+        //
+        // FLAG_SECURE запрещает и снимок экрана, и превью в списке задач.
+        // Ценность - во втором: содержимое не должно всплывать миниатюрой,
+        // когда листаешь открытые приложения. Запрет скриншотов защищает
+        // от того, кто уже держит разблокированный телефон с открытым
+        // тайником, то есть от почти невозможного случая, а мешает каждый
+        // день. С Android 13 эти две вещи разделяются отдельной ручкой; на
+        // более старых остаётся полный FLAG_SECURE - там выбора нет.
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            setRecentsScreenshotEnabled(false)
+        } else {
+            window.setFlags(WindowManager.LayoutParams.FLAG_SECURE,
+                WindowManager.LayoutParams.FLAG_SECURE)
+        }
 
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -132,25 +148,38 @@ class VaultActivity : AppCompatActivity() {
         } else showEntrance()
     }
 
-    /** Уход с экрана запирает тайник. Ключ не переживает сворачивание. */
+    /**
+     * Уход с экрана: сохранить текст и запустить льготное окно.
+     *
+     * Экран больше НЕ закрывается: вернувшись в течение полутора минут,
+     * человек попадает туда же, где был. Раньше здесь стоял finish(), и
+     * любое переключение приложений выбрасывало из тайника.
+     */
     override fun onStop() {
         super.onStop()
-        if (!isChangingConfigurations) {
-            // Сохранить до запирания: несохранённый текст важнее скорости.
-            val text = editor?.text?.toString()
-            val id = openNoteId
-            val idx = openIdx
-            val r = repo
-            if (text != null && id != 0L && r != null) {
-                kotlinx.coroutines.runBlocking {
-                    try { r.writePage(id, idx, text) } catch (e: Exception) { }
-                }
+        if (isChangingConfigurations) return
+        val text = editor?.text?.toString()
+        val id = openNoteId
+        val idx = openIdx
+        val r = repo
+        if (text != null && id != 0L && r != null) {
+            kotlinx.coroutines.runBlocking {
+                try { r.writePage(id, idx, text) } catch (e: Exception) { }
             }
+        }
+        VaultSession.leave(System.currentTimeMillis())
+    }
+
+    /** Возврат: льгота цела - продолжаем, истекла - запираем. */
+    override fun onStart() {
+        super.onStart()
+        if (screen == Screen.ENTRANCE || screen == Screen.CREATE) return
+        if (!VaultSession.resume(System.currentTimeMillis())) {
             editor = null
             repo = null
             images = null
-            VaultSession.lock()
-            finish()
+            openNoteId = 0L
+            showEntrance()
         }
     }
 
@@ -419,7 +448,7 @@ class VaultActivity : AppCompatActivity() {
                 background = row
                 setPadding(dp(14), dp(12), dp(14), dp(12))
                 isClickable = true
-                setOnClickListener { openNote(n.id, 0) }
+                setOnClickListener { openForRead(n.id, 0) }
                 if (hue != null) {
                     val bar = android.text.SpannableString(text)
                     setText(bar)
@@ -471,10 +500,16 @@ class VaultActivity : AppCompatActivity() {
                     setBackgroundColor(0xFF17171C.toInt())
                     setPadding(dp(14), dp(10), dp(14), dp(10))
                     isClickable = true
-                    setOnClickListener { pendingFind = text; openNote(h.noteId, h.page) }
+                    setOnClickListener { pendingFind = text; openForRead(h.noteId, h.page) }
                 }, LinearLayout.LayoutParams(-1, -2).also { it.bottomMargin = dp(8) })
             }
         }
+    }
+
+    /** Открыть заметку на чтение. Правка - по вкладке. */
+    private fun openForRead(noteId: Long, idx: Int) {
+        openingForRead = true
+        openNote(noteId, idx)
     }
 
     /** Сохранить открытую страницу и уйти. Порядок важен: сначала запись. */
@@ -499,6 +534,14 @@ class VaultActivity : AppCompatActivity() {
             val top = r.wordsOf(noteId, safeIdx)
             openNoteId = noteId
             openIdx = safeIdx
+            // Заметку открывают ЧИТАТЬ в разы чаще, чем править, поэтому
+            // чтение - режим по умолчанию, а правка по вкладке. Пустая
+            // страница - исключение: читать там нечего, и лишний тап был
+            // бы издевательством.
+            if (openingForRead) {
+                openingForRead = false
+                preview = text.isNotBlank()
+            }
             drawPage(text, top)
         }
     }
@@ -1065,13 +1108,11 @@ class VaultActivity : AppCompatActivity() {
                 askText("Заметки «" + name + "» нет. Создать?", name) { v ->
                     lifecycleScope.launch {
                         val id = r.createNote(if (v.isBlank()) name else v)
-                        preview = false
-                        openNote(id, 0)
+                        openForRead(id, 0)
                     }
                 }
             } else {
-                preview = false
-                openNote(target.id, 0)
+                openForRead(target.id, 0)
             }
         }
     }
@@ -1129,7 +1170,7 @@ class VaultActivity : AppCompatActivity() {
                     setBackgroundColor(0xFF17171C.toInt())
                     setPadding(dp(14), dp(10), dp(14), dp(10))
                     isClickable = true
-                    setOnClickListener { openNote(t.noteId, t.page) }
+                    setOnClickListener { openForRead(t.noteId, t.page) }
                 }, LinearLayout.LayoutParams(-1, -2).also { it.bottomMargin = dp(6) })
             }
         }
