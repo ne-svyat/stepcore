@@ -108,8 +108,23 @@ class VaultActivity : AppCompatActivity() {
 
     /** Следующее открытие заметки - чтение, а не продолжение правки. */
     private var openingForRead = false
-    private var outerScroll: ScrollView? = null
-    private var lockOuterScroll = false
+    /**
+     * Способ показа экрана.
+     *
+     * Главный экран - ЖЁСТКИЙ КАРКАС без внешней прокрутки: шапка, гибкий
+     * список, корни, панель. Прокрутка живёт внутри списка.
+     *
+     * Так сделано после двух неудачных попыток удержать корни внизу.
+     * Внутри ScrollView высота содержимого не ограничена ничем: он меряет
+     * ребёнка "сколько угодно", весу списка нечего делить, и список
+     * растягивается на все заметки, унося корни за край. Ни match_parent,
+     * ни точная высота в post этого не лечат надёжно - лечит только
+     * отсутствие прокрутки НАД каркасом.
+     *
+     * Прочие экраны прокручиваются: там содержимое действительно длиннее
+     * окна, и делить нечего.
+     */
+    private var scrollable = true
 
     /** Порядок заметок в списке. */
     private enum class SortBy { HOT, NEW, OLD, TITLE }
@@ -154,16 +169,7 @@ class VaultActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(24), dp(40), dp(24), dp(32))
         }
-        // Внешняя прокрутка отключается на главном экране: там две
-        // половины со своей жизнью, и внешний скролл дёргал бы обе.
-        val outer = ScrollView(this).apply {
-            setBackgroundColor(SURFACE_BASE)
-            isFillViewport = true
-            addView(root, LinearLayout.LayoutParams(-1, -2))
-            setOnTouchListener { _, _ -> lockOuterScroll }
-        }
-        outerScroll = outer
-        setContentView(outer)
+        mount(scrollable = true)
 
         // Случайный выход из заметки - самая обидная потеря, и она
         // случается постоянно. Но спрашивать ВСЕГДА значит раздражать:
@@ -176,6 +182,34 @@ class VaultActivity : AppCompatActivity() {
             VaultSession.key()?.let { repo = VaultRepo(this, it); images = VaultImages(this, it) }
             showNotes()
         } else showEntrance()
+    }
+
+    /**
+     * Пересобрать способ показа: жёсткий каркас или прокрутка.
+     *
+     * Каркас нужен главному экрану: только там вес списка обязан
+     * ограничиваться высотой окна. Внутри прокрутки такое ограничение
+     * недостижимо в принципе.
+     */
+    private fun mount(scrollable: Boolean) {
+        if (this.scrollable == scrollable && root.parent != null) return
+        this.scrollable = scrollable
+        // Без ведущей скобки на новой строке: Kotlin прочитал бы её как
+        // вызов scrollable(...) - предыдущая строка кончается значением.
+        val host = root.parent as? android.view.ViewGroup
+        host?.removeView(root)
+        if (scrollable) {
+            setContentView(ScrollView(this).apply {
+                setBackgroundColor(SURFACE_BASE)
+                isFillViewport = true
+                addView(root, FrameLayout.LayoutParams(-1, -2))
+            })
+        } else {
+            setContentView(FrameLayout(this).apply {
+                setBackgroundColor(SURFACE_BASE)
+                addView(root, FrameLayout.LayoutParams(-1, -1))
+            })
+        }
     }
 
     /**
@@ -216,8 +250,7 @@ class VaultActivity : AppCompatActivity() {
     // ------------------------------------------------------------------- вход
 
     private fun showEntrance() {
-        lockOuterScroll = false
-        root.layoutParams = FrameLayout.LayoutParams(-1, -2)
+        mount(scrollable = true)
         screen = Screen.ENTRANCE
         root.removeAllViews()
         title("Тайник")
@@ -276,8 +309,7 @@ class VaultActivity : AppCompatActivity() {
     // --------------------------------------------------------------- создание
 
     private fun showCreate() {
-        lockOuterScroll = false
-        root.layoutParams = FrameLayout.LayoutParams(-1, -2)
+        mount(scrollable = true)
         screen = Screen.CREATE
         root.removeAllViews()
         title("Новый тайник")
@@ -407,25 +439,9 @@ class VaultActivity : AppCompatActivity() {
         editor = null
         preview = false
         openNoteId = 0L
-        lockOuterScroll = true
-        // Колонке нужна ТОЧНАЯ высота окна, а не match_parent.
-        //
-        // Родитель - ScrollView, и он меряет содержимое "сколько угодно":
-        // при match_parent вес списка не ограничивается ничем, список
-        // растягивается на всё содержимое и уносит корни за нижний край.
-        // Реальная высота окна известна только после разметки, поэтому
-        // ставим её в post.
-        root.layoutParams = FrameLayout.LayoutParams(-1, -2)
-        outerScroll?.let { sc ->
-            sc.post {
-                if (screen == Screen.NOTES && sc.height > 0) {
-                    root.layoutParams = FrameLayout.LayoutParams(-1, sc.height)
-                    root.requestLayout()
-                }
-            }
-        }
+        mount(scrollable = false)
         root.removeAllViews()
-        root.setPadding(dp(16), dp(20), dp(16), dp(10))
+        root.setPadding(dp(16), dp(16), dp(16), dp(8))
         val r = repo ?: return
         pendingTag?.let { activeTag = it; pendingTag = null }
 
@@ -517,7 +533,7 @@ class VaultActivity : AppCompatActivity() {
         val rootsHint = TextView(this).apply {
             textSize = 11f
             setTextColor(0xFF7A7A88.toInt())
-            text = "Корни: классы заметок. Живое слева · жила — отбор, узелок — заметка"
+            text = "Корни · жила — отбор класса, узелок — заметка"
             setPadding(dp(2), 0, 0, dp(4))
         }
         root.addView(rootsHint)
@@ -526,7 +542,7 @@ class VaultActivity : AppCompatActivity() {
         // ширину телефона - это по восемь точек на жилу, каша при любом
         // приближении. Прокрутка - одно движение и ничего не теряется.
         val rootsView = VaultRootsView(this)
-        val rootsHeight = (resources.displayMetrics.heightPixels * 0.26f).toInt()
+        val rootsHeight = (resources.displayMetrics.heightPixels * 0.23f).toInt()
         val rootsScroll = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
             addView(rootsView, FrameLayout.LayoutParams(-2, rootsHeight))
@@ -760,8 +776,7 @@ class VaultActivity : AppCompatActivity() {
     private fun drawPage(text: String, top: List<String> = emptyList()) {
         if (preview) { drawPreview(text, top); return }
         screen = Screen.PAGE
-        lockOuterScroll = false
-        root.layoutParams = FrameLayout.LayoutParams(-1, -2)
+        mount(scrollable = true)
         root.removeAllViews()
         val r = repo ?: return
         val noteId = openNoteId
@@ -976,8 +991,7 @@ class VaultActivity : AppCompatActivity() {
      */
     private fun drawPreview(text: String, top: List<String>) {
         screen = Screen.PREVIEW
-        lockOuterScroll = false
-        root.layoutParams = FrameLayout.LayoutParams(-1, -2)
+        mount(scrollable = true)
         root.removeAllViews()
         val noteId = openNoteId
         val im = images
@@ -1068,8 +1082,7 @@ class VaultActivity : AppCompatActivity() {
      * всё" — и поэтому их откатом не пользуются.
      */
     private fun showHistory(noteId: Long, idx: Int) {
-        lockOuterScroll = false
-        root.layoutParams = FrameLayout.LayoutParams(-1, -2)
+        mount(scrollable = true)
         val r = repo ?: return
         screen = Screen.HISTORY
         histNoteId = noteId
@@ -1252,8 +1265,7 @@ class VaultActivity : AppCompatActivity() {
      * бы жесты по своим краям, а картинка должна занимать всё.
      */
     private fun showImage(id: String) {
-        lockOuterScroll = false
-        root.layoutParams = FrameLayout.LayoutParams(-1, -2)
+        mount(scrollable = true)
         val im = images ?: return
         val bmp = im.load(id)
         if (bmp == null) { toast("Картинка недоступна"); return }
@@ -1356,8 +1368,7 @@ class VaultActivity : AppCompatActivity() {
      * чтобы список не был стеной одинаковых строк.
      */
     private fun showTrails(noteId: Long, idx: Int) {
-        lockOuterScroll = false
-        root.layoutParams = FrameLayout.LayoutParams(-1, -2)
+        mount(scrollable = true)
         val r = repo ?: return
         screen = Screen.TRAILS
         histNoteId = noteId
@@ -1443,8 +1454,7 @@ class VaultActivity : AppCompatActivity() {
      * просто красивая, она рабочий указатель.
      */
     private fun showRoots() {
-        lockOuterScroll = false
-        root.layoutParams = FrameLayout.LayoutParams(-1, -2)
+        mount(scrollable = true)
         val r = repo ?: return
         screen = Screen.ROOTS
         root.removeAllViews()
