@@ -408,9 +408,22 @@ class VaultActivity : AppCompatActivity() {
         preview = false
         openNoteId = 0L
         lockOuterScroll = true
-        // Колонка на весь экран: без этого вес списка не от чего считать.
-        // Параметры именно FrameLayout - родитель ScrollView.
-        root.layoutParams = FrameLayout.LayoutParams(-1, -1)
+        // Колонке нужна ТОЧНАЯ высота окна, а не match_parent.
+        //
+        // Родитель - ScrollView, и он меряет содержимое "сколько угодно":
+        // при match_parent вес списка не ограничивается ничем, список
+        // растягивается на всё содержимое и уносит корни за нижний край.
+        // Реальная высота окна известна только после разметки, поэтому
+        // ставим её в post.
+        root.layoutParams = FrameLayout.LayoutParams(-1, -2)
+        outerScroll?.let { sc ->
+            sc.post {
+                if (screen == Screen.NOTES && sc.height > 0) {
+                    root.layoutParams = FrameLayout.LayoutParams(-1, sc.height)
+                    root.requestLayout()
+                }
+            }
+        }
         root.removeAllViews()
         root.setPadding(dp(16), dp(20), dp(16), dp(10))
         val r = repo ?: return
@@ -419,7 +432,7 @@ class VaultActivity : AppCompatActivity() {
         title("Тайник")
 
         val q = EditText(this).apply {
-            hint = "Поиск по тексту, или #тег"
+            hint = "Поиск по тексту, или #класс"
             setText(query)
             textSize = 15f
             isSingleLine = true
@@ -446,7 +459,7 @@ class VaultActivity : AppCompatActivity() {
         }
 
         searchRow.addView(iconButton(VaultIcon.Kind.SEARCH, "Найти",
-            getColor(R.color.accent_violet_bright)) {
+            VaultIcon.tintFor(VaultIcon.Kind.SEARCH)) {
             if (!busy) runSearch(q.text.toString(), holder, status)
         })
 
@@ -504,7 +517,7 @@ class VaultActivity : AppCompatActivity() {
         val rootsHint = TextView(this).apply {
             textSize = 11f
             setTextColor(0xFF7A7A88.toInt())
-            text = "Корни · живое слева · тап по жиле — отбор, по узелку — заметка"
+            text = "Корни: классы заметок. Живое слева · жила — отбор, узелок — заметка"
             setPadding(dp(2), 0, 0, dp(4))
         }
         root.addView(rootsHint)
@@ -525,7 +538,7 @@ class VaultActivity : AppCompatActivity() {
         val bottom = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         root.addView(bottom, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(10) })
         bottom.addView(tabButton("Новая", VaultIcon.Kind.PLUS,
-            getColor(R.color.accent_violet_bright)) {
+            VaultIcon.tintFor(VaultIcon.Kind.PLUS)) {
             if (!busy) askText("Название заметки", "") { name ->
                 lifecycleScope.launch {
                     val id = r.createNote(if (name.isBlank()) "Без названия" else name)
@@ -534,10 +547,10 @@ class VaultActivity : AppCompatActivity() {
                 }
             }
         })
-        bottom.addView(tabButton("Корни", VaultIcon.Kind.ROOTS, 0xFF8FA8C8.toInt()) {
+        bottom.addView(tabButton("Корни", VaultIcon.Kind.ROOTS, VaultIcon.tintFor(VaultIcon.Kind.ROOTS)) {
             if (!busy) showRoots()
         })
-        bottom.addView(tabButton("Закрыть", VaultIcon.Kind.CLOSE, 0xFF8A8A98.toInt()) {
+        bottom.addView(tabButton("Закрыть", VaultIcon.Kind.CLOSE, VaultIcon.tintFor(VaultIcon.Kind.CLOSE)) {
             closeVault()
         })
 
@@ -591,7 +604,7 @@ class VaultActivity : AppCompatActivity() {
                     }
                 }
             } else {
-                rootsHint.text = "Корни пусты. Проставь тег заметке — он станет классом."
+                rootsHint.text = "Корней нет. Впиши классу имя в заметке — появится жила."
             }
         }
     }
@@ -805,13 +818,13 @@ class VaultActivity : AppCompatActivity() {
 
         val nav = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         root.addView(nav, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(10) })
-        nav.addView(tabButton("Назад", VaultIcon.Kind.PREV, 0xFFA9A4BC.toInt()) {
+        nav.addView(tabButton("Назад", VaultIcon.Kind.PREV, VaultIcon.tintFor(VaultIcon.Kind.PREV)) {
             if (openIdx > 0) leavePage { openNote(noteId, openIdx - 1) }
         })
-        nav.addView(tabButton("Вперёд", VaultIcon.Kind.NEXT, 0xFFA9A4BC.toInt()) {
+        nav.addView(tabButton("Вперёд", VaultIcon.Kind.NEXT, VaultIcon.tintFor(VaultIcon.Kind.NEXT)) {
             if (openIdx + 1 < openPages) leavePage { openNote(noteId, openIdx + 1) }
         })
-        nav.addView(tabButton("Стр.", VaultIcon.Kind.PAGE_PLUS, 0xFF8FA8C8.toInt()) {
+        nav.addView(tabButton("Стр.", VaultIcon.Kind.PAGE_PLUS, VaultIcon.tintFor(VaultIcon.Kind.PAGE_PLUS)) {
             leavePage {
                 lifecycleScope.launch {
                     val idx = r.addPage(noteId)
@@ -824,7 +837,7 @@ class VaultActivity : AppCompatActivity() {
         // Одна кнопка вместо памяти о числе решёток и без ухода от
         // клавиатуры. Разметка остаётся обычным текстом.
         nav.addView(tabButton("Заголовок", VaultIcon.Kind.HEADING,
-            getColor(R.color.accent_violet_bright)) {
+            VaultIcon.tintFor(VaultIcon.Kind.HEADING)) {
             val (text2, cur) = VaultText.cycleHeading(e.text.toString(), e.selectionEnd)
             e.setText(text2)
             e.setSelection(cur.coerceIn(0, text2.length))
@@ -839,7 +852,7 @@ class VaultActivity : AppCompatActivity() {
         }
         val tools = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         root.addView(tools, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(6) })
-        tools.addView(tabButton("Фото", VaultIcon.Kind.IMAGE, 0xFF8FA8C8.toInt()) {
+        tools.addView(tabButton("Фото", VaultIcon.Kind.IMAGE, VaultIcon.tintFor(VaultIcon.Kind.IMAGE)) {
             // Метка вставляется отдельной строкой: в просмотре картинка
             // станет отдельным блоком, а не разорвёт предложение.
             pickImage.launch("image/*")
@@ -847,15 +860,15 @@ class VaultActivity : AppCompatActivity() {
         tools.addView(tabButton(
             if (preview) "Правка" else "Чтение",
             if (preview) VaultIcon.Kind.PENCIL else VaultIcon.Kind.EYE,
-            getColor(R.color.accent_violet_bright)) {
+            VaultIcon.tintFor(if (preview) VaultIcon.Kind.PENCIL else VaultIcon.Kind.EYE)) {
             preview = !preview
             leavePage { openNote(noteId, openIdx) }
         })
 
-        tools.addView(tabButton("Тропы", VaultIcon.Kind.TRAIL, 0xFFA9A4BC.toInt()) {
+        tools.addView(tabButton("Тропы", VaultIcon.Kind.TRAIL, VaultIcon.tintFor(VaultIcon.Kind.TRAIL)) {
             leavePage { showTrails(noteId, openIdx) }
         })
-        tools.addView(tabButton("Разделы", VaultIcon.Kind.LIST, 0xFFA9A4BC.toInt()) {
+        tools.addView(tabButton("Разделы", VaultIcon.Kind.LIST, VaultIcon.tintFor(VaultIcon.Kind.LIST)) {
             showOutline(e)
         })
 
@@ -1028,14 +1041,14 @@ class VaultActivity : AppCompatActivity() {
 
         val tools = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         root.addView(tools, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(6) })
-        tools.addView(tabButton("Назад", VaultIcon.Kind.PREV, 0xFFA9A4BC.toInt()) {
+        tools.addView(tabButton("Назад", VaultIcon.Kind.PREV, VaultIcon.tintFor(VaultIcon.Kind.PREV)) {
             if (openIdx > 0) openNote(noteId, openIdx - 1)
         })
-        tools.addView(tabButton("Вперёд", VaultIcon.Kind.NEXT, 0xFFA9A4BC.toInt()) {
+        tools.addView(tabButton("Вперёд", VaultIcon.Kind.NEXT, VaultIcon.tintFor(VaultIcon.Kind.NEXT)) {
             if (openIdx + 1 < openPages) openNote(noteId, openIdx + 1)
         })
         tools.addView(tabButton("Правка", VaultIcon.Kind.PENCIL,
-            getColor(R.color.accent_violet_bright)) {
+            VaultIcon.tintFor(VaultIcon.Kind.PENCIL)) {
             preview = false
             openNote(noteId, openIdx)
         })
@@ -1827,7 +1840,8 @@ class VaultActivity : AppCompatActivity() {
             textSize = if (level == LEVEL_DANGER) 15f else 16f
             if (level == LEVEL_DANGER) {
                 setCompoundDrawablesRelativeWithIntrinsicBounds(
-                    VaultIcon(VaultIcon.Kind.TRASH, danger, dp(18)), null, null, null)
+                    VaultIcon(VaultIcon.Kind.TRASH,
+                        VaultIcon.tintFor(VaultIcon.Kind.TRASH), dp(18)), null, null, null)
                 compoundDrawablePadding = dp(8)
             }
             gravity = Gravity.CENTER

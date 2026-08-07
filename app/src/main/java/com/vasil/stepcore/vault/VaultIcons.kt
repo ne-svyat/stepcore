@@ -32,8 +32,41 @@ class VaultIcon(
     private val kind: Kind,
     private val color: Int,
     private val sizePx: Int,
-    private val strokeRatio: Float = 0.085f,
+    private val strokeRatio: Float = 0.065f,
 ) : Drawable() {
+
+    companion object {
+        /**
+         * Свой цвет у каждой иконки.
+         *
+         * Одинаково серый набор читается медленнее: глаз ищет форму, а
+         * форма на двадцати точках почти неразличима. Цвет опознаётся
+         * боковым зрением раньше, чем очертание.
+         *
+         * Оттенки приглушённые и из одного семейства - тайник не должен
+         * стать пёстрым. Родственные действия делят тон: обе стрелки
+         * серые, все действия над текстом фиолетовые, опасное красное.
+         */
+        fun tintFor(kind: Kind): Int = when (kind) {
+            Kind.SEARCH -> 0xFFB9A6E8.toInt()
+            Kind.PLUS -> 0xFF9FD9A8.toInt()
+            Kind.ROOTS -> 0xFF8FC4D8.toInt()
+            Kind.CLOSE -> 0xFF9A94A8.toInt()
+            Kind.PENCIL -> 0xFFB9A6E8.toInt()
+            Kind.EYE -> 0xFF8FC4D8.toInt()
+            Kind.HEADING -> 0xFFB9A6E8.toInt()
+            Kind.TRASH -> 0xFFE08A94.toInt()
+            Kind.PREV -> 0xFF9A94A8.toInt()
+            Kind.NEXT -> 0xFF9A94A8.toInt()
+            Kind.PAGE_PLUS -> 0xFF9FD9A8.toInt()
+            Kind.IMAGE -> 0xFFE0C08A.toInt()
+            Kind.TRAIL -> 0xFFC8A6D8.toInt()
+            Kind.LIST -> 0xFF8FC4D8.toInt()
+            Kind.HISTORY -> 0xFFE0C08A.toInt()
+            Kind.TAG -> 0xFF9FD9A8.toInt()
+            Kind.JUMP -> 0xFF8FC4D8.toInt()
+        }
+    }
 
     enum class Kind {
         SEARCH, PLUS, ROOTS, CLOSE, PENCIL, EYE, HEADING, TRASH,
@@ -88,12 +121,14 @@ class VaultIcon(
             }
             Kind.CLOSE -> {
                 // Замок: дужка и тело. Закрытие тайника - не крестик.
-                path.moveTo(8f, 10f); path.lineTo(8f, 7.5f)
+                // Дужка НАД телом, без касания: касание линий на 20dp
+                // сливалось в пятно.
+                path.moveTo(8f, 9.5f); path.lineTo(8f, 7.5f)
                 path.quadTo(8f, 4.5f, 12f, 4.5f)
                 path.quadTo(16f, 4.5f, 16f, 7.5f)
-                path.lineTo(16f, 10f)
-                path.moveTo(5.5f, 10.5f); path.lineTo(18.5f, 10.5f)
-                path.lineTo(18.5f, 19.5f); path.lineTo(5.5f, 19.5f)
+                path.lineTo(16f, 9.5f)
+                path.moveTo(6f, 11f); path.lineTo(18f, 11f)
+                path.lineTo(18f, 19.5f); path.lineTo(6f, 19.5f)
                 path.close()
             }
             Kind.PENCIL -> {
@@ -113,18 +148,20 @@ class VaultIcon(
             Kind.NEXT -> { path.moveTo(9.5f, 5f); path.lineTo(16f, 12f); path.lineTo(9.5f, 19f) }
             // Новая страница: лист с загнутым углом и плюсом.
             Kind.PAGE_PLUS -> {
-                path.moveTo(5.5f, 3.5f); path.lineTo(13f, 3.5f); path.lineTo(18.5f, 9f)
-                path.lineTo(18.5f, 20.5f); path.lineTo(5.5f, 20.5f); path.close()
-                path.moveTo(13f, 3.5f); path.lineTo(13f, 9f); path.lineTo(18.5f, 9f)
-                path.moveTo(12f, 12f); path.lineTo(12f, 17.5f)
-                path.moveTo(9.2f, 14.7f); path.lineTo(14.8f, 14.7f)
+                // Лист без загнутого угла: угол на мелком размере
+                // превращался в кляксу поверх плюса.
+                path.moveTo(6f, 4f); path.lineTo(18f, 4f)
+                path.lineTo(18f, 20f); path.lineTo(6f, 20f); path.close()
+                path.moveTo(12f, 9f); path.lineTo(12f, 16f)
+                path.moveTo(8.5f, 12.5f); path.lineTo(15.5f, 12.5f)
             }
             Kind.IMAGE -> {
-                path.moveTo(3.5f, 5f); path.lineTo(20.5f, 5f)
-                path.lineTo(20.5f, 19f); path.lineTo(3.5f, 19f); path.close()
-                path.moveTo(3.5f, 16f); path.lineTo(9f, 10.5f); path.lineTo(14f, 16f)
-                path.moveTo(13f, 15f); path.lineTo(16f, 12f); path.lineTo(20.5f, 16.5f)
-                canvas.drawCircle(15.5f, 9f, 1.6f, paint)
+                // Один силуэт горы вместо двух пересекающихся.
+                path.moveTo(4f, 5f); path.lineTo(20f, 5f)
+                path.lineTo(20f, 19f); path.lineTo(4f, 19f); path.close()
+                path.moveTo(4f, 16.5f); path.lineTo(9.5f, 10.5f)
+                path.lineTo(14f, 15f); path.lineTo(16.5f, 12.5f); path.lineTo(20f, 16.5f)
+                canvas.drawCircle(15.5f, 8.5f, 1.4f, paint)
             }
             // Тропа: пунктирная дорожка между двумя точками.
             Kind.TRAIL -> {
@@ -141,10 +178,10 @@ class VaultIcon(
             }
             // История: часы со стрелкой назад.
             Kind.HISTORY -> {
-                canvas.drawCircle(12f, 12.5f, 7.5f, paint)
-                path.moveTo(12f, 8f); path.lineTo(12f, 12.5f); path.lineTo(15.5f, 14.5f)
-                path.moveTo(4.5f, 8.5f); path.lineTo(4.5f, 4.5f)
-                path.moveTo(4.5f, 8.5f); path.lineTo(8.5f, 8.5f)
+                // Стрелка возврата вынесена за круг, а не поверх него.
+                canvas.drawCircle(13f, 13f, 6.5f, paint)
+                path.moveTo(13f, 9.5f); path.lineTo(13f, 13f); path.lineTo(16f, 14.5f)
+                path.moveTo(4f, 5f); path.lineTo(4f, 9f); path.lineTo(8f, 9f)
             }
             // Заголовок: буква H со ступенькой сверху - уровень.
             Kind.HEADING -> {
@@ -158,13 +195,11 @@ class VaultIcon(
             // Удаление: корзина с крышкой. Единственная иконка, которую
             // человек обязан узнать НЕ читая подписи.
             Kind.TRASH -> {
-                path.moveTo(4f, 6.5f); path.lineTo(20f, 6.5f)
+                path.moveTo(4.5f, 6.5f); path.lineTo(19.5f, 6.5f)
                 path.moveTo(9.5f, 6.5f); path.lineTo(9.5f, 4.5f)
                 path.lineTo(14.5f, 4.5f); path.lineTo(14.5f, 6.5f)
-                path.moveTo(6.5f, 6.5f); path.lineTo(7.5f, 20f)
-                path.lineTo(16.5f, 20f); path.lineTo(17.5f, 6.5f)
-                path.moveTo(10f, 10f); path.lineTo(10.5f, 17f)
-                path.moveTo(14f, 10f); path.lineTo(13.5f, 17f)
+                path.moveTo(7f, 9f); path.lineTo(8f, 20f)
+                path.lineTo(16f, 20f); path.lineTo(17f, 9f)
             }
             Kind.TAG -> {
                 path.moveTo(3.5f, 11f); path.lineTo(11f, 3.5f); path.lineTo(20.5f, 3.5f)
