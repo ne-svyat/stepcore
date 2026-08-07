@@ -12,6 +12,7 @@ import android.view.WindowManager
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -462,7 +463,7 @@ class VaultActivity : AppCompatActivity() {
         val rootsHeight = (resources.displayMetrics.heightPixels * 0.26f).toInt()
         val rootsScroll = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
-            addView(rootsView, LinearLayout.LayoutParams(-1, rootsHeight))
+            addView(rootsView, FrameLayout.LayoutParams(-1, rootsHeight))
         }
         root.addView(rootsScroll, LinearLayout.LayoutParams(-1, rootsHeight))
 
@@ -502,8 +503,18 @@ class VaultActivity : AppCompatActivity() {
                 // самое нужное могло оказаться в конце.
                 val ordered = list.sortedByDescending { it.heat }
                 // Ширина под число классов: жила уже 56dp читается плохо.
+                //
+                // ПАРАМЕТРЫ ИМЕННО FrameLayout: HorizontalScrollView его
+                // наследник и при разметке приводит параметры ребёнка к
+                // своему типу. LinearLayout.LayoutParams здесь роняет
+                // приложение - и роняет вместе со службой шагомера.
+                //
+                // Ловушка в том, что addView(view, params) молча подменяет
+                // чужие параметры на правильные, а прямое присваивание -
+                // нет. Один и тот же код в двух формах ведёт себя
+                // по-разному.
                 val need = dp(56) * ordered.size + dp(24)
-                rootsView.layoutParams = LinearLayout.LayoutParams(
+                rootsView.layoutParams = FrameLayout.LayoutParams(
                     maxOf(need, resources.displayMetrics.widthPixels - dp(32)),
                     rootsHeight
                 )
