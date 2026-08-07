@@ -76,7 +76,7 @@ class VaultActivity : AppCompatActivity() {
      * плодить записи в списке задач, которых у скрытого модуля быть не
      * должно.
      */
-    private enum class Screen { ENTRANCE, CREATE, NOTES, PAGE, PREVIEW, HISTORY, IMAGE, TRAILS, ROOTS }
+    private enum class Screen { ENTRANCE, CREATE, NOTES, PAGE, PREVIEW, HISTORY, IMAGE, TRAILS, ROOTS, ARCHIVE }
     private var screen = Screen.ENTRANCE
     private var histNoteId = 0L
     private var histIdx = 0
@@ -105,6 +105,32 @@ class VaultActivity : AppCompatActivity() {
      * на её класс: карта следует за работой, а не за вчерашним рейтингом.
      */
     private var focusTag: String? = null
+
+    /**
+     * Выбранные заметки. Пустой набор - режим выбора выключен.
+     *
+     * Один механизм на две задачи: выгрузить выбранное и удалить
+     * выбранное. Заводить для них разные способы выделения значило бы
+     * заставлять человека помнить два.
+     */
+    private val chosen = LinkedHashSet<Long>()
+    private var selecting = false
+
+    /** Что делаем после того, как система даст файл. */
+    private var pendingExport: ByteArray? = null
+
+    private val createFile =
+        registerForActivityResult(ActivityResultContracts.CreateDocument(
+            "application/octet-stream")) { uri ->
+            val data = pendingExport
+            pendingExport = null
+            if (uri != null && data != null) writeExport(uri, data)
+        }
+
+    private val pickFile =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri != null) readImport(uri)
+        }
 
     /** Следующее открытие заметки - чтение, а не продолжение правки. */
     private var openingForRead = false
@@ -549,6 +575,30 @@ class VaultActivity : AppCompatActivity() {
         }
         root.addView(rootsScroll, LinearLayout.LayoutParams(-1, rootsHeight))
 
+        if (selecting) {
+            // В режиме выбора нижняя панель меняется целиком: показывать
+            // рядом "новая заметка" и "удалить выбранные" опасно.
+            val selRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            root.addView(selRow, LinearLayout.LayoutParams(-1, -2).also {
+                it.topMargin = dp(10)
+            })
+            selRow.addView(tabButton("Выгрузить " + chosen.size,
+                VaultIcon.Kind.JUMP, VaultIcon.tintFor(VaultIcon.Kind.JUMP)) {
+                askExport(chosen.toList())
+            })
+            selRow.addView(tabButton("Удалить " + chosen.size,
+                VaultIcon.Kind.TRASH, VaultIcon.tintFor(VaultIcon.Kind.TRASH)) {
+                askDeleteMany(chosen.toList())
+            })
+            selRow.addView(tabButton("Отмена", VaultIcon.Kind.CLOSE,
+                VaultIcon.tintFor(VaultIcon.Kind.CLOSE)) {
+                selecting = false
+                chosen.clear()
+                showNotes()
+            })
+            return
+        }
+
         // Нижняя панель только навигационная: поиск уехал наверх к полю.
         // Оттенок сообщает ТИП действия - создание, просмотр, уход.
         val bottom = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -565,6 +615,10 @@ class VaultActivity : AppCompatActivity() {
         })
         bottom.addView(tabButton("Корни", VaultIcon.Kind.ROOTS, VaultIcon.tintFor(VaultIcon.Kind.ROOTS)) {
             if (!busy) showRoots()
+        })
+        bottom.addView(tabButton("Архив", VaultIcon.Kind.JUMP,
+            VaultIcon.tintFor(VaultIcon.Kind.JUMP)) {
+            if (!busy) showArchive()
         })
         bottom.addView(tabButton("Закрыть", VaultIcon.Kind.CLOSE, VaultIcon.tintFor(VaultIcon.Kind.CLOSE)) {
             closeVault()
@@ -642,6 +696,7 @@ class VaultActivity : AppCompatActivity() {
                       else "Заметок: " + list.size
         for (n in list) {
             val tags = if (n.tags.isEmpty()) "" else "\n#" + n.tags.joinToString(" #")
+            val mark = if (!selecting) "" else if (n.id in chosen) "◉  " else "○  "
             // Полоса слева - тон первого класса. Список перестаёт быть
             // стеной одинаковых прямоугольников: тему видно боковым
             // зрением, ещё не читая названий.
@@ -654,13 +709,28 @@ class VaultActivity : AppCompatActivity() {
                 }
             }
             holder.addView(TextView(this).apply {
-                text = n.title + "\n" + n.pageCount + " стр." + tags
+                text = mark + n.title + "\n" + n.pageCount + " стр." + tags
                 textSize = 17f
                 setTextColor(0xFFEEEEEE.toInt())
                 background = row
                 setPadding(dp(14), dp(12), dp(14), dp(12))
                 isClickable = true
-                setOnClickListener { openForRead(n.id, 0) }
+                // Долгое нажатие включает выбор - привычный жест списка.
+                // Обычный тап при этом продолжает открывать заметку, а в
+                // режиме выбора начинает ставить и снимать отметку.
+                setOnLongClickListener {
+                    selecting = true
+                    chosen.add(n.id)
+                    showNotes()
+                    true
+                }
+                setOnClickListener {
+                    if (selecting) {
+                        if (!chosen.remove(n.id)) chosen.add(n.id)
+                        if (chosen.isEmpty()) selecting = false
+                        showNotes()
+                    } else openForRead(n.id, 0)
+                }
                 if (hue != null) {
                     val bar = android.text.SpannableString(text)
                     setText(bar)
@@ -1209,6 +1279,8 @@ class VaultActivity : AppCompatActivity() {
         when (screen) {
             Screen.HISTORY -> openNote(histNoteId, histIdx)
 
+            Screen.ARCHIVE -> showNotes()
+
             Screen.ROOTS -> showNotes()
 
             Screen.TRAILS -> openNote(histNoteId, histIdx)
@@ -1617,6 +1689,219 @@ class VaultActivity : AppCompatActivity() {
         }
         t.layoutParams = LinearLayout.LayoutParams(-2, dp(34)).also { it.marginEnd = dp(6) }
         return t
+    }
+
+    /**
+     * Экран архива: выгрузка и загрузка.
+     *
+     * Здесь же прямым текстом сказано главное: архив тайника и бэкап
+     * StepCore - РАЗНЫЕ файлы, и переносить их надо по отдельности.
+     * Это не мелкий шрифт: человек, потерявший телефон с одним из двух,
+     * узнает об этом слишком поздно.
+     */
+    private fun showArchive() {
+        mount(scrollable = true)
+        screen = Screen.ARCHIVE
+        root.removeAllViews()
+        root.setPadding(dp(24), dp(24), dp(24), dp(32))
+        editor = null
+        title("Архив тайника", "Заметки, классы и страницы одним файлом")
+
+        dim("Файл выгружается ТОЛЬКО зашифрованным. Без ключа он бесполезен — " +
+            "это свойство файла, а не обещание.")
+
+        val warn = TextView(this).apply {
+            text = "Архив тайника и бэкап StepCore — разные файлы.\n\n" +
+                "Бэкап шагомера НЕ содержит заметок: иначе пароль тайника " +
+                "обходился бы через него. Переносить их надо по отдельности, " +
+                "и восстановить одно из другого невозможно."
+            textSize = 14f
+            setTextColor(0xFFE0C08A.toInt())
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(9).toFloat()
+                setColor(SURFACE_SUNKEN)
+                setStroke(dp(1), 0x55E0C08A)
+            }
+        }
+        root.addView(warn, LinearLayout.LayoutParams(-1, -2).also { it.bottomMargin = dp(16) })
+
+        button("Выгрузить все заметки").setOnClickListener { askExport(emptyList()) }
+        secondaryButton("Загрузить из файла").setOnClickListener {
+            pickFile.launch(arrayOf("application/octet-stream", "*/*"))
+        }
+        gap()
+        dim("Выбрать отдельные заметки: долгое нажатие на заметку в списке.")
+        secondaryButton("←  К списку заметок").setOnClickListener { goBack() }
+    }
+
+    /**
+     * Спросить, чем закрыть архив.
+     *
+     * Два способа РАЗЛИЧАЮТСЯ поведением, а не галочкой "я понял":
+     * ключом тайника - ничего вводить не надо, но файл откроется только
+     * здесь; своим паролем - надо ввести дважды и отличный от пароля
+     * тайника, зато откроется где угодно. Разное поведение запоминается,
+     * ритуал подтверждения - нет.
+     */
+    private fun askExport(ids: List<Long>) {
+        val r = repo ?: return
+        val what = if (ids.isEmpty()) "все заметки" else "заметок: " + ids.size
+        AlertDialog.Builder(this)
+            .setTitle("Чем закрыть архив?")
+            .setItems(arrayOf(
+                "Ключом этого тайника — откроется только здесь",
+                "Своим паролем — откроется где угодно"
+            )) { _, which ->
+                if (which == 0) doExport(r, ids, null)
+                else askOwnPassword { pw -> doExport(r, ids, pw) }
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+        toast("Выгружаю " + what)
+    }
+
+    /** Свой пароль файла: дважды и обязательно не как у тайника. */
+    private fun askOwnPassword(done: (CharArray) -> Unit) {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), dp(8))
+        }
+        val p1 = EditText(this).apply {
+            hint = "Пароль файла"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
+        val p2 = EditText(this).apply {
+            hint = "Ещё раз"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
+        box.addView(p1)
+        box.addView(p2)
+        box.addView(TextView(this).apply {
+            text = "Этот файл НЕ откроется паролем тайника. Забудешь пароль " +
+                "файла — архив потерян."
+            textSize = 13f
+            setTextColor(0xFFE0C08A.toInt())
+            setPadding(0, dp(10), 0, 0)
+        })
+        AlertDialog.Builder(this)
+            .setTitle("Пароль для файла")
+            .setView(box)
+            .setNegativeButton("Отмена", null)
+            .setPositiveButton("Дальше") { _, _ ->
+                val a1 = CharArray(p1.text.length).also { p1.text.getChars(0, p1.text.length, it, 0) }
+                val a2 = CharArray(p2.text.length).also { p2.text.getChars(0, p2.text.length, it, 0) }
+                val problem = VaultCrypto.checkSecret(a1)
+                    ?: if (!a1.contentEquals(a2)) "Пароли не совпадают" else null
+                if (problem != null) toast(problem) else done(a1)
+            }
+            .show()
+    }
+
+    private fun doExport(r: VaultRepo, ids: List<Long>, ownPassword: CharArray?) {
+        busy = true
+        toast("Собираю архив…")
+        lifecycleScope.launch {
+            val data = withContext(Dispatchers.Default) {
+                try {
+                    val archive = r.collect(ids)
+                    val salt = VaultCrypto.randomBytes(VaultCrypto.SALT_LEN)
+                    val n = VaultCrypto.calibrateN(1500L)
+                    if (ownPassword == null) {
+                        val key = VaultSession.key() ?: return@withContext null
+                        VaultArchive.seal(archive, VaultArchive.Lock.BY_VAULT, key, n, salt)
+                    } else {
+                        val key = VaultArchive.keyFromPassword(ownPassword, salt, n)
+                        try {
+                            VaultArchive.seal(archive, VaultArchive.Lock.BY_PASSWORD, key, n, salt)
+                        } finally {
+                            key.fill(0); ownPassword.fill('\u0000')
+                        }
+                    }
+                } catch (e: Exception) {
+                    null
+                }
+            }
+            busy = false
+            if (data == null) { toast("Не удалось собрать архив"); return@launch }
+            pendingExport = data
+            createFile.launch("vault-" + System.currentTimeMillis() + ".scva")
+        }
+    }
+
+    private fun writeExport(uri: android.net.Uri, data: ByteArray) {
+        try {
+            contentResolver.openOutputStream(uri)?.use { it.write(data) }
+            toast("Архив сохранён")
+        } catch (e: Exception) {
+            toast("Не удалось записать файл")
+        }
+    }
+
+    private fun readImport(uri: android.net.Uri) {
+        val r = repo ?: return
+        busy = true
+        lifecycleScope.launch {
+            val raw = try {
+                withContext(Dispatchers.Default) {
+                    contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                }
+            } catch (e: Exception) { null }
+            val head = raw?.let { VaultArchive.head(it) }
+            busy = false
+            if (head == null) { toast("Это не архив тайника"); return@launch }
+            if (head.lock == VaultArchive.Lock.BY_VAULT) {
+                val key = VaultSession.key()
+                if (key == null) { toast("Тайник закрыт"); return@launch }
+                absorbArchive(r, head, key)
+            } else {
+                askText("Пароль файла", "") { pw ->
+                    lifecycleScope.launch {
+                        val key = withContext(Dispatchers.Default) {
+                            VaultArchive.keyFromPassword(pw.toCharArray(), head.salt, head.n)
+                        }
+                        absorbArchive(r, head, key)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun absorbArchive(r: VaultRepo, head: VaultArchive.Head, key: ByteArray) {
+        busy = true
+        lifecycleScope.launch {
+            val added = withContext(Dispatchers.Default) {
+                val archive = VaultArchive.open(head, key) ?: return@withContext -1
+                r.absorb(archive)
+            }
+            busy = false
+            if (added < 0) toast("Ключ не подходит к этому файлу")
+            else {
+                toast("Добавлено заметок: " + added)
+                showNotes()
+            }
+        }
+    }
+
+    /** Удалить выбранные. Подтверждение показывает ЧИСЛО, а не список. */
+    private fun askDeleteMany(ids: List<Long>) {
+        val r = repo ?: return
+        val im = images ?: return
+        AlertDialog.Builder(this)
+            .setTitle("Удалить заметок: " + ids.size + "?")
+            .setMessage("Это навсегда. Восстановить будет нечем: копий нет, " +
+                "корзины нет, картинки этих заметок тоже стираются.")
+            .setNegativeButton("Отмена", null)
+            .setPositiveButton("Удалить") { _, _ ->
+                lifecycleScope.launch {
+                    for (id in ids) r.deleteNote(id, im)
+                    selecting = false
+                    chosen.clear()
+                    toast("Удалено: " + ids.size)
+                    showNotes()
+                }
+            }
+            .show()
     }
 
     /** Выделенный кусок текста версии, либо пусто. */

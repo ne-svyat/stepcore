@@ -463,6 +463,41 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
         return list to together
     }
 
+    /** Собрать заметки в архив. Пустой список означает «все». */
+    suspend fun collect(ids: List<Long>): VaultArchive.Archive {
+        val heads = notes().filter { ids.isEmpty() || it.id in ids }
+        val out = ArrayList<VaultArchive.Note>(heads.size)
+        for (h in heads) {
+            val pages = ArrayList<String>(h.pageCount)
+            for (i in 0 until h.pageCount) pages.add(readPage(h.id, i) ?: "")
+            out.add(VaultArchive.Note(h.title, h.tags, pages))
+        }
+        return VaultArchive.Archive(System.currentTimeMillis(), out)
+    }
+
+    /**
+     * Влить архив в этот тайник.
+     *
+     * Заметки ДОБАВЛЯЮТСЯ, а не заменяют существующие: импорт не должен
+     * стирать то, что уже есть. Совпадение названий - не повод считать
+     * заметки одной и той же.
+     *
+     * @return сколько заметок добавлено.
+     */
+    suspend fun absorb(a: VaultArchive.Archive): Int {
+        var added = 0
+        for (n in a.notes) {
+            val id = createNote(if (n.title.isBlank()) "Без названия" else n.title)
+            if (n.tags.isNotEmpty()) setTags(id, VaultText.formatTags(n.tags))
+            for ((i, p) in n.pages.withIndex()) {
+                if (i >= VaultRepo.MAX_PAGES) break
+                writePage(id, i, if (p.length > MAX_PAGE_CHARS) p.take(MAX_PAGE_CHARS) else p)
+            }
+            added++
+        }
+        return added
+    }
+
     /** Один снимок страницы: что было и когда. */
     class Snap(val id: Long, val ms: Long, val text: String, val fork: Boolean)
 
