@@ -36,7 +36,7 @@ class VaultIcon(
 ) : Drawable() {
 
     enum class Kind {
-        SEARCH, PLUS, ROOTS, CLOSE, PENCIL, EYE, HEADING,
+        SEARCH, PLUS, ROOTS, CLOSE, PENCIL, EYE, HEADING, TRASH,
         PREV, NEXT, PAGE_PLUS, IMAGE, TRAIL, LIST, HISTORY, TAG, JUMP
     }
 
@@ -154,6 +154,17 @@ class VaultIcon(
                 path.moveTo(16.5f, 9f); path.lineTo(19.5f, 6.5f)
                 path.lineTo(19.5f, 13f)
                 path.moveTo(17.5f, 13f); path.lineTo(21.5f, 13f)
+            }
+            // Удаление: корзина с крышкой. Единственная иконка, которую
+            // человек обязан узнать НЕ читая подписи.
+            Kind.TRASH -> {
+                path.moveTo(4f, 6.5f); path.lineTo(20f, 6.5f)
+                path.moveTo(9.5f, 6.5f); path.lineTo(9.5f, 4.5f)
+                path.lineTo(14.5f, 4.5f); path.lineTo(14.5f, 6.5f)
+                path.moveTo(6.5f, 6.5f); path.lineTo(7.5f, 20f)
+                path.lineTo(16.5f, 20f); path.lineTo(17.5f, 6.5f)
+                path.moveTo(10f, 10f); path.lineTo(10.5f, 17f)
+                path.moveTo(14f, 10f); path.lineTo(13.5f, 17f)
             }
             Kind.TAG -> {
                 path.moveTo(3.5f, 11f); path.lineTo(11f, 3.5f); path.lineTo(20.5f, 3.5f)

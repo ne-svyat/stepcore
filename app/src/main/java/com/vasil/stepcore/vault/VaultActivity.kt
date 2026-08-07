@@ -217,6 +217,7 @@ class VaultActivity : AppCompatActivity() {
 
     private fun showEntrance() {
         lockOuterScroll = false
+        root.layoutParams = FrameLayout.LayoutParams(-1, -2)
         screen = Screen.ENTRANCE
         root.removeAllViews()
         title("Тайник")
@@ -276,6 +277,7 @@ class VaultActivity : AppCompatActivity() {
 
     private fun showCreate() {
         lockOuterScroll = false
+        root.layoutParams = FrameLayout.LayoutParams(-1, -2)
         screen = Screen.CREATE
         root.removeAllViews()
         title("Новый тайник")
@@ -406,6 +408,9 @@ class VaultActivity : AppCompatActivity() {
         preview = false
         openNoteId = 0L
         lockOuterScroll = true
+        // Колонка на весь экран: без этого вес списка не от чего считать.
+        // Параметры именно FrameLayout - родитель ScrollView.
+        root.layoutParams = FrameLayout.LayoutParams(-1, -1)
         root.removeAllViews()
         root.setPadding(dp(16), dp(20), dp(16), dp(10))
         val r = repo ?: return
@@ -482,8 +487,12 @@ class VaultActivity : AppCompatActivity() {
             isFillViewport = false
             addView(holder, LinearLayout.LayoutParams(-1, -2))
         }
-        root.addView(listPane, LinearLayout.LayoutParams(-1,
-            (resources.displayMetrics.heightPixels * 0.34f).toInt()))
+        // Список ГИБКИЙ, а не в жёстких процентах экрана. С фиксированной
+        // долей появление строки фильтра выталкивало нижнюю панель за край:
+        // сумма высот переставала помещаться, а внешняя прокрутка здесь
+        // отключена. Теперь список сам отдаёт ровно столько места,
+        // сколько заняла новая строка.
+        root.addView(listPane, LinearLayout.LayoutParams(-1, 0, 1f))
 
         // Черта: две половины не должны сливаться в одно полотно.
         root.addView(View(this).apply {
@@ -739,6 +748,7 @@ class VaultActivity : AppCompatActivity() {
         if (preview) { drawPreview(text, top); return }
         screen = Screen.PAGE
         lockOuterScroll = false
+        root.layoutParams = FrameLayout.LayoutParams(-1, -2)
         root.removeAllViews()
         val r = repo ?: return
         val noteId = openNoteId
@@ -954,6 +964,7 @@ class VaultActivity : AppCompatActivity() {
     private fun drawPreview(text: String, top: List<String>) {
         screen = Screen.PREVIEW
         lockOuterScroll = false
+        root.layoutParams = FrameLayout.LayoutParams(-1, -2)
         root.removeAllViews()
         val noteId = openNoteId
         val im = images
@@ -1029,6 +1040,7 @@ class VaultActivity : AppCompatActivity() {
             openNote(noteId, openIdx)
         })
         secondaryButton("←  К списку заметок").setOnClickListener { showNotes() }
+        dangerButton("Удалить заметку").setOnClickListener { askDelete(noteId) }
     }
 
     /**
@@ -1044,6 +1056,7 @@ class VaultActivity : AppCompatActivity() {
      */
     private fun showHistory(noteId: Long, idx: Int) {
         lockOuterScroll = false
+        root.layoutParams = FrameLayout.LayoutParams(-1, -2)
         val r = repo ?: return
         screen = Screen.HISTORY
         histNoteId = noteId
@@ -1227,6 +1240,7 @@ class VaultActivity : AppCompatActivity() {
      */
     private fun showImage(id: String) {
         lockOuterScroll = false
+        root.layoutParams = FrameLayout.LayoutParams(-1, -2)
         val im = images ?: return
         val bmp = im.load(id)
         if (bmp == null) { toast("Картинка недоступна"); return }
@@ -1330,6 +1344,7 @@ class VaultActivity : AppCompatActivity() {
      */
     private fun showTrails(noteId: Long, idx: Int) {
         lockOuterScroll = false
+        root.layoutParams = FrameLayout.LayoutParams(-1, -2)
         val r = repo ?: return
         screen = Screen.TRAILS
         histNoteId = noteId
@@ -1416,6 +1431,7 @@ class VaultActivity : AppCompatActivity() {
      */
     private fun showRoots() {
         lockOuterScroll = false
+        root.layoutParams = FrameLayout.LayoutParams(-1, -2)
         val r = repo ?: return
         screen = Screen.ROOTS
         root.removeAllViews()
@@ -1809,6 +1825,11 @@ class VaultActivity : AppCompatActivity() {
         val b = Button(this).apply {
             text = label
             textSize = if (level == LEVEL_DANGER) 15f else 16f
+            if (level == LEVEL_DANGER) {
+                setCompoundDrawablesRelativeWithIntrinsicBounds(
+                    VaultIcon(VaultIcon.Kind.TRASH, danger, dp(18)), null, null, null)
+                compoundDrawablePadding = dp(8)
+            }
             gravity = Gravity.CENTER
             background = ripple
             stateListAnimator = null
