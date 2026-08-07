@@ -575,6 +575,9 @@ class VaultActivity : AppCompatActivity() {
         }
         root.addView(rootsScroll, LinearLayout.LayoutParams(-1, rootsHeight))
 
+        // Панель выбора СТРОИТСЯ ВМЕСТО обычной, но экран на этом не
+        // обрывается: раньше здесь стоял return, и вместе с панелью
+        // пропадали список и корни - их заполнение идёт ниже по коду.
         if (selecting) {
             // В режиме выбора нижняя панель меняется целиком: показывать
             // рядом "новая заметка" и "удалить выбранные" опасно.
@@ -596,8 +599,7 @@ class VaultActivity : AppCompatActivity() {
                 chosen.clear()
                 showNotes()
             })
-            return
-        }
+        } else {
 
         // Нижняя панель только навигационная: поиск уехал наверх к полю.
         // Оттенок сообщает ТИП действия - создание, просмотр, уход.
@@ -623,6 +625,7 @@ class VaultActivity : AppCompatActivity() {
         bottom.addView(tabButton("Закрыть", VaultIcon.Kind.CLOSE, VaultIcon.tintFor(VaultIcon.Kind.CLOSE)) {
             closeVault()
         })
+        }
 
         q.imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
         q.setOnEditorActionListener { _, _, _ ->
@@ -1608,12 +1611,20 @@ class VaultActivity : AppCompatActivity() {
         row.addView(chip(if (tags.isEmpty()) "＋ класс" else "＋", 0xFF8A8A98.toInt()) {
             val r = repo ?: return@chip
             askText("Классы через запятую", tags.joinToString(", ")) { v ->
-                lifecycleScope.launch {
-                    r.setTags(noteId, v)
-                    openTags = VaultText.parseTags(v)
-                    classHues = r.classes().first.associate { it.name to it.hue }
-                    toast("Классы сохранены")
-                    openNote(noteId, openIdx)
+                // СНАЧАЛА сохранить страницу, потом менять классы.
+                //
+                // Правка классов перечитывает заметку из базы, а текст в
+                // редакторе к этому моменту ещё не записан - он пропадал
+                // целиком при каждом добавлении класса. Уход со страницы
+                // всегда идёт через leavePage, и здесь тоже.
+                leavePage {
+                    lifecycleScope.launch {
+                        r.setTags(noteId, v)
+                        openTags = VaultText.parseTags(v)
+                        classHues = r.classes().first.associate { it.name to it.hue }
+                        toast("Классы сохранены")
+                        openNote(noteId, openIdx)
+                    }
                 }
             }
         })
@@ -1746,19 +1757,22 @@ class VaultActivity : AppCompatActivity() {
      */
     private fun askExport(ids: List<Long>) {
         val r = repo ?: return
-        val what = if (ids.isEmpty()) "все заметки" else "заметок: " + ids.size
+        val what = if (ids.isEmpty()) "Все заметки" else "Выбрано заметок: " + ids.size
         AlertDialog.Builder(this)
-            .setTitle("Чем закрыть архив?")
+            .setTitle(what + ". Чем закрыть архив?")
             .setItems(arrayOf(
-                "Ключом этого тайника — откроется только здесь",
-                "Своим паролем — откроется где угодно"
+                "Ключом этого тайника — откроется только в нём",
+                "Своим паролем — откроется в любом тайнике"
             )) { _, which ->
                 if (which == 0) doExport(r, ids, null)
                 else askOwnPassword { pw -> doExport(r, ids, pw) }
             }
             .setNegativeButton("Отмена", null)
+            // Касание мимо окна не должно ничего запускать. Раньше окно
+            // закрывалось, а уведомление о выгрузке показывалось сразу,
+            // не дожидаясь выбора - выглядело так, будто выгрузка пошла.
+            .setCancelable(false)
             .show()
-        toast("Выгружаю " + what)
     }
 
     /** Свой пароль файла: дважды и обязательно не как у тайника. */
@@ -1787,6 +1801,7 @@ class VaultActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle("Пароль для файла")
             .setView(box)
+            .setCancelable(false)
             .setNegativeButton("Отмена", null)
             .setPositiveButton("Дальше") { _, _ ->
                 val a1 = CharArray(p1.text.length).also { p1.text.getChars(0, p1.text.length, it, 0) }
