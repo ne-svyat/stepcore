@@ -463,7 +463,7 @@ class VaultActivity : AppCompatActivity() {
         val rootsHeight = (resources.displayMetrics.heightPixels * 0.26f).toInt()
         val rootsScroll = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
-            addView(rootsView, FrameLayout.LayoutParams(-1, rootsHeight))
+            addView(rootsView, FrameLayout.LayoutParams(-2, rootsHeight))
         }
         root.addView(rootsScroll, LinearLayout.LayoutParams(-1, rootsHeight))
 
@@ -502,22 +502,9 @@ class VaultActivity : AppCompatActivity() {
                 // Раньше сортировалось по тону - красиво, но бесполезно:
                 // самое нужное могло оказаться в конце.
                 val ordered = list.sortedByDescending { it.heat }
-                // Ширина под число классов: жила уже 56dp читается плохо.
-                //
-                // ПАРАМЕТРЫ ИМЕННО FrameLayout: HorizontalScrollView его
-                // наследник и при разметке приводит параметры ребёнка к
-                // своему типу. LinearLayout.LayoutParams здесь роняет
-                // приложение - и роняет вместе со службой шагомера.
-                //
-                // Ловушка в том, что addView(view, params) молча подменяет
-                // чужие параметры на правильные, а прямое присваивание -
-                // нет. Один и тот же код в двух формах ведёт себя
-                // по-разному.
-                val need = dp(56) * ordered.size + dp(24)
-                rootsView.layoutParams = FrameLayout.LayoutParams(
-                    maxOf(need, resources.displayMetrics.widthPixels - dp(32)),
-                    rootsHeight
-                )
+                // Ширину вьюха считает сама в onMeasure. Снаружи её
+                // задавать нельзя: прямое присваивание layoutParams роняет
+                // приложение, а match_parent внутри прокрутки даёт ноль.
                 rootsView.setData(
                     ordered.map { c ->
                         VaultRootsView.Strand(

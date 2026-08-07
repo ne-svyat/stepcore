@@ -57,13 +57,43 @@ class VaultRootsView(context: Context) : View(context) {
     }
     private val d = resources.displayMetrics.density
 
+    companion object {
+        /** Ширина на одну жилу. Уже - подпись класса не читается. */
+        const val LANE_DP = 56f
+    }
+
     fun setData(s: List<Strand>, w: List<Weave>,
                 pick: (String) -> Unit, note: (Long) -> Unit = {}) {
         strands = s
         weaves = w
         onPick = pick
         onNote = note
+        // requestLayout обязателен: от числа жил зависит НУЖНАЯ ШИРИНА,
+        // а её сообщает onMeasure. Без пересчёта разметки полотно
+        // останется прежнего размера.
+        requestLayout()
         invalidate()
+    }
+
+    /**
+     * Ширина считается здесь, а не снаружи.
+     *
+     * Внутри HorizontalScrollView ребёнок измеряется без ограничения по
+     * ширине, и View по умолчанию возвращает НОЛЬ. Вьюха с нулевой
+     * шириной выходит из отрисовки первой же строкой - экран выглядит
+     * пустым, хотя данные на месте.
+     *
+     * Раньше ширину задавали снаружи прямым присваиванием layoutParams -
+     * и это роняло приложение, потому что тип параметров не совпадал с
+     * контейнером. Правильное место для такого расчёта одно: onMeasure.
+     * Тогда снаружи вообще не надо знать, сколько места нужно.
+     */
+    override fun onMeasure(widthSpec: Int, heightSpec: Int) {
+        super.onMeasure(widthSpec, heightSpec)
+        // Жила уже 56dp читается плохо: подпись класса не помещается.
+        val need = (LANE_DP * d * strands.size + 24f * d).toInt()
+        val avail = MeasureSpec.getSize(widthSpec)
+        setMeasuredDimension(maxOf(need, avail), measuredHeight)
     }
 
     private fun xOf(i: Int): Float {
@@ -106,7 +136,15 @@ class VaultRootsView(context: Context) : View(context) {
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         hits.clear()
-        if (strands.isEmpty() || width == 0) return
+        if (width == 0) return
+        if (strands.isEmpty()) {
+            // Молчаливая пустота неотличима от поломки. Лучше сказать
+            // прямо, что смотреть не на что и почему.
+            textPaint.color = 0xFF7A7A88.toInt()
+            textPaint.textSize = 12f * d
+            canvas.drawText("Классов пока нет", width / 2f, height / 2f, textPaint)
+            return
+        }
 
         val top = 14f * d
         val bottom = height - 26f * d
