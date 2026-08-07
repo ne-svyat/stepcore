@@ -1347,9 +1347,16 @@ class VaultActivity : AppCompatActivity() {
         }
         root.addView(status)
 
+        // Полотно обязано лежать В ПРОКРУТКЕ, как и на главном экране.
+        // Здесь я это упустил: вьюха сама считает нужную ширину, но в
+        // обычной колонке лишнее просто обрезается - листать нечем.
         val view = VaultRootsView(this)
-        root.addView(view, LinearLayout.LayoutParams(-1,
-            (resources.displayMetrics.heightPixels * 0.46f).toInt()))
+        val height = (resources.displayMetrics.heightPixels * 0.52f).toInt()
+        val scroll = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            addView(view, FrameLayout.LayoutParams(-2, height))
+        }
+        root.addView(scroll, LinearLayout.LayoutParams(-1, height))
         secondaryButton("←  К списку заметок").setOnClickListener { goBack() }
 
         lifecycleScope.launch {
