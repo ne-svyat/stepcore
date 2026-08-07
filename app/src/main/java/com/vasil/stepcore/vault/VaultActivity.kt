@@ -852,17 +852,27 @@ class VaultActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Страница в правке. ЖЁСТКИЙ КАРКАС: шапка сверху, инструменты снизу,
+     * листается только текст.
+     *
+     * Раньше листалась вся страница, а поле ввода росло с текстом: чтобы
+     * добраться до кнопок, приходилось прокручивать весь текст, а курсор
+     * при наборе уводил экран вниз.
+     *
+     * У поля ввода НЕТ своей ScrollingMovementMethod: она ломает выделение
+     * текста - выделить всё становится невозможно. Поле с ограниченной
+     * высотой прокручивается само, без всяких подпорок.
+     */
     private fun drawPage(text: String, top: List<String> = emptyList()) {
         if (preview) { drawPreview(text, top); return }
         screen = Screen.PAGE
-        mount(scrollable = true)
+        mount(scrollable = false)
         root.removeAllViews()
+        root.setPadding(dp(16), dp(14), dp(16), dp(8))
         val r = repo ?: return
         val noteId = openNoteId
 
-        // Подпись страницы: три частых слова. Пусто у страниц, не
-        // пересохранявшихся после появления подписи, — это честнее, чем
-        // выдумывать её задним числом.
         title("Правка · стр. " + (openIdx + 1) + "/" + openPages,
             if (top.isEmpty()) "Тап по заголовку — перейти на страницу"
             else top.joinToString(" · ") + "   ·   тап по заголовку — перейти")
@@ -876,36 +886,27 @@ class VaultActivity : AppCompatActivity() {
         val e = EditText(this).apply {
             setText(text)
             textSize = 16f
-            gravity = Gravity.TOP
+            gravity = Gravity.TOP or Gravity.START
             setTextColor(0xFFEEEEEE.toInt())
             setBackgroundColor(SURFACE_SUNKEN)
             setPadding(dp(14), dp(14), dp(14), dp(14))
             setLineSpacing(dp(4).toFloat(), 1f)
-            // Своя прокрутка внутри поля и фиксированная высота: иначе
-            // поле растёт с текстом и уносит все кнопки страницы вниз,
-            // за пределы экрана.
-            isVerticalScrollBarEnabled = true
-            movementMethod = android.text.method.ScrollingMovementMethod.getInstance()
-            gravity = Gravity.TOP or Gravity.START
             isSingleLine = false
             inputType = InputType.TYPE_CLASS_TEXT or
                 InputType.TYPE_TEXT_FLAG_MULTI_LINE or
                 InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
-            // Предел не отказ, а граница страницы: дальше следующая.
             filters = arrayOf(android.text.InputFilter.LengthFilter(VaultRepo.MAX_PAGE_CHARS))
         }
-        root.addView(e, LinearLayout.LayoutParams(-1,
-            (resources.displayMetrics.heightPixels * 0.42f).toInt()))
+        // Вес 1: поле занимает всё, что осталось между шапкой и подвалом.
+        root.addView(e, LinearLayout.LayoutParams(-1, 0, 1f))
         editor = e
         pendingFind?.let { q -> pendingFind = null; flashMatch(e, q) }
-
-        linksRow(text)
 
         val counter = TextView(this).apply {
             this.text = e.text.length.toString() + " / " + VaultRepo.MAX_PAGE_CHARS
             textSize = 12f
             setTextColor(0xFF7A7A88.toInt())
-            setPadding(0, dp(6), 0, dp(6))
+            setPadding(0, dp(6), 0, dp(2))
         }
         root.addView(counter)
         e.addTextChangedListener(object : android.text.TextWatcher {
@@ -916,15 +917,18 @@ class VaultActivity : AppCompatActivity() {
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
         })
 
+        linksRow(text)
+
         val nav = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        root.addView(nav, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(10) })
+        root.addView(nav, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(6) })
         nav.addView(tabButton("Назад", VaultIcon.Kind.PREV, VaultIcon.tintFor(VaultIcon.Kind.PREV)) {
             if (openIdx > 0) leavePage { openNote(noteId, openIdx - 1) }
         })
         nav.addView(tabButton("Вперёд", VaultIcon.Kind.NEXT, VaultIcon.tintFor(VaultIcon.Kind.NEXT)) {
             if (openIdx + 1 < openPages) leavePage { openNote(noteId, openIdx + 1) }
         })
-        nav.addView(tabButton("Стр.", VaultIcon.Kind.PAGE_PLUS, VaultIcon.tintFor(VaultIcon.Kind.PAGE_PLUS)) {
+        nav.addView(tabButton("Стр.", VaultIcon.Kind.PAGE_PLUS,
+            VaultIcon.tintFor(VaultIcon.Kind.PAGE_PLUS)) {
             leavePage {
                 lifecycleScope.launch {
                     val idx = r.addPage(noteId)
@@ -933,9 +937,6 @@ class VaultActivity : AppCompatActivity() {
                 }
             }
         })
-        // Заголовок по кругу: обычная -> # -> ## -> ### -> обычная.
-        // Одна кнопка вместо памяти о числе решёток и без ухода от
-        // клавиатуры. Разметка остаётся обычным текстом.
         nav.addView(tabButton("Заголовок", VaultIcon.Kind.HEADING,
             VaultIcon.tintFor(VaultIcon.Kind.HEADING)) {
             val (text2, cur) = VaultText.cycleHeading(e.text.toString(), e.selectionEnd)
@@ -943,40 +944,45 @@ class VaultActivity : AppCompatActivity() {
             e.setSelection(cur.coerceIn(0, text2.length))
         })
 
-        button("Копировать страницу").setOnClickListener {
-            val sel = e.selectionEnd - e.selectionStart
-            val whole = e.text.toString()
-            val part = if (sel > 0) whole.substring(e.selectionStart, e.selectionEnd) else whole
-            copy(part)
-            toast(if (sel > 0) "Скопирован выделенный кусок" else "Скопирована страница")
-        }
         val tools = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         root.addView(tools, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(6) })
         tools.addView(tabButton("Фото", VaultIcon.Kind.IMAGE, VaultIcon.tintFor(VaultIcon.Kind.IMAGE)) {
-            // Метка вставляется отдельной строкой: в просмотре картинка
-            // станет отдельным блоком, а не разорвёт предложение.
             pickImage.launch("image/*")
         })
-        tools.addView(tabButton(
-            if (preview) "Правка" else "Чтение",
-            if (preview) VaultIcon.Kind.PENCIL else VaultIcon.Kind.EYE,
-            VaultIcon.tintFor(if (preview) VaultIcon.Kind.PENCIL else VaultIcon.Kind.EYE)) {
-            preview = !preview
+        tools.addView(tabButton("Чтение", VaultIcon.Kind.EYE, VaultIcon.tintFor(VaultIcon.Kind.EYE)) {
+            preview = true
             leavePage { openNote(noteId, openIdx) }
         })
-
         tools.addView(tabButton("Тропы", VaultIcon.Kind.TRAIL, VaultIcon.tintFor(VaultIcon.Kind.TRAIL)) {
             leavePage { showTrails(noteId, openIdx) }
         })
-        tools.addView(tabButton("Разделы", VaultIcon.Kind.LIST, VaultIcon.tintFor(VaultIcon.Kind.LIST)) {
-            showOutline(e)
+        tools.addView(tabButton("Ещё", VaultIcon.Kind.LIST, VaultIcon.tintFor(VaultIcon.Kind.LIST)) {
+            moreMenu(noteId, e)
         })
+    }
 
-        secondaryButton("←  К списку заметок").setOnClickListener { leavePage { showNotes() } }
-        secondaryButton("История правок").setOnClickListener {
-            leavePage { showHistory(noteId, openIdx) }
-        }
-        dangerButton("Удалить заметку").setOnClickListener { askDelete(noteId) }
+    /**
+     * Редкие действия страницы одним окном.
+     *
+     * В подвале помещается восемь вкладок, а действий больше. Частое
+     * остаётся под пальцем, редкое уходит сюда - иначе подвал разрастается
+     * и снова начинает выталкивать текст.
+     */
+    private fun moreMenu(noteId: Long, e: EditText?) {
+        val items = arrayOf("Разделы страницы", "История правок",
+                            "К списку заметок", "Удалить заметку")
+        AlertDialog.Builder(this)
+            .setTitle("Ещё")
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> if (e != null) showOutline(e) else toast("Только в правке")
+                    1 -> leavePage { showHistory(noteId, openIdx) }
+                    2 -> leavePage { showNotes() }
+                    else -> askDelete(noteId)
+                }
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
     }
 
     private fun askJump() {
@@ -1079,10 +1085,15 @@ class VaultActivity : AppCompatActivity() {
      * картинки прямо в поле ввода, ломает выделение, копирование и позицию
      * курсора — за красоту платит тем, ради чего блокнот и нужен.
      */
+    /**
+     * Страница в чтении. Тот же каркас: шапка и подвал закреплены,
+     * листается только содержимое.
+     */
     private fun drawPreview(text: String, top: List<String>) {
         screen = Screen.PREVIEW
-        mount(scrollable = true)
+        mount(scrollable = false)
         root.removeAllViews()
+        root.setPadding(dp(16), dp(14), dp(16), dp(8))
         val noteId = openNoteId
         val im = images
 
@@ -1096,22 +1107,28 @@ class VaultActivity : AppCompatActivity() {
 
         chipsRow(openTags, noteId)
 
+        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val pane = ScrollView(this).apply {
+            addView(body, FrameLayout.LayoutParams(-1, -2))
+        }
+        root.addView(pane, LinearLayout.LayoutParams(-1, 0, 1f))
+
         for (b in VaultText.blocks(text)) {
             when (b) {
-                is VaultText.Block.Head -> root.addView(TextView(this).apply {
+                is VaultText.Block.Head -> body.addView(TextView(this).apply {
                     this.text = b.text
                     textSize = when (b.level) { 1 -> 24f; 2 -> 20f; else -> 17f }
                     setTextColor(0xFFF2F2F7.toInt())
                     setPadding(0, dp(14), 0, dp(6))
                 })
-                is VaultText.Block.Para -> root.addView(TextView(this).apply {
+                is VaultText.Block.Para -> body.addView(TextView(this).apply {
                     textSize = 16f
                     setTextColor(0xFFDDDDE5.toInt())
                     setPadding(0, dp(4), 0, dp(8))
-                    // setTextIsSelectable сбрасывает movementMethod на свой
-                    // и убивает нажатие по ссылке. Поэтому абзац со
-                    // ссылками отдаём переходам, а без ссылок - выделению.
-                    // Совместить нельзя: это одно и то же поле.
+                    setLineSpacing(dp(4).toFloat(), 1f)
+                    // Выделение и переходы конкурируют за одну настройку
+                    // поля: абзац со ссылками отдан переходам, без ссылок -
+                    // выделению.
                     if (VaultText.linkSpans(b.text).isEmpty()) {
                         this.text = b.text
                         setTextIsSelectable(true)
@@ -1123,14 +1140,14 @@ class VaultActivity : AppCompatActivity() {
                 is VaultText.Block.Img -> {
                     val bmp = im?.load(b.id)
                     if (bmp == null) {
-                        root.addView(TextView(this).apply {
+                        body.addView(TextView(this).apply {
                             this.text = "[картинка недоступна]"
                             textSize = 14f
                             setTextColor(0xFF7A7A88.toInt())
                             setPadding(0, dp(6), 0, dp(6))
                         })
                     } else {
-                        root.addView(ImageView(this).apply {
+                        body.addView(ImageView(this).apply {
                             setImageBitmap(bmp)
                             adjustViewBounds = true
                             isClickable = true
@@ -1156,21 +1173,11 @@ class VaultActivity : AppCompatActivity() {
             preview = false
             openNote(noteId, openIdx)
         })
-        secondaryButton("←  К списку заметок").setOnClickListener { showNotes() }
-        dangerButton("Удалить заметку").setOnClickListener { askDelete(noteId) }
+        tools.addView(tabButton("Ещё", VaultIcon.Kind.LIST, VaultIcon.tintFor(VaultIcon.Kind.LIST)) {
+            moreMenu(noteId, null)
+        })
     }
 
-    /**
-     * История правок страницы.
-     *
-     * Сверху лента версий, снизу текст выбранной с подсветкой отличий от
-     * нынешней. Отсюда можно скопировать кусок, вставить кусок в страницу
-     * или вернуть версию целиком.
-     *
-     * Смысл именно в куске: чаще нужен один зря переписанный абзац, а не
-     * вся старая страница. Все известные блокноты дают только "откатить
-     * всё" — и поэтому их откатом не пользуются.
-     */
     private fun showHistory(noteId: Long, idx: Int) {
         mount(scrollable = true)
         val r = repo ?: return
@@ -1618,7 +1625,12 @@ class VaultActivity : AppCompatActivity() {
             isHorizontalScrollBarEnabled = false
             addView(row, LinearLayout.LayoutParams(-2, -2))
         }
-        root.addView(scroll, LinearLayout.LayoutParams(-1, -2).also { it.bottomMargin = dp(8) })
+        // Ровно под шапкой: лишний отступ снизу сдвигал ряд классов, и
+        // он выглядел съехавшим.
+        root.addView(scroll, LinearLayout.LayoutParams(-1, dp(34)).also {
+            it.topMargin = dp(2)
+            it.bottomMargin = dp(6)
+        })
 
         for (t in tags) {
             val hue = classHues[t.trim().lowercase()]
