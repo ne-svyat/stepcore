@@ -1,3 +1,50 @@
+    private fun tabButton(label: String, active: Boolean, icon: VaultIcon.Kind?,
+                          tint: Int, action: () -> Unit): View {
+        val color = when {
+            active -> getColor(R.color.accent_violet_bright)
+            icon != null -> tint
+            else -> 0xFFA9A4BC.toInt()
+        }
+        val bg = GradientDrawable().apply {
+            cornerRadius = dp(9).toFloat()
+            setColor(if (active) 0xFF1E1A2A.toInt() else SURFACE_SUNKEN)
+            setStroke(dp(1), if (active) getColor(R.color.accent_violet_bright) else LINE_EDGE)
+        }
+        val label2 = TextView(this).apply {
+            text = label
+            textSize = 13f
+            isSingleLine = true
+            includeFontPadding = false
+            gravity = Gravity.CENTER
+            setTextColor(color)
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        }
+
+        // Иконка ОТДЕЛЬНОЙ вьюхой, а не составным элементом текста.
+        // Составной значок прижимается к краю поля и не центрируется -
+        // именно поэтому иконки выглядели съехавшими.
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            isClickable = true
+            background = android.graphics.drawable.RippleDrawable(
+                android.content.res.ColorStateList.valueOf(0x2AFFFFFF), bg, null
+            )
+            setPadding(dp(4), dp(6), dp(4), dp(6))
+            setOnClickListener { if (!busy) action() }
+        }
+        if (icon != null) {
+            box.addView(ImageView(this).apply {
+                setImageDrawable(VaultIcon(icon, tint, dp(20)))
+            }, LinearLayout.LayoutParams(dp(20), dp(20)).also { it.bottomMargin = dp(4) })
+        }
+        box.addView(label2, LinearLayout.LayoutParams(-1, -2))
+        box.layoutParams = LinearLayout.LayoutParams(
+            0, if (icon != null) dp(64) else dp(46), 1f
+        ).also { it.marginStart = dp(3); it.marginEnd = dp(3) }
+        return box
+    }
+
 package com.vasil.stepcore.vault
 
 import android.content.ClipData
@@ -98,6 +145,16 @@ class VaultActivity : AppCompatActivity() {
      * вещи, и в одном поле им тесно.
      */
     private var activeTag: String? = null
+
+    /**
+     * Класс, к которому подводится карта корней.
+     *
+     * При входе в тайник пусто - карта стоит на самом горячем, слева.
+     * Как только человек открыл заметку, фокус переходит на её класс:
+     * карта следует за тем, чем сейчас занимаются, а не за вчерашним
+     * рейтингом.
+     */
+    private var focusTag: String? = null
 
     /** Следующее открытие заметки - чтение, а не продолжение правки. */
     private var openingForRead = false
@@ -560,9 +617,20 @@ class VaultActivity : AppCompatActivity() {
                     },
                     together.entries.sortedByDescending { it.value }.take(24)
                         .map { VaultRootsView.Weave(it.key.first, it.key.second, it.value) },
-                    { name -> pendingTag = name; showNotes() },
+                    { name -> pendingTag = name; focusTag = name; showNotes() },
                     { id -> openForRead(id, 0) }
                 )
+                // Подвести карту к нужной жиле. Без post ширина полотна
+                // ещё не посчитана, и прокручивать некуда.
+                focusTag?.let { tag ->
+                    rootsScroll.post {
+                        val x = rootsView.laneX(tag)
+                        if (x >= 0f) {
+                            rootsScroll.smoothScrollTo(
+                                (x - rootsScroll.width / 2f).toInt().coerceAtLeast(0), 0)
+                        }
+                    }
+                }
             } else {
                 rootsHint.text = "Корни пусты. Проставь тег заметке — он станет классом."
             }
@@ -665,6 +733,12 @@ class VaultActivity : AppCompatActivity() {
     /** Открыть заметку на чтение. Правка - по вкладке. */
     private fun openForRead(noteId: Long, idx: Int) {
         openingForRead = true
+        repo?.let { r ->
+            lifecycleScope.launch {
+                focusTag = r.notes().firstOrNull { it.id == noteId }
+                    ?.tags?.firstOrNull()?.trim()?.lowercase()
+            }
+        }
         // Открытие греет заметку. Слабо: открывают и случайно.
         repo?.let { r -> lifecycleScope.launch { r.touch(noteId, VaultHeat.W_OPEN) } }
         openNote(noteId, idx)
@@ -771,13 +845,13 @@ class VaultActivity : AppCompatActivity() {
 
         val nav = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         root.addView(nav, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(10) })
-        nav.addView(tabButton("◀", true) {
+        nav.addView(tabButton("Назад", VaultIcon.Kind.PREV, 0xFFA9A4BC.toInt()) {
             if (openIdx > 0) leavePage { openNote(noteId, openIdx - 1) }
         })
-        nav.addView(tabButton("▶", true) {
+        nav.addView(tabButton("Вперёд", VaultIcon.Kind.NEXT, 0xFFA9A4BC.toInt()) {
             if (openIdx + 1 < openPages) leavePage { openNote(noteId, openIdx + 1) }
         })
-        nav.addView(tabButton("+ стр") {
+        nav.addView(tabButton("Стр.", VaultIcon.Kind.PAGE_PLUS, 0xFF8FA8C8.toInt()) {
             leavePage {
                 lifecycleScope.launch {
                     val idx = r.addPage(noteId)
@@ -785,6 +859,15 @@ class VaultActivity : AppCompatActivity() {
                     else openNote(noteId, idx)
                 }
             }
+        })
+        // Заголовок по кругу: обычная -> # -> ## -> ### -> обычная.
+        // Одна кнопка вместо памяти о числе решёток и без ухода от
+        // клавиатуры. Разметка остаётся обычным текстом.
+        nav.addView(tabButton("Заголовок", VaultIcon.Kind.HEADING,
+            getColor(R.color.accent_violet_bright)) {
+            val (text2, cur) = VaultText.cycleHeading(e.text.toString(), e.selectionEnd)
+            e.setText(text2)
+            e.setSelection(cur.coerceIn(0, text2.length))
         })
 
         button("Копировать страницу").setOnClickListener {
@@ -796,20 +879,23 @@ class VaultActivity : AppCompatActivity() {
         }
         val tools = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         root.addView(tools, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(6) })
-        tools.addView(tabButton("Фото") {
+        tools.addView(tabButton("Фото", VaultIcon.Kind.IMAGE, 0xFF8FA8C8.toInt()) {
             // Метка вставляется отдельной строкой: в просмотре картинка
             // станет отдельным блоком, а не разорвёт предложение.
             pickImage.launch("image/*")
         })
-        tools.addView(tabButton(if (preview) "✎ Правка" else "◉ Чтение", true) {
+        tools.addView(tabButton(
+            if (preview) "Правка" else "Чтение",
+            if (preview) VaultIcon.Kind.PENCIL else VaultIcon.Kind.EYE,
+            getColor(R.color.accent_violet_bright)) {
             preview = !preview
             leavePage { openNote(noteId, openIdx) }
         })
 
-        tools.addView(tabButton("Тропы") {
+        tools.addView(tabButton("Тропы", VaultIcon.Kind.TRAIL, 0xFFA9A4BC.toInt()) {
             leavePage { showTrails(noteId, openIdx) }
         })
-        tools.addView(tabButton("Разделы") {
+        tools.addView(tabButton("Разделы", VaultIcon.Kind.LIST, 0xFFA9A4BC.toInt()) {
             showOutline(e)
         })
 
@@ -847,6 +933,7 @@ class VaultActivity : AppCompatActivity() {
     }
 
     private fun closeVault() {
+        focusTag = null
         editor = null
         repo = null
         images = null
@@ -980,13 +1067,14 @@ class VaultActivity : AppCompatActivity() {
 
         val tools = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         root.addView(tools, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(6) })
-        tools.addView(tabButton("◀", true) {
+        tools.addView(tabButton("Назад", VaultIcon.Kind.PREV, 0xFFA9A4BC.toInt()) {
             if (openIdx > 0) openNote(noteId, openIdx - 1)
         })
-        tools.addView(tabButton("▶", true) {
+        tools.addView(tabButton("Вперёд", VaultIcon.Kind.NEXT, 0xFFA9A4BC.toInt()) {
             if (openIdx + 1 < openPages) openNote(noteId, openIdx + 1)
         })
-        tools.addView(tabButton("✎ Правка", true) {
+        tools.addView(tabButton("Правка", VaultIcon.Kind.PENCIL,
+            getColor(R.color.accent_violet_bright)) {
             preview = false
             openNote(noteId, openIdx)
         })
@@ -1491,29 +1579,29 @@ class VaultActivity : AppCompatActivity() {
         for (n in names) row.addView(chip("→ " + n, accent) { openByTitle(n) })
     }
 
-    /** Квадратная кнопка с одной иконкой. Для действий рядом с полем. */
+    /** Квадратная кнопка с одной иконкой. Значок центрируется сам,
+     *  потому что это ImageView, а не составной элемент текста. */
     private fun iconButton(icon: VaultIcon.Kind, describe: String, tint: Int,
-                           action: () -> Unit): TextView {
+                           action: () -> Unit): View {
         val bg = GradientDrawable().apply {
             cornerRadius = dp(9).toFloat()
             setColor(SURFACE_SUNKEN)
             setStroke(dp(1), LINE_EDGE)
         }
-        val t = TextView(this).apply {
-            gravity = Gravity.CENTER
+        val v = ImageView(this).apply {
             contentDescription = describe
+            setImageDrawable(VaultIcon(icon, tint, dp(22)))
+            scaleType = ImageView.ScaleType.CENTER
             isClickable = true
             background = android.graphics.drawable.RippleDrawable(
                 android.content.res.ColorStateList.valueOf(0x2AFFFFFF), bg, null
             )
-            setCompoundDrawablesRelativeWithIntrinsicBounds(
-                VaultIcon(icon, tint, dp(22)), null, null, null)
             setOnClickListener { if (!busy) action() }
         }
-        t.layoutParams = LinearLayout.LayoutParams(dp(52), dp(46)).also {
+        v.layoutParams = LinearLayout.LayoutParams(dp(52), dp(46)).also {
             it.marginStart = dp(8)
         }
-        return t
+        return v
     }
 
     /** Маленькая нажимаемая метка. Цвет несёт смысл, форма одинакова. */

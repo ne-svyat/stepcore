@@ -300,6 +300,43 @@ object VaultText {
         return bWords.count { it.lowercase() in set }
     }
 
+
+    /**
+     * Переключить уровень заголовка у строки, в которой стоит курсор.
+     *
+     * По кругу: обычная строка -> # -> ## -> ### -> обычная. Одна кнопка
+     * вместо памяти о том, сколько решёток ставить, и без ухода от
+     * клавиатуры. Разметка при этом остаётся обычным текстом: заметку
+     * можно скопировать куда угодно, и она не рассыплется.
+     *
+     * @return новый текст и новое положение курсора.
+     */
+    fun cycleHeading(text: String, cursor: Int): Pair<String, Int> {
+        val pos = cursor.coerceIn(0, text.length)
+        var from = pos
+        while (from > 0 && text[from - 1] != '\n') from--
+        var to = pos
+        while (to < text.length && text[to] != '\n') to++
+
+        val line = text.substring(from, to)
+        val indent = line.takeWhile { it == ' ' || it == '\t' }
+        val rest = line.substring(indent.length)
+        val hashes = rest.takeWhile { it == '#' }.length
+        val body = if (hashes in 1..3 && rest.length > hashes && rest[hashes] == ' ')
+            rest.substring(hashes + 1) else rest
+
+        val next = if (hashes in 1..3 && rest.length > hashes && rest[hashes] == ' ')
+            (hashes + 1) % 4 else 1
+        val marked = if (next == 0) body else "#".repeat(next) + " " + body
+
+        val newLine = indent + marked
+        val out = text.substring(0, from) + newLine + text.substring(to)
+        // Курсор смещается ровно на столько, на сколько выросла строка:
+        // человек продолжает печатать там же, где остановился.
+        val shift = newLine.length - line.length
+        return out to (pos + shift).coerceIn(0, out.length)
+    }
+
     /** Оглавление страницы — заголовки по порядку. */
     fun outline(text: String): List<Block.Head> =
         blocks(text).filterIsInstance<Block.Head>()

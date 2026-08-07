@@ -96,6 +96,16 @@ class VaultRootsView(context: Context) : View(context) {
         setMeasuredDimension(maxOf(need, avail), measuredHeight)
     }
 
+    /**
+     * Где стоит жила класса. Нужно, чтобы прокрутка могла подвести карту
+     * к нужному месту, а не оставлять человека искать её глазами.
+     * @return координата по горизонтали, либо -1 если такого класса нет.
+     */
+    fun laneX(name: String): Float {
+        val i = strands.indexOfFirst { it.name.equals(name, true) }
+        return if (i < 0) -1f else xOf(i)
+    }
+
     private fun xOf(i: Int): Float {
         if (strands.isEmpty()) return 0f
         val step = width.toFloat() / (strands.size + 1)

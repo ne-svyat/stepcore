@@ -36,7 +36,7 @@ class VaultIcon(
 ) : Drawable() {
 
     enum class Kind {
-        SEARCH, PLUS, ROOTS, CLOSE, PENCIL, EYE,
+        SEARCH, PLUS, ROOTS, CLOSE, PENCIL, EYE, HEADING,
         PREV, NEXT, PAGE_PLUS, IMAGE, TRAIL, LIST, HISTORY, TAG, JUMP
     }
 
@@ -145,6 +145,15 @@ class VaultIcon(
                 path.moveTo(12f, 8f); path.lineTo(12f, 12.5f); path.lineTo(15.5f, 14.5f)
                 path.moveTo(4.5f, 8.5f); path.lineTo(4.5f, 4.5f)
                 path.moveTo(4.5f, 8.5f); path.lineTo(8.5f, 8.5f)
+            }
+            // Заголовок: буква H со ступенькой сверху - уровень.
+            Kind.HEADING -> {
+                path.moveTo(5f, 6f); path.lineTo(5f, 19f)
+                path.moveTo(13f, 6f); path.lineTo(13f, 19f)
+                path.moveTo(5f, 12.5f); path.lineTo(13f, 12.5f)
+                path.moveTo(16.5f, 9f); path.lineTo(19.5f, 6.5f)
+                path.lineTo(19.5f, 13f)
+                path.moveTo(17.5f, 13f); path.lineTo(21.5f, 13f)
             }
             Kind.TAG -> {
                 path.moveTo(3.5f, 11f); path.lineTo(11f, 3.5f); path.lineTo(20.5f, 3.5f)
