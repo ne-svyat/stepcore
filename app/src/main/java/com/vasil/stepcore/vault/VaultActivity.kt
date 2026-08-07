@@ -229,6 +229,12 @@ class VaultActivity : AppCompatActivity() {
      * ограничиваться высотой окна. Внутри прокрутки такое ограничение
      * недостижимо в принципе.
      */
+    /** Прокрутить показанный экран к началу. */
+    private fun scrollToTop() {
+        val p = root.parent
+        if (p is ScrollView) p.post { p.scrollTo(0, 0) }
+    }
+
     private fun mount(scrollable: Boolean) {
         if (this.scrollable == scrollable && root.parent != null) return
         this.scrollable = scrollable
@@ -840,6 +846,9 @@ class VaultActivity : AppCompatActivity() {
                 preview = text.isNotBlank()
             }
             drawPage(text, top)
+            // Страница открывается СВЕРХУ: листая вперёд, человек ждёт
+            // начала новой страницы, а не той же высоты прокрутки.
+            scrollToTop()
         }
     }
 
@@ -872,7 +881,12 @@ class VaultActivity : AppCompatActivity() {
             setBackgroundColor(SURFACE_SUNKEN)
             setPadding(dp(14), dp(14), dp(14), dp(14))
             setLineSpacing(dp(4).toFloat(), 1f)
-            minLines = 12
+            // Своя прокрутка внутри поля и фиксированная высота: иначе
+            // поле растёт с текстом и уносит все кнопки страницы вниз,
+            // за пределы экрана.
+            isVerticalScrollBarEnabled = true
+            movementMethod = android.text.method.ScrollingMovementMethod.getInstance()
+            gravity = Gravity.TOP or Gravity.START
             isSingleLine = false
             inputType = InputType.TYPE_CLASS_TEXT or
                 InputType.TYPE_TEXT_FLAG_MULTI_LINE or
@@ -880,7 +894,8 @@ class VaultActivity : AppCompatActivity() {
             // Предел не отказ, а граница страницы: дальше следующая.
             filters = arrayOf(android.text.InputFilter.LengthFilter(VaultRepo.MAX_PAGE_CHARS))
         }
-        root.addView(e, LinearLayout.LayoutParams(-1, -2))
+        root.addView(e, LinearLayout.LayoutParams(-1,
+            (resources.displayMetrics.heightPixels * 0.42f).toInt()))
         editor = e
         pendingFind?.let { q -> pendingFind = null; flashMatch(e, q) }
 
@@ -1610,6 +1625,22 @@ class VaultActivity : AppCompatActivity() {
             val c = if (hue == null) 0xFF8A8A98.toInt() else VaultHues.color(hue, 12)
             row.addView(chip("#" + t, c) { pendingTag = t; showNotes() })
         }
+        // Переименование рядом с классами: и то, и другое - свойства
+        // самой заметки, им место в одной строке.
+        row.addView(chip("✎ имя", 0xFFB9A6E8.toInt()) {
+            val r0 = repo ?: return@chip
+            val current = rowTexts[noteId]?.title ?: ""
+            askText("Название заметки", current) { v ->
+                if (v.isBlank()) { toast("Название не может быть пустым"); return@askText }
+                leavePage {
+                    lifecycleScope.launch {
+                        r0.rename(noteId, v)
+                        toast("Переименовано")
+                        openNote(noteId, openIdx)
+                    }
+                }
+            }
+        })
         row.addView(chip(if (tags.isEmpty()) "＋ класс" else "＋", 0xFF8A8A98.toInt()) {
             val r = repo ?: return@chip
             askText("Классы через запятую", tags.joinToString(", ")) { v ->
@@ -1760,21 +1791,87 @@ class VaultActivity : AppCompatActivity() {
     private fun askExport(ids: List<Long>) {
         val r = repo ?: return
         val what = if (ids.isEmpty()) "Все заметки" else "Выбрано заметок: " + ids.size
-        AlertDialog.Builder(this)
-            .setTitle(what + ". Чем закрыть архив?")
-            .setItems(arrayOf(
-                "Ключом этого тайника — откроется только в нём",
-                "Своим паролем — откроется в любом тайнике"
-            )) { _, which ->
-                if (which == 0) doExport(r, ids, null)
-                else askOwnPassword { pw -> doExport(r, ids, pw) }
-            }
+
+        // Два способа - ДВЕ КНОПКИ со своими рамками и цветом, а не строки
+        // списка. Строки читаются как текст, и человек ищет глазами, где
+        // же выбор; кнопка видна как кнопка.
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), dp(8))
+        }
+        box.addView(TextView(this).apply {
+            text = what
+            textSize = 13f
+            setTextColor(0xFF9A9AA5.toInt())
+            setPadding(0, 0, 0, dp(12))
+        })
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Чем закрыть архив?")
+            .setView(box)
             .setNegativeButton("Отмена", null)
-            // Касание мимо окна не должно ничего запускать. Раньше окно
-            // закрывалось, а уведомление о выгрузке показывалось сразу,
-            // не дожидаясь выбора - выглядело так, будто выгрузка пошла.
+            // Касание мимо окна ничего не запускает.
             .setCancelable(false)
-            .show()
+            .create()
+
+        box.addView(optionButton(
+            "Ключом этого тайника",
+            "Ничего вводить не надо. Откроется ТОЛЬКО в этом тайнике: " +
+                "переустановишь приложение — файл станет бесполезен.",
+            VaultIcon.Kind.CLOSE, VaultIcon.tintFor(VaultIcon.Kind.ROOTS)) {
+            dialog.dismiss()
+            doExport(r, ids, null)
+        })
+        box.addView(optionButton(
+            "Своим паролем",
+            "Ввести дважды. Откроется в любом тайнике и на другом " +
+                "телефоне. Забудешь пароль файла — архив потерян.",
+            VaultIcon.Kind.JUMP, VaultIcon.tintFor(VaultIcon.Kind.IMAGE)) {
+            dialog.dismiss()
+            askOwnPassword { pw -> doExport(r, ids, pw) }
+        })
+        dialog.show()
+    }
+
+    /**
+     * Крупная кнопка выбора: значок, название и объяснение под ним.
+     *
+     * Объяснение прямо в кнопке, а не отдельной подсказкой: решение
+     * принимается в момент нажатия, и справка должна быть там же.
+     */
+    private fun optionButton(title: String, explain: String,
+                             icon: VaultIcon.Kind, tint: Int,
+                             action: () -> Unit): View {
+        val bg = GradientDrawable().apply {
+            cornerRadius = dp(10).toFloat()
+            setColor(SURFACE_SUNKEN)
+            setStroke(dp(2), (tint and 0xFFFFFF) or 0x88000000.toInt())
+        }
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            isClickable = true
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            background = android.graphics.drawable.RippleDrawable(
+                android.content.res.ColorStateList.valueOf(0x2AFFFFFF), bg, null
+            )
+            setOnClickListener { action() }
+        }
+        col.addView(TextView(this).apply {
+            text = title
+            textSize = 16f
+            setTextColor(tint)
+            setCompoundDrawablesRelativeWithIntrinsicBounds(
+                VaultIcon(icon, tint, dp(18)), null, null, null)
+            compoundDrawablePadding = dp(10)
+        })
+        col.addView(TextView(this).apply {
+            text = explain
+            textSize = 13f
+            setTextColor(0xFF9A9AA5.toInt())
+            setPadding(0, dp(6), 0, 0)
+        })
+        col.layoutParams = LinearLayout.LayoutParams(-1, -2).also { it.bottomMargin = dp(10) }
+        return col
     }
 
     /** Свой пароль файла: дважды и обязательно не как у тайника. */
@@ -2184,12 +2281,10 @@ class VaultActivity : AppCompatActivity() {
         val b = Button(this).apply {
             text = label
             textSize = if (level == LEVEL_DANGER) 15f else 16f
-            if (level == LEVEL_DANGER) {
-                setCompoundDrawablesRelativeWithIntrinsicBounds(
-                    VaultIcon(VaultIcon.Kind.TRASH,
-                        VaultIcon.tintFor(VaultIcon.Kind.TRASH), dp(18)), null, null, null)
-                compoundDrawablePadding = dp(8)
-            }
+            // Значка у опасной кнопки НЕТ: корзина рядом со словом
+            // "удалить" читается как два разных средства, и человек ищет
+            // разницу между ними. Красный контур и отступ уже отделяют её
+            // от остальных достаточно.
             gravity = Gravity.CENTER
             background = ripple
             stateListAnimator = null
