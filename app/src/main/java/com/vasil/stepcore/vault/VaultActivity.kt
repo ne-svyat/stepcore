@@ -116,6 +116,18 @@ class VaultActivity : AppCompatActivity() {
     private val chosen = LinkedHashSet<Long>()
     private var selecting = false
 
+    /**
+     * Карточки списка по номеру заметки и пересборка нижней панели.
+     *
+     * Нужны, чтобы отметить заметку БЕЗ перерисовки экрана. Раньше
+     * каждое выделение звало showNotes целиком: экран моргал, а список
+     * прокручивался обратно наверх - выбрать что-то ниже первого экрана
+     * было почти невозможно.
+     */
+    private val rowViews = HashMap<Long, TextView>()
+    private val rowTexts = HashMap<Long, VaultRepo.NoteHead>()
+    private var rebuildBottom: (() -> Unit)? = null
+
     /** Что делаем после того, как система даст файл. */
     private var pendingExport: ByteArray? = null
 
@@ -575,57 +587,59 @@ class VaultActivity : AppCompatActivity() {
         }
         root.addView(rootsScroll, LinearLayout.LayoutParams(-1, rootsHeight))
 
-        // Панель выбора СТРОИТСЯ ВМЕСТО обычной, но экран на этом не
-        // обрывается: раньше здесь стоял return, и вместе с панелью
-        // пропадали список и корни - их заполнение идёт ниже по коду.
-        if (selecting) {
-            // В режиме выбора нижняя панель меняется целиком: показывать
-            // рядом "новая заметка" и "удалить выбранные" опасно.
-            val selRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-            root.addView(selRow, LinearLayout.LayoutParams(-1, -2).also {
-                it.topMargin = dp(10)
-            })
-            selRow.addView(tabButton("Выгрузить " + chosen.size,
-                VaultIcon.Kind.JUMP, VaultIcon.tintFor(VaultIcon.Kind.JUMP)) {
-                askExport(chosen.toList())
-            })
-            selRow.addView(tabButton("Удалить " + chosen.size,
-                VaultIcon.Kind.TRASH, VaultIcon.tintFor(VaultIcon.Kind.TRASH)) {
-                askDeleteMany(chosen.toList())
-            })
-            selRow.addView(tabButton("Отмена", VaultIcon.Kind.CLOSE,
-                VaultIcon.tintFor(VaultIcon.Kind.CLOSE)) {
-                selecting = false
-                chosen.clear()
-                showNotes()
-            })
-        } else {
+        // Нижняя панель пересобирается ОТДЕЛЬНО от экрана: вход в режим
+        // выбора и каждая отметка меняют только её. Раньше это звало
+        // showNotes целиком - экран моргал, а список прокручивался
+        // обратно наверх, и выбрать что-то ниже первого экрана было
+        // почти невозможно.
+        val bottomBox = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        root.addView(bottomBox, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(10) })
 
-        // Нижняя панель только навигационная: поиск уехал наверх к полю.
-        // Оттенок сообщает ТИП действия - создание, просмотр, уход.
-        val bottom = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        root.addView(bottom, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(10) })
-        bottom.addView(tabButton("Новая", VaultIcon.Kind.PLUS,
-            VaultIcon.tintFor(VaultIcon.Kind.PLUS)) {
-            if (!busy) askText("Название заметки", "") { name ->
-                lifecycleScope.launch {
-                    val id = r.createNote(if (name.isBlank()) "Без названия" else name)
-                    r.touch(id, VaultHeat.W_CREATE)
-                    openForRead(id, 0)
-                }
+        val renderBottom = {
+            bottomBox.removeAllViews()
+            if (selecting) {
+                bottomBox.addView(tabButton("Выгрузить " + chosen.size,
+                    VaultIcon.Kind.JUMP, VaultIcon.tintFor(VaultIcon.Kind.JUMP)) {
+                    askExport(chosen.toList())
+                })
+                bottomBox.addView(tabButton("Удалить " + chosen.size,
+                    VaultIcon.Kind.TRASH, VaultIcon.tintFor(VaultIcon.Kind.TRASH)) {
+                    askDeleteMany(chosen.toList())
+                })
+                bottomBox.addView(tabButton("Отмена", VaultIcon.Kind.CLOSE,
+                    VaultIcon.tintFor(VaultIcon.Kind.CLOSE)) {
+                    selecting = false
+                    chosen.clear()
+                    for ((id, v) in rowViews) paintRow(v, id)
+                    rebuildBottom?.invoke()
+                })
+            } else {
+                bottomBox.addView(tabButton("Новая", VaultIcon.Kind.PLUS,
+                    VaultIcon.tintFor(VaultIcon.Kind.PLUS)) {
+                    if (!busy) askText("Название заметки", "") { name ->
+                        lifecycleScope.launch {
+                            val id = r.createNote(if (name.isBlank()) "Без названия" else name)
+                            r.touch(id, VaultHeat.W_CREATE)
+                            openForRead(id, 0)
+                        }
+                    }
+                })
+                bottomBox.addView(tabButton("Корни", VaultIcon.Kind.ROOTS,
+                    VaultIcon.tintFor(VaultIcon.Kind.ROOTS)) {
+                    if (!busy) showRoots()
+                })
+                bottomBox.addView(tabButton("Архив", VaultIcon.Kind.JUMP,
+                    VaultIcon.tintFor(VaultIcon.Kind.JUMP)) {
+                    if (!busy) showArchive()
+                })
+                bottomBox.addView(tabButton("Закрыть", VaultIcon.Kind.CLOSE,
+                    VaultIcon.tintFor(VaultIcon.Kind.CLOSE)) {
+                    closeVault()
+                })
             }
-        })
-        bottom.addView(tabButton("Корни", VaultIcon.Kind.ROOTS, VaultIcon.tintFor(VaultIcon.Kind.ROOTS)) {
-            if (!busy) showRoots()
-        })
-        bottom.addView(tabButton("Архив", VaultIcon.Kind.JUMP,
-            VaultIcon.tintFor(VaultIcon.Kind.JUMP)) {
-            if (!busy) showArchive()
-        })
-        bottom.addView(tabButton("Закрыть", VaultIcon.Kind.CLOSE, VaultIcon.tintFor(VaultIcon.Kind.CLOSE)) {
-            closeVault()
-        })
         }
+        rebuildBottom = renderBottom
+        renderBottom()
 
         q.imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
         q.setOnEditorActionListener { _, _, _ ->
@@ -684,6 +698,8 @@ class VaultActivity : AppCompatActivity() {
 
     private fun fillNotes(holder: LinearLayout, status: TextView,
                           raw: List<VaultRepo.NoteHead>) {
+        rowViews.clear()
+        rowTexts.clear()
         val list = when (sortBy) {
             // «Живые» по умолчанию: то, чем занимаешься сейчас, а не то,
             // что случайно завёл последним.
@@ -698,55 +714,36 @@ class VaultActivity : AppCompatActivity() {
         status.text = if (list.isEmpty()) "Пусто. Заметки этого тайника видны только с его паролем."
                       else "Заметок: " + list.size
         for (n in list) {
-            val tags = if (n.tags.isEmpty()) "" else "\n#" + n.tags.joinToString(" #")
-            val mark = if (!selecting) "" else if (n.id in chosen) "◉  " else "○  "
-            // Полоса слева - тон первого класса. Список перестаёт быть
-            // стеной одинаковых прямоугольников: тему видно боковым
-            // зрением, ещё не читая названий.
-            val hue = n.tags.firstOrNull()?.let { classHues[it.trim().lowercase()] }
-            val row = GradientDrawable().apply {
-                cornerRadius = dp(8).toFloat()
-                setColor(SURFACE_RAISED)
-                if (hue != null) {
-                    setStroke(dp(1), VaultHues.color(hue, 12) and 0x66FFFFFF.toInt())
-                }
-            }
-            holder.addView(TextView(this).apply {
-                text = mark + n.title + "\n" + n.pageCount + " стр." + tags
+            val row = TextView(this).apply {
                 textSize = 17f
-                setTextColor(0xFFEEEEEE.toInt())
-                background = row
-                setPadding(dp(14), dp(12), dp(14), dp(12))
+                setPadding(dp(14), dp(10), dp(14), dp(10))
                 isClickable = true
-                // Долгое нажатие включает выбор - привычный жест списка.
-                // Обычный тап при этом продолжает открывать заметку, а в
-                // режиме выбора начинает ставить и снимать отметку.
                 setOnLongClickListener {
-                    selecting = true
-                    chosen.add(n.id)
-                    showNotes()
+                    if (!selecting) {
+                        selecting = true
+                        chosen.add(n.id)
+                        // Перекрасить ВСЕ карточки: режим сменился, но
+                        // список остаётся на месте и не прокручивается.
+                        for ((id, v) in rowViews) paintRow(v, id)
+                        rebuildBottom?.invoke()
+                    }
                     true
                 }
                 setOnClickListener {
                     if (selecting) {
                         if (!chosen.remove(n.id)) chosen.add(n.id)
-                        if (chosen.isEmpty()) selecting = false
-                        showNotes()
+                        val leaving = chosen.isEmpty()
+                        if (leaving) selecting = false
+                        if (leaving) for ((id, v) in rowViews) paintRow(v, id)
+                        else paintRow(this, n.id)
+                        rebuildBottom?.invoke()
                     } else openForRead(n.id, 0)
                 }
-                if (hue != null) {
-                    val bar = android.text.SpannableString(text)
-                    setText(bar)
-                    setCompoundDrawablesRelativeWithIntrinsicBounds(
-                        GradientDrawable().apply {
-                            setColor(VaultHues.color(hue, 12))
-                            cornerRadius = dp(2).toFloat()
-                            setSize(dp(4), dp(38))
-                        }, null, null, null
-                    )
-                    compoundDrawablePadding = dp(12)
-                }
-            }, LinearLayout.LayoutParams(-1, -2).also { it.bottomMargin = dp(8) })
+            }
+            rowTexts[n.id] = n
+            rowViews[n.id] = row
+            paintRow(row, n.id)
+            holder.addView(row, LinearLayout.LayoutParams(-1, -2).also { it.bottomMargin = dp(8) })
         }
     }
 
@@ -994,6 +991,11 @@ class VaultActivity : AppCompatActivity() {
     }
 
     private fun closeVault() {
+        rebuildBottom = null
+        rowViews.clear()
+        rowTexts.clear()
+        selecting = false
+        chosen.clear()
         focusTag = null
         editor = null
         repo = null
@@ -1917,6 +1919,40 @@ class VaultActivity : AppCompatActivity() {
                 }
             }
             .show()
+    }
+
+    /**
+     * Нарисовать карточку заметки в её нынешнем состоянии.
+     *
+     * Выбор показан РАМКОЙ и заливкой, а не только значком: значок в углу
+     * читается как украшение, а изменившийся фон виден сразу и целиком.
+     */
+    private fun paintRow(v: TextView, id: Long) {
+        val n = rowTexts[id] ?: return
+        val picked = selecting && id in chosen
+        val hue = n.tags.firstOrNull()?.let { classHues[it.trim().lowercase()] }
+        val accent = getColor(R.color.accent_violet_bright)
+        val edge = if (picked) accent
+                   else if (hue != null) VaultHues.color(hue, 12) and 0x66FFFFFF.toInt()
+                   else LINE_EDGE
+        v.background = GradientDrawable().apply {
+            cornerRadius = dp(8).toFloat()
+            setColor(if (picked) 0xFF241E33.toInt() else SURFACE_RAISED)
+            setStroke(dp(if (picked) 2 else 1), edge)
+        }
+        val mark = if (!selecting) "" else if (picked) "◉  " else "○  "
+        val tags = if (n.tags.isEmpty()) "" else "\n#" + n.tags.joinToString(" #")
+        v.text = mark + n.title + "\n" + n.pageCount + " стр." + tags
+        v.setTextColor(if (picked) 0xFFF2F0F7.toInt() else 0xFFEEEEEE.toInt())
+        if (hue != null) {
+            v.setCompoundDrawablesRelativeWithIntrinsicBounds(
+                GradientDrawable().apply {
+                    setColor(VaultHues.color(hue, 12))
+                    cornerRadius = dp(2).toFloat()
+                    setSize(dp(4), dp(38))
+                }, null, null, null)
+            v.compoundDrawablePadding = dp(12)
+        }
     }
 
     /** Выделенный кусок текста версии, либо пусто. */
