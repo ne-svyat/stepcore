@@ -1,50 +1,3 @@
-    private fun tabButton(label: String, active: Boolean, icon: VaultIcon.Kind?,
-                          tint: Int, action: () -> Unit): View {
-        val color = when {
-            active -> getColor(R.color.accent_violet_bright)
-            icon != null -> tint
-            else -> 0xFFA9A4BC.toInt()
-        }
-        val bg = GradientDrawable().apply {
-            cornerRadius = dp(9).toFloat()
-            setColor(if (active) 0xFF1E1A2A.toInt() else SURFACE_SUNKEN)
-            setStroke(dp(1), if (active) getColor(R.color.accent_violet_bright) else LINE_EDGE)
-        }
-        val label2 = TextView(this).apply {
-            text = label
-            textSize = 13f
-            isSingleLine = true
-            includeFontPadding = false
-            gravity = Gravity.CENTER
-            setTextColor(color)
-            ellipsize = android.text.TextUtils.TruncateAt.END
-        }
-
-        // Иконка ОТДЕЛЬНОЙ вьюхой, а не составным элементом текста.
-        // Составной значок прижимается к краю поля и не центрируется -
-        // именно поэтому иконки выглядели съехавшими.
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            isClickable = true
-            background = android.graphics.drawable.RippleDrawable(
-                android.content.res.ColorStateList.valueOf(0x2AFFFFFF), bg, null
-            )
-            setPadding(dp(4), dp(6), dp(4), dp(6))
-            setOnClickListener { if (!busy) action() }
-        }
-        if (icon != null) {
-            box.addView(ImageView(this).apply {
-                setImageDrawable(VaultIcon(icon, tint, dp(20)))
-            }, LinearLayout.LayoutParams(dp(20), dp(20)).also { it.bottomMargin = dp(4) })
-        }
-        box.addView(label2, LinearLayout.LayoutParams(-1, -2))
-        box.layoutParams = LinearLayout.LayoutParams(
-            0, if (icon != null) dp(64) else dp(46), 1f
-        ).also { it.marginStart = dp(3); it.marginEnd = dp(3) }
-        return box
-    }
-
 package com.vasil.stepcore.vault
 
 import android.content.ClipData
@@ -147,12 +100,9 @@ class VaultActivity : AppCompatActivity() {
     private var activeTag: String? = null
 
     /**
-     * Класс, к которому подводится карта корней.
-     *
-     * При входе в тайник пусто - карта стоит на самом горячем, слева.
-     * Как только человек открыл заметку, фокус переходит на её класс:
-     * карта следует за тем, чем сейчас занимаются, а не за вчерашним
-     * рейтингом.
+     * Класс, к которому подводится карта корней. При входе пусто - карта
+     * стоит на самом горячем. Как только открыта заметка, фокус переходит
+     * на её класс: карта следует за работой, а не за вчерашним рейтингом.
      */
     private var focusTag: String? = null
 
@@ -733,9 +683,9 @@ class VaultActivity : AppCompatActivity() {
     /** Открыть заметку на чтение. Правка - по вкладке. */
     private fun openForRead(noteId: Long, idx: Int) {
         openingForRead = true
-        repo?.let { r ->
+        repo?.let { rp ->
             lifecycleScope.launch {
-                focusTag = r.notes().firstOrNull { it.id == noteId }
+                focusTag = rp.notes().firstOrNull { it.id == noteId }
                     ?.tags?.firstOrNull()?.trim()?.lowercase()
             }
         }
@@ -1680,62 +1630,61 @@ class VaultActivity : AppCompatActivity() {
      * чёрная, текст спокойный. Тайник и должен быть тише остального
      * приложения - он для того, кто уже знает, что здесь.
      */
-    private fun tabButton(label: String, action: () -> Unit): TextView =
+    private fun tabButton(label: String, action: () -> Unit): View =
         tabButton(label, false, action)
 
     private fun tabButton(label: String, icon: VaultIcon.Kind, tint: Int,
-                          action: () -> Unit): TextView =
+                          action: () -> Unit): View =
         tabButton(label, false, icon, tint, action)
 
-    private fun tabButton(label: String, active: Boolean, action: () -> Unit): TextView =
+    private fun tabButton(label: String, active: Boolean, action: () -> Unit): View =
         tabButton(label, active, null, 0, action)
 
     private fun tabButton(label: String, active: Boolean, icon: VaultIcon.Kind?,
-                          tint: Int, action: () -> Unit): TextView {
+                          tint: Int, action: () -> Unit): View {
+        val color = when {
+            active -> getColor(R.color.accent_violet_bright)
+            icon != null -> tint
+            else -> 0xFFA9A4BC.toInt()
+        }
         val bg = GradientDrawable().apply {
             cornerRadius = dp(9).toFloat()
-            setColor(if (active) 0xFF1E1A2A.toInt() else 0xFF121218.toInt())
-            setStroke(dp(1), if (active) getColor(R.color.accent_violet_bright)
-                             else 0xFF2E2A3A.toInt())
+            setColor(if (active) 0xFF1E1A2A.toInt() else SURFACE_SUNKEN)
+            setStroke(dp(1), if (active) getColor(R.color.accent_violet_bright) else LINE_EDGE)
         }
-        val t = TextView(this).apply {
+        val caption = TextView(this).apply {
             text = label
             textSize = 13f
             isSingleLine = true
-            maxLines = 1
             includeFontPadding = false
             gravity = Gravity.CENTER
-            minHeight = dp(46)
-            height = if (icon != null) dp(62) else dp(46)
-            setTextColor(when {
-                active -> getColor(R.color.accent_violet_bright)
-                icon != null -> tint
-                else -> 0xFFA9A4BC.toInt()
-            })
-            setPadding(dp(4), 0, dp(4), 0)
-            if (icon != null) {
-                // Иконка над подписью: в ряду из трёх вкладок значок
-                // слева съедал бы ширину у самого слова.
-                setCompoundDrawablesRelativeWithIntrinsicBounds(
-                    null, VaultIcon(icon, tint, dp(20)), null, null)
-                compoundDrawablePadding = dp(3)
-            }
+            setTextColor(color)
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        }
+
+        // Иконка ОТДЕЛЬНОЙ вьюхой, а не составным элементом текста.
+        // Составной значок прижимается к краю поля и не центрируется -
+        // именно поэтому иконки выглядели съехавшими.
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
             isClickable = true
             background = android.graphics.drawable.RippleDrawable(
                 android.content.res.ColorStateList.valueOf(0x2AFFFFFF), bg, null
             )
-            // Длинное слово ужимается, а не переносится: ряд обязан
-            // оставаться ровным при любой подписи.
-            setHorizontallyScrolling(false)
-            ellipsize = android.text.TextUtils.TruncateAt.END
+            setPadding(dp(4), dp(6), dp(4), dp(6))
             setOnClickListener { if (!busy) action() }
         }
-        t.layoutParams = LinearLayout.LayoutParams(0, if (icon != null) dp(62) else dp(46), 1f)
-            .also {
-            it.marginStart = dp(3)
-            it.marginEnd = dp(3)
+        if (icon != null) {
+            box.addView(ImageView(this).apply {
+                setImageDrawable(VaultIcon(icon, tint, dp(20)))
+            }, LinearLayout.LayoutParams(dp(20), dp(20)).also { it.bottomMargin = dp(4) })
         }
-        return t
+        box.addView(caption, LinearLayout.LayoutParams(-1, -2))
+        box.layoutParams = LinearLayout.LayoutParams(
+            0, if (icon != null) dp(64) else dp(46), 1f
+        ).also { it.marginStart = dp(3); it.marginEnd = dp(3) }
+        return box
     }
 
     // ------------------------------------------------------------------ мелочи
