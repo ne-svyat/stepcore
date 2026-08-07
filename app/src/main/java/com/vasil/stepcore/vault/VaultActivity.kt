@@ -90,6 +90,15 @@ class VaultActivity : AppCompatActivity() {
     /** Класс, выбранный тапом по жиле: список откроется уже отобранным. */
     private var pendingTag: String? = null
 
+    /**
+     * Действующий отбор по классу. ОТДЕЛЬНО от строки поиска.
+     *
+     * Раньше отбор жил прямо в поле поиска текстом "#класс", и снять его
+     * можно было только стерев буквы руками. Фильтр и поиск - разные
+     * вещи, и в одном поле им тесно.
+     */
+    private var activeTag: String? = null
+
     /** Следующее открытие заметки - чтение, а не продолжение правки. */
     private var openingForRead = false
     private var outerScroll: ScrollView? = null
@@ -393,13 +402,13 @@ class VaultActivity : AppCompatActivity() {
         root.removeAllViews()
         root.setPadding(dp(16), dp(20), dp(16), dp(10))
         val r = repo ?: return
-        val preset = pendingTag?.let { pendingTag = null; "#" + it } ?: query
+        pendingTag?.let { activeTag = it; pendingTag = null }
 
         title("Тайник")
 
         val q = EditText(this).apply {
             hint = "Поиск по тексту, или #тег"
-            setText(preset)
+            setText(query)
             textSize = 15f
             isSingleLine = true
             setTextColor(0xFFEEEEEE.toInt())
@@ -411,7 +420,11 @@ class VaultActivity : AppCompatActivity() {
             }
             setPadding(dp(12), dp(10), dp(12), dp(10))
         }
-        root.addView(q, LinearLayout.LayoutParams(-1, -2))
+        // Кнопка поиска РЯДОМ с полем. Раньше она стояла внизу экрана, и
+        // рука ехала через весь экран туда и обратно.
+        val searchRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        root.addView(searchRow, LinearLayout.LayoutParams(-1, -2))
+        searchRow.addView(q, LinearLayout.LayoutParams(0, -2, 1f))
 
         val holder = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val status = TextView(this).apply {
@@ -420,17 +433,41 @@ class VaultActivity : AppCompatActivity() {
             setPadding(dp(2), dp(8), 0, dp(6))
         }
 
-        // Порядок: четыре положения, «Новые» по умолчанию.
+        searchRow.addView(iconButton(VaultIcon.Kind.SEARCH, "Найти",
+            getColor(R.color.accent_violet_bright)) {
+            if (!busy) runSearch(q.text.toString(), holder, status)
+        })
+
+        // Порядок: четыре положения, «Живые» по умолчанию.
         val sortRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         root.addView(sortRow, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(8) })
         for ((mode, label) in listOf(SortBy.HOT to "Живые", SortBy.NEW to "Новые",
                                      SortBy.OLD to "Старые", SortBy.TITLE to "А-Я")) {
             sortRow.addView(tabButton(label, mode == sortBy) {
                 sortBy = mode
-                lifecycleScope.launch { fillNotes(holder, status, r.notes()) }
                 showNotes(q.text.toString())
             })
         }
+
+        // Действующий отбор отдельной строкой: снимается одним нажатием,
+        // а не стиранием текста в поиске.
+        activeTag?.let { tag ->
+            val filterRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            root.addView(filterRow, LinearLayout.LayoutParams(-1, -2).also {
+                it.topMargin = dp(8)
+            })
+            val hue = classHues[tag]
+            val c = if (hue == null) 0xFF8A8A98.toInt() else VaultHues.color(hue, 12)
+            filterRow.addView(chip("#" + tag + "   ✕", c) {
+                activeTag = null
+                showNotes(q.text.toString())
+            })
+            filterRow.addView(chip("Все классы", 0xFF8A8A98.toInt()) {
+                activeTag = null
+                showNotes(q.text.toString())
+            })
+        }
+
         root.addView(status)
 
         // Список со своей прокруткой: примерно до середины экрана.
@@ -467,12 +504,12 @@ class VaultActivity : AppCompatActivity() {
         }
         root.addView(rootsScroll, LinearLayout.LayoutParams(-1, rootsHeight))
 
+        // Нижняя панель только навигационная: поиск уехал наверх к полю.
+        // Оттенок сообщает ТИП действия - создание, просмотр, уход.
         val bottom = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        root.addView(bottom, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(6) })
-        bottom.addView(tabButton("Найти") {
-            if (!busy) runSearch(q.text.toString(), holder, status)
-        })
-        bottom.addView(tabButton("Новая") {
+        root.addView(bottom, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(10) })
+        bottom.addView(tabButton("Новая", VaultIcon.Kind.PLUS,
+            getColor(R.color.accent_violet_bright)) {
             if (!busy) askText("Название заметки", "") { name ->
                 lifecycleScope.launch {
                     val id = r.createNote(if (name.isBlank()) "Без названия" else name)
@@ -481,8 +518,12 @@ class VaultActivity : AppCompatActivity() {
                 }
             }
         })
-        bottom.addView(tabButton("Корни") { if (!busy) showRoots() })
-        bottom.addView(tabButton("Закрыть") { closeVault() })
+        bottom.addView(tabButton("Корни", VaultIcon.Kind.ROOTS, 0xFF8FA8C8.toInt()) {
+            if (!busy) showRoots()
+        })
+        bottom.addView(tabButton("Закрыть", VaultIcon.Kind.CLOSE, 0xFF8A8A98.toInt()) {
+            closeVault()
+        })
 
         q.imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
         q.setOnEditorActionListener { _, _, _ ->
@@ -493,8 +534,12 @@ class VaultActivity : AppCompatActivity() {
         lifecycleScope.launch {
             val (list, together) = r.classes()
             classHues = list.associate { it.name to it.hue }
-            if (preset.isBlank()) fillNotes(holder, status, r.notes())
-            else runSearch(preset, holder, status)
+            val all = r.notes()
+            val shown = activeTag?.let { tag ->
+                all.filter { n -> n.tags.any { it.trim().lowercase() == tag } }
+            } ?: all
+            if (query.isBlank()) fillNotes(holder, status, shown)
+            else runSearch(query, holder, status)
 
             if (list.isNotEmpty()) {
                 val members = r.classMembers()
@@ -1446,6 +1491,31 @@ class VaultActivity : AppCompatActivity() {
         for (n in names) row.addView(chip("→ " + n, accent) { openByTitle(n) })
     }
 
+    /** Квадратная кнопка с одной иконкой. Для действий рядом с полем. */
+    private fun iconButton(icon: VaultIcon.Kind, describe: String, tint: Int,
+                           action: () -> Unit): TextView {
+        val bg = GradientDrawable().apply {
+            cornerRadius = dp(9).toFloat()
+            setColor(SURFACE_SUNKEN)
+            setStroke(dp(1), LINE_EDGE)
+        }
+        val t = TextView(this).apply {
+            gravity = Gravity.CENTER
+            contentDescription = describe
+            isClickable = true
+            background = android.graphics.drawable.RippleDrawable(
+                android.content.res.ColorStateList.valueOf(0x2AFFFFFF), bg, null
+            )
+            setCompoundDrawablesRelativeWithIntrinsicBounds(
+                VaultIcon(icon, tint, dp(22)), null, null, null)
+            setOnClickListener { if (!busy) action() }
+        }
+        t.layoutParams = LinearLayout.LayoutParams(dp(52), dp(46)).also {
+            it.marginStart = dp(8)
+        }
+        return t
+    }
+
     /** Маленькая нажимаемая метка. Цвет несёт смысл, форма одинакова. */
     private fun chip(label: String, color: Int, action: () -> Unit): TextView {
         val bg = GradientDrawable().apply {
@@ -1525,7 +1595,15 @@ class VaultActivity : AppCompatActivity() {
     private fun tabButton(label: String, action: () -> Unit): TextView =
         tabButton(label, false, action)
 
-    private fun tabButton(label: String, active: Boolean, action: () -> Unit): TextView {
+    private fun tabButton(label: String, icon: VaultIcon.Kind, tint: Int,
+                          action: () -> Unit): TextView =
+        tabButton(label, false, icon, tint, action)
+
+    private fun tabButton(label: String, active: Boolean, action: () -> Unit): TextView =
+        tabButton(label, active, null, 0, action)
+
+    private fun tabButton(label: String, active: Boolean, icon: VaultIcon.Kind?,
+                          tint: Int, action: () -> Unit): TextView {
         val bg = GradientDrawable().apply {
             cornerRadius = dp(9).toFloat()
             setColor(if (active) 0xFF1E1A2A.toInt() else 0xFF121218.toInt())
@@ -1540,10 +1618,20 @@ class VaultActivity : AppCompatActivity() {
             includeFontPadding = false
             gravity = Gravity.CENTER
             minHeight = dp(46)
-            height = dp(46)
-            setTextColor(if (active) getColor(R.color.accent_violet_bright)
-                         else 0xFFA9A4BC.toInt())
+            height = if (icon != null) dp(62) else dp(46)
+            setTextColor(when {
+                active -> getColor(R.color.accent_violet_bright)
+                icon != null -> tint
+                else -> 0xFFA9A4BC.toInt()
+            })
             setPadding(dp(4), 0, dp(4), 0)
+            if (icon != null) {
+                // Иконка над подписью: в ряду из трёх вкладок значок
+                // слева съедал бы ширину у самого слова.
+                setCompoundDrawablesRelativeWithIntrinsicBounds(
+                    null, VaultIcon(icon, tint, dp(20)), null, null)
+                compoundDrawablePadding = dp(3)
+            }
             isClickable = true
             background = android.graphics.drawable.RippleDrawable(
                 android.content.res.ColorStateList.valueOf(0x2AFFFFFF), bg, null
@@ -1554,7 +1642,8 @@ class VaultActivity : AppCompatActivity() {
             ellipsize = android.text.TextUtils.TruncateAt.END
             setOnClickListener { if (!busy) action() }
         }
-        t.layoutParams = LinearLayout.LayoutParams(0, dp(46), 1f).also {
+        t.layoutParams = LinearLayout.LayoutParams(0, if (icon != null) dp(62) else dp(46), 1f)
+            .also {
             it.marginStart = dp(3)
             it.marginEnd = dp(3)
         }
