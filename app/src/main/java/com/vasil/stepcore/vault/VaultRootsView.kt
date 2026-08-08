@@ -44,6 +44,16 @@ class VaultRootsView(context: Context) : View(context) {
     private var onPick: ((String) -> Unit)? = null
     private var onNote: ((Long) -> Unit)? = null
 
+    /**
+     * Выбранная жила. Пока ничего не выбрано, дуг НЕТ ВОВСЕ.
+     *
+     * Все связи разом - это паутина: при десятке классов уже два-три
+     * десятка дуг, и понять, что с чем связано, невозможно. Выбор
+     * превращает общую карту в карту одного класса, а это и есть вопрос,
+     * который человек задаёт: "с чем связано вот это".
+     */
+    private var picked: String? = null
+
     /** Где нарисован каждый узелок: нужно для попадания пальцем. */
     private val hits = ArrayList<Triple<Float, Float, Node>>()
 
@@ -62,8 +72,15 @@ class VaultRootsView(context: Context) : View(context) {
         const val LANE_DP = 56f
     }
 
+    /** Снять выделение: карта возвращается к чистому виду. */
+    fun clearPick() {
+        picked = null
+        invalidate()
+    }
+
     fun setData(s: List<Strand>, w: List<Weave>,
                 pick: (String) -> Unit, note: (Long) -> Unit = {}) {
+        picked = null
         strands = s
         weaves = w
         onPick = pick
@@ -139,7 +156,19 @@ class VaultRootsView(context: Context) : View(context) {
             if (dx < bestDx) { bestDx = dx; best = i }
         }
         val step = width.toFloat() / (strands.size + 1)
-        if (best >= 0 && bestDx < step / 2f) onPick?.invoke(strands[best].name)
+        if (best >= 0 && bestDx < step / 2f) {
+            // Первый тап выделяет и показывает связи, второй по той же
+            // жиле - отбирает класс в списке. Разделение намеренное:
+            // посмотреть связи не должно менять содержимое экрана.
+            val name = strands[best].name
+            if (picked == name) {
+                picked = null
+                onPick?.invoke(name)
+            } else {
+                picked = name
+                invalidate()
+            }
+        }
         return true
     }
 
@@ -161,7 +190,11 @@ class VaultRootsView(context: Context) : View(context) {
         val maxCount = (strands.maxOfOrNull { it.count } ?: 1).coerceAtLeast(1)
 
         // Сплетения рисуются первыми: они фон, жилы поверх.
+        // Без выделения не рисуются вовсе - иначе паутина.
+        val sel = picked
         for (w in weaves) {
+            if (sel == null) break
+            if (w.a != sel && w.b != sel) continue
             val ia = strands.indexOfFirst { it.name == w.a }
             val ib = strands.indexOfFirst { it.name == w.b }
             if (ia < 0 || ib < 0) continue
@@ -174,18 +207,31 @@ class VaultRootsView(context: Context) : View(context) {
             val path = Path()
             path.moveTo(xa, y)
             path.quadTo((xa + xb) / 2f, y + 46f * d * k, xb, y)
-            weavePaint.strokeWidth = (0.9f + 2.2f * k) * d
+            weavePaint.strokeWidth = (1.4f + 3.4f * k) * d
             weavePaint.color = blend(
                 strands[ia].color, strands[ib].color,
-                (70 + 90 * k).toInt().coerceIn(40, 190)
+                (150 + 90 * k).toInt().coerceIn(120, 255)
             )
             canvas.drawPath(path, weavePaint)
+
+            // Число общих заметок прямо на дуге: толщина показывает
+            // силу приблизительно, число - точно.
+            textPaint.color = weavePaint.color
+            textPaint.textSize = 10f * d
+            textPaint.textAlign = Paint.Align.CENTER
+            canvas.drawText(w.weight.toString(), (xa + xb) / 2f,
+                y + 30f * d * k, textPaint)
         }
 
         for ((i, s) in strands.withIndex()) {
             val x = xOf(i)
             val thick = (2.2f + 7f * (s.count.toFloat() / maxCount)) * d
-            veinPaint.color = s.color
+            // Не связанное с выбранным гаснет, но не исчезает: карта
+            // должна оставаться картой, а не одной подсвеченной линией.
+            val related = sel == null || s.name == sel ||
+                weaves.any { (it.a == sel && it.b == s.name) || (it.b == sel && it.a == s.name) }
+            val dim = sel != null && !related
+            veinPaint.color = if (dim) (s.color and 0xFFFFFF) or 0x38000000 else s.color
             veinPaint.strokeWidth = thick
             veinPaint.strokeCap = Paint.Cap.ROUND
             canvas.drawLine(x, top, x, bottom, veinPaint)
@@ -193,7 +239,7 @@ class VaultRootsView(context: Context) : View(context) {
             // Узелки: до двенадцати, дальше глаз всё равно не считает.
             val shown = s.nodes.take(12)
             val nodes = if (shown.isEmpty()) s.count.coerceAtMost(12) else shown.size
-            nodePaint.color = s.color
+            nodePaint.color = veinPaint.color
             for (n in 0 until nodes) {
                 val t = if (nodes == 1) 0.5f else n.toFloat() / (nodes - 1)
                 val y = top + (bottom - top) * (0.06f + 0.88f * t)
@@ -218,8 +264,9 @@ class VaultRootsView(context: Context) : View(context) {
                 textPaint.textAlign = Paint.Align.CENTER
             }
 
-            textPaint.color = s.color
-            textPaint.textSize = 11f * d
+            textPaint.color = if (dim) (s.color and 0xFFFFFF) or 0x55000000 else s.color
+            textPaint.textSize = if (s.name == sel) 12.5f * d else 11f * d
+            textPaint.textAlign = Paint.Align.CENTER
             val label = if (s.name.length > 9) s.name.take(8) + "…" else s.name
             canvas.drawText(label, x, height - 9f * d, textPaint)
         }

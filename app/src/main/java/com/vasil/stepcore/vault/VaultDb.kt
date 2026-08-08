@@ -526,6 +526,28 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
         return out
     }
 
+    /** Разбор структуры тайника для экрана «Корни». */
+    class Lab(val summary: VaultInsight.Summary,
+              val patterns: List<VaultInsight.Pattern>,
+              val classes: List<ClassInfo>,
+              val together: Map<Pair<String, String>, Int>)
+
+    /**
+     * Всё для экрана-лаборатории одним проходом.
+     *
+     * Считается по заголовкам заметок: текст страниц не читается вовсе,
+     * поэтому экран открывается мгновенно даже на большом тайнике.
+     */
+    suspend fun lab(): Lab {
+        val heads = notes()
+        val (list, together) = classes()
+        val noteTags = heads.map { h -> h.tags.map { it.trim().lowercase() }.distinct() }
+        val counts = list.associate { it.name to it.count }
+        val summary = VaultInsight.summarize(noteTags, counts, together)
+        val patterns = VaultInsight.patterns(counts, together, summary.lonely)
+        return Lab(summary, patterns, list, together)
+    }
+
     /** Один снимок страницы: что было и когда. */
     class Snap(val id: Long, val ms: Long, val text: String, val fork: Boolean)
 

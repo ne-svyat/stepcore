@@ -1734,80 +1734,196 @@ class VaultActivity : AppCompatActivity() {
      * Тап по жиле фильтрует список заметок по этому классу — картинка не
      * просто красивая, она рабочий указатель.
      */
+    /**
+     * Корни целиком: числа, закономерности и карта.
+     *
+     * Экран-лаборатория, а не картинка. Всё считается по заголовкам
+     * заметок - текст страниц не читается, поэтому открывается мгновенно.
+     */
     private fun showRoots() {
         mount(scrollable = true)
-        val r = repo ?: return
         screen = Screen.ROOTS
         root.removeAllViews()
+        root.setPadding(dp(20), dp(20), dp(20), dp(28))
         editor = null
-        title("Корни")
+        title("Корни", "Структура тайника целиком")
 
+        val r = repo ?: return
         val status = TextView(this).apply {
             textSize = 13f
             setTextColor(0xFF9A9AA5.toInt())
-            setPadding(0, 0, 0, dp(8))
-            text = "Считаю классы…"
+            text = "Считаю…"
         }
         root.addView(status)
-
-        // Полотно обязано лежать В ПРОКРУТКЕ, как и на главном экране.
-        // Здесь я это упустил: вьюха сама считает нужную ширину, но в
-        // обычной колонке лишнее просто обрезается - листать нечем.
-        val view = VaultRootsView(this)
-        val height = (resources.displayMetrics.heightPixels * 0.52f).toInt()
-        val scroll = HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false
-            addView(view, FrameLayout.LayoutParams(-2, height))
-        }
-        root.addView(scroll, LinearLayout.LayoutParams(-1, height))
+        val holder = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        root.addView(holder)
         secondaryButton("←  К списку заметок").setOnClickListener { goBack() }
 
         lifecycleScope.launch {
-            val (list, together) = r.classes()
-            classHues = list.associate { it.name to it.hue }
-            if (list.isEmpty()) {
-                status.text = "Классов пока нет. Открой заметку, нажми «Теги заметки» " +
-                    "и впиши слово — оно станет классом и получит свой оттенок."
-                return@launch
-            }
-            status.text = "Классов: " + list.size + " · заметок с классами: " +
-                list.sumOf { it.count } + "\nТолще жила — больше заметок. " +
-                "Дуга внизу — классы часто идут вместе. Тап по жиле — отбор."
+            val lab = withContext(Dispatchers.Default) { r.lab() }
+            val s = lab.summary
+            status.text = s.notes.toString() + " заметок · " + s.classes + " классов · " +
+                s.links + " связей"
 
-            // Порядок жил по тону, а не по весу: тогда соседние жилы
-            // похожи по цвету, и близкие темы стоят рядом физически.
-            val ordered = list.sortedBy { it.hue }
+            holder.addView(statBlock("Связность", listOf(
+                "классов на заметку" to "%.1f".format(s.avgClassesPerNote),
+                "заметок с классами" to s.classified.toString() + " из " + s.notes,
+                "без классов" to s.lonely.toString(),
+                "крупнейший класс" to ((s.biggestClass ?: "—") + " · " + s.biggestClassCount)
+            )))
+
+            if (lab.patterns.isNotEmpty()) {
+                holder.addView(sectionTitle("Замеченное"))
+                for (p in lab.patterns) {
+                    holder.addView(patternRow(p))
+                }
+            }
+
+            if (lab.classes.isNotEmpty()) {
+                holder.addView(sectionTitle("Классы"))
+                val maxC = lab.classes.maxOf { it.count }
+                for (c in lab.classes) {
+                    holder.addView(classBar(c, maxC))
+                }
+            }
+
+            if (lab.together.isNotEmpty()) {
+                holder.addView(sectionTitle("Пары классов"))
+                for ((pair, w) in lab.together.entries.sortedByDescending { it.value }.take(12)) {
+                    holder.addView(TextView(this@VaultActivity).apply {
+                        // Число общих заметок, а не выдуманный процент
+                        // сходства: считать мы умеем именно это.
+                        text = pair.first + "  ↔  " + pair.second + "   ·   общих заметок: " + w
+                        textSize = 14f
+                        setTextColor(0xFFCFCFDA.toInt())
+                        setPadding(dp(12), dp(8), dp(12), dp(8))
+                    })
+                }
+            }
+
+            holder.addView(sectionTitle("Карта"))
+            holder.addView(TextView(this@VaultActivity).apply {
+                text = "Тап по жиле — показать её связи. Второй тап — отобрать класс."
+                textSize = 12f
+                setTextColor(0xFF7A7A88.toInt())
+                setPadding(0, 0, 0, dp(8))
+            })
+            val view = VaultRootsView(this@VaultActivity)
+            val height = (resources.displayMetrics.heightPixels * 0.42f).toInt()
+            val scroll = HorizontalScrollView(this@VaultActivity).apply {
+                isHorizontalScrollBarEnabled = false
+                addView(view, FrameLayout.LayoutParams(-2, height))
+            }
+            holder.addView(scroll, LinearLayout.LayoutParams(-1, height))
+
+            val members = r.classMembers()
+            val ordered = lab.classes.sortedByDescending { it.heat }
             view.setData(
-                ordered.map {
-                    VaultRootsView.Strand(it.name, it.count, VaultHues.color(it.hue, it.count))
+                ordered.map { c ->
+                    VaultRootsView.Strand(c.name, c.count, VaultHues.color(c.hue, c.count),
+                        (members[c.name] ?: emptyList())
+                            .map { VaultRootsView.Node(it.first, it.second) })
                 },
-                together.entries
-                    .sortedByDescending { it.value }
-                    .take(24)
+                lab.together.entries.sortedByDescending { it.value }.take(40)
                     .map { VaultRootsView.Weave(it.key.first, it.key.second, it.value) },
-                // Оба обработчика ЯВНО. Висячая лямбда после появления
-                // четвёртого параметра стала привязываться к note вместо
-                // pick, и это не поймал бы никакой беглый взгляд.
-                { name -> pendingTag = name; showNotes() },
+                { name -> pendingTag = name; focusTag = name; showNotes() },
                 { id -> openForRead(id, 0) }
             )
         }
     }
 
-    /**
-     * Чипы классов заметки: тап — сразу список этого класса.
-     *
-     * Раньше теги были кнопкой в самом низу и одной серой строкой. Теперь
-     * они наверху, каждый своим оттенком, и работают переходом. Чип «＋»
-     * открывает правку тегов — отдельная кнопка внизу больше не нужна.
-     */
-    /**
-     * Чипы классов заметки.
-     *
-     * Кнопка «＋» стоит ПЕРВОЙ и вне прокрутки: добавляют класс чаще, чем
-     * перечитывают уже проставленные, а при четырёх-пяти классах плюс в
-     * конце пришлось бы искать прокруткой.
-     */
+    private fun sectionTitle(t: String): TextView = TextView(this).apply {
+        text = t
+        textSize = 17f
+        typeface = android.graphics.Typeface.DEFAULT_BOLD
+        setTextColor(0xFFF2F0F7.toInt())
+        setPadding(0, dp(18), 0, dp(8))
+    }
+
+    /** Блок из пар «что — сколько». */
+    private fun statBlock(title: String, rows: List<Pair<String, String>>): View {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(9).toFloat()
+                setColor(SURFACE_SUNKEN)
+                setStroke(dp(1), LINE_EDGE)
+            }
+        }
+        box.addView(TextView(this).apply {
+            text = title
+            textSize = 15f
+            setTextColor(0xFFA9A4BC.toInt())
+            setPadding(0, 0, 0, dp(8))
+        })
+        for ((k, v) in rows) {
+            val line = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            line.addView(TextView(this).apply {
+                text = k
+                textSize = 14f
+                setTextColor(0xFF8A8A98.toInt())
+            }, LinearLayout.LayoutParams(0, -2, 1f))
+            line.addView(TextView(this).apply {
+                text = v
+                textSize = 14f
+                setTextColor(0xFFEEEEEE.toInt())
+            })
+            box.addView(line, LinearLayout.LayoutParams(-1, -2).also { it.bottomMargin = dp(6) })
+        }
+        box.layoutParams = LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(10) }
+        return box
+    }
+
+    /** Найденная закономерность: значок, суть, объяснение. */
+    private fun patternRow(p: VaultInsight.Pattern): View {
+        val icon = when (p.kind) {
+            VaultInsight.Pattern.Kind.TWINS -> VaultIcon.Kind.TRAIL
+            VaultInsight.Pattern.Kind.CENTER -> VaultIcon.Kind.ROOTS
+            VaultInsight.Pattern.Kind.CHAIN -> VaultIcon.Kind.JUMP
+            VaultInsight.Pattern.Kind.ORPHAN -> VaultIcon.Kind.TAG
+            else -> VaultIcon.Kind.LIST
+        }
+        return menuRow(icon, p.title, p.detail) { }
+    }
+
+    /** Класс полосой: длина по числу заметок, цвет свой. */
+    private fun classBar(c: VaultRepo.ClassInfo, maxCount: Int): View {
+        val color = VaultHues.color(c.hue, c.count)
+        val line = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isClickable = true
+            setPadding(0, dp(5), 0, dp(5))
+            setOnClickListener { pendingTag = c.name; focusTag = c.name; showNotes() }
+        }
+        line.addView(TextView(this).apply {
+            text = c.name
+            textSize = 14f
+            setTextColor(color)
+            isSingleLine = true
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        }, LinearLayout.LayoutParams(dp(110), -2))
+        val bar = View(this).apply {
+            background = GradientDrawable().apply {
+                cornerRadius = dp(3).toFloat()
+                setColor(color)
+            }
+        }
+        val share = c.count.toFloat() / maxOf(1, maxCount)
+        line.addView(bar, LinearLayout.LayoutParams(0, dp(10), share.coerceAtLeast(0.06f)))
+        line.addView(TextView(this).apply {
+            text = "  " + c.count
+            textSize = 13f
+            setTextColor(0xFF8A8A98.toInt())
+        })
+        // Пустой довесок, чтобы полосы разной длины были сравнимы между
+        // собой, а не растягивались каждая на всю ширину.
+        line.addView(View(this), LinearLayout.LayoutParams(0, dp(1),
+            (1f - share).coerceAtLeast(0.01f)))
+        return line
+    }
+
     private fun chipsRow(tags: List<String>, noteId: Long) {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
