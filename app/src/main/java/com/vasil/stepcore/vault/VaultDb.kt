@@ -498,6 +498,34 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
         return added
     }
 
+    /** Заголовок из текста: где он и какого уровня. */
+    class Section(val page: Int, val level: Int, val text: String)
+
+    /**
+     * Оглавление ВСЕЙ заметки, а не одной страницы.
+     *
+     * В заметке на сотни страниц оглавление отдельной страницы почти
+     * бесполезно: искать надо по всему тексту. Страницы читаются
+     * порциями, как в поиске - разом их держать в памяти нельзя.
+     */
+    suspend fun sections(noteId: Long, limit: Int = 500): List<Section> {
+        val n = dao.note(noteId) ?: return emptyList()
+        val out = ArrayList<Section>()
+        var from = 0
+        while (from < n.pageCount && out.size < limit) {
+            for (p in dao.pagesRange(noteId, from, from + PAGE_CHUNK)) {
+                val text = VaultCrypto.decrypt(dataKey, p.body)?.toString(Charsets.UTF_8)
+                    ?: continue
+                for (h in VaultText.outline(text)) {
+                    out.add(Section(p.idx, h.level, h.text))
+                    if (out.size >= limit) break
+                }
+            }
+            from += PAGE_CHUNK
+        }
+        return out
+    }
+
     /** Один снимок страницы: что было и когда. */
     class Snap(val id: Long, val ms: Long, val text: String, val fork: Boolean)
 

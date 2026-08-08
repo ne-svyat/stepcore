@@ -146,6 +146,15 @@ class VaultActivity : AppCompatActivity() {
 
     /** Следующее открытие заметки - чтение, а не продолжение правки. */
     private var openingForRead = false
+
+    /**
+     * Пришли ли в чтение из правки.
+     *
+     * Нужно для возврата: нажал "Чтение", посмотрел, назад - и снова в
+     * правке, а не в списке заметок. Иначе просмотр оформления стоит
+     * повторного открытия заметки.
+     */
+    private var readFromEdit = false
     /**
      * Способ показа экрана.
      *
@@ -220,6 +229,78 @@ class VaultActivity : AppCompatActivity() {
             VaultSession.key()?.let { repo = VaultRepo(this, it); images = VaultImages(this, it) }
             showNotes()
         } else showEntrance()
+    }
+
+    /**
+     * Шапка страницы: назад, имя заметки, номер страницы.
+     *
+     * Имя вместо слова "правка" - по нему человек узнаёт, где он. Тап по
+     * имени переименовывает: раньше для этого был чип среди классов, где
+     * он терялся. Тап по строке страниц - переход на страницу.
+     */
+    private fun pageHeader(noteId: Long, mode: String) {
+        val head = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        root.addView(head, LinearLayout.LayoutParams(-1, -2))
+
+        // Кнопка назад в шапке: свайп есть не на всех прошивках и не у
+        // всех включён, а уходить со страницы надо всегда.
+        head.addView(ImageView(this).apply {
+            setImageDrawable(VaultIcon(VaultIcon.Kind.PREV,
+                VaultIcon.tintFor(VaultIcon.Kind.PREV), dp(22)))
+            contentDescription = "Назад"
+            isClickable = true
+            background = android.graphics.drawable.RippleDrawable(
+                android.content.res.ColorStateList.valueOf(0x22FFFFFF), null, null)
+            setPadding(dp(4), dp(4), dp(10), dp(4))
+            setOnClickListener { goBack() }
+        }, LinearLayout.LayoutParams(dp(40), dp(40)))
+
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        head.addView(col, LinearLayout.LayoutParams(0, -2, 1f))
+
+        val name = rowTexts[noteId]?.title ?: "Заметка"
+        col.addView(TextView(this).apply {
+            text = name
+            textSize = 21f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setTextColor(0xFFF2F0F7.toInt())
+            isSingleLine = true
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            isClickable = true
+            setOnClickListener { renameNote(noteId) }
+        })
+        col.addView(TextView(this).apply {
+            text = mode + " · стр. " + (openIdx + 1) + " из " + openPages + "  ·  тап — перейти"
+            textSize = 12f
+            setTextColor(0xFF8A8A98.toInt())
+            isClickable = true
+            setOnClickListener { askJump() }
+        })
+
+        root.addView(View(this).apply { setBackgroundColor(LINE_SOFT) },
+            LinearLayout.LayoutParams(-1, dp(1)).also {
+                it.topMargin = dp(10); it.bottomMargin = dp(8)
+            })
+    }
+
+    private fun renameNote(noteId: Long) {
+        val r = repo ?: return
+        val current = rowTexts[noteId]?.title ?: ""
+        askText("Название заметки", current) { v ->
+            if (v.isBlank()) { toast("Название не может быть пустым"); return@askText }
+            leavePage {
+                lifecycleScope.launch {
+                    r.rename(noteId, v)
+                    rowTexts.clear()
+                    for (h in r.notes()) rowTexts[h.id] = h
+                    toast("Переименовано")
+                    openNote(noteId, openIdx)
+                }
+            }
+        }
     }
 
     /**
@@ -797,6 +878,7 @@ class VaultActivity : AppCompatActivity() {
     /** Открыть заметку на чтение. Правка - по вкладке. */
     private fun openForRead(noteId: Long, idx: Int) {
         openingForRead = true
+        readFromEdit = false
         repo?.let { rp ->
             lifecycleScope.launch {
                 focusTag = rp.notes().firstOrNull { it.id == noteId }
@@ -873,14 +955,10 @@ class VaultActivity : AppCompatActivity() {
         val r = repo ?: return
         val noteId = openNoteId
 
-        title("Правка · стр. " + (openIdx + 1) + "/" + openPages,
-            if (top.isEmpty()) "Тап по заголовку — перейти на страницу"
-            else top.joinToString(" · ") + "   ·   тап по заголовку — перейти")
-        root.getChildAt(0).also {
-            it.isClickable = true
-            it.setOnClickListener { askJump() }
-        }
-
+        // В шапке ИМЯ заметки, а не слово "Правка": имя - это то, по чему
+        // человек узнаёт, где он. Тап по имени переименовывает, тап по
+        // строке страниц - переходит на страницу.
+        pageHeader(noteId, "✎ правка")
         chipsRow(openTags, noteId)
 
         val e = EditText(this).apply {
@@ -950,8 +1028,14 @@ class VaultActivity : AppCompatActivity() {
             pickImage.launch("image/*")
         })
         tools.addView(tabButton("Чтение", VaultIcon.Kind.EYE, VaultIcon.tintFor(VaultIcon.Kind.EYE)) {
-            preview = true
-            leavePage { openNote(noteId, openIdx) }
+            // Явный переход в чтение с пометкой, откуда пришли: назад
+            // вернёт сюда же, в правку.
+            leavePage {
+                readFromEdit = true
+                preview = true
+                openingForRead = false
+                openNote(noteId, openIdx)
+            }
         })
         tools.addView(tabButton("Тропы", VaultIcon.Kind.TRAIL, VaultIcon.tintFor(VaultIcon.Kind.TRAIL)) {
             leavePage { showTrails(noteId, openIdx) }
@@ -968,21 +1052,117 @@ class VaultActivity : AppCompatActivity() {
      * остаётся под пальцем, редкое уходит сюда - иначе подвал разрастается
      * и снова начинает выталкивать текст.
      */
+    /**
+     * Редкие действия страницы одним окном.
+     *
+     * Не голый список строк, а строки со значками и пояснениями: список
+     * из четырёх одинаковых надписей читается как текст, и человек
+     * каждый раз перечитывает все четыре.
+     */
     private fun moreMenu(noteId: Long, e: EditText?) {
-        val items = arrayOf("Разделы страницы", "История правок",
-                            "К списку заметок", "Удалить заметку")
-        AlertDialog.Builder(this)
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+        }
+        val dialog = AlertDialog.Builder(this)
             .setTitle("Ещё")
-            .setItems(items) { _, which ->
-                when (which) {
-                    0 -> if (e != null) showOutline(e) else toast("Только в правке")
-                    1 -> leavePage { showHistory(noteId, openIdx) }
-                    2 -> leavePage { showNotes() }
-                    else -> askDelete(noteId)
-                }
+            .setView(box)
+            .setNegativeButton("Закрыть", null)
+            .create()
+
+        box.addView(menuRow(VaultIcon.Kind.LIST, "Разделы заметки",
+            "Заголовки по ВСЕМ страницам — переход к любому") {
+            dialog.dismiss()
+            showSections(noteId)
+        })
+        box.addView(menuRow(VaultIcon.Kind.HISTORY, "История правок",
+            "Пятьдесят версий этой страницы и развилки") {
+            dialog.dismiss()
+            leavePage { showHistory(noteId, openIdx) }
+        })
+        box.addView(menuRow(VaultIcon.Kind.PREV, "К списку заметок",
+            "То же, что кнопка назад в шапке") {
+            dialog.dismiss()
+            leavePage { showNotes() }
+        })
+        box.addView(menuRow(VaultIcon.Kind.TRASH, "Удалить заметку",
+            "Со всеми страницами и картинками. Навсегда") {
+            dialog.dismiss()
+            askDelete(noteId)
+        })
+        dialog.show()
+    }
+
+    /** Строка меню: значок, название, пояснение. */
+    private fun menuRow(icon: VaultIcon.Kind, title: String, explain: String,
+                        action: () -> Unit): View {
+        val tint = VaultIcon.tintFor(icon)
+        val bg = GradientDrawable().apply {
+            cornerRadius = dp(9).toFloat()
+            setColor(SURFACE_SUNKEN)
+            setStroke(dp(1), (tint and 0xFFFFFF) or 0x66000000)
+        }
+        val line = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            isClickable = true
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            background = android.graphics.drawable.RippleDrawable(
+                android.content.res.ColorStateList.valueOf(0x2AFFFFFF), bg, null)
+            setOnClickListener { action() }
+        }
+        line.addView(ImageView(this).apply {
+            setImageDrawable(VaultIcon(icon, tint, dp(20)))
+        }, LinearLayout.LayoutParams(dp(20), dp(20)).also { it.marginEnd = dp(12) })
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        col.addView(TextView(this).apply {
+            text = title
+            textSize = 15f
+            setTextColor(tint)
+        })
+        col.addView(TextView(this).apply {
+            text = explain
+            textSize = 12f
+            setTextColor(0xFF8A8A98.toInt())
+        })
+        line.addView(col, LinearLayout.LayoutParams(-1, -2))
+        line.layoutParams = LinearLayout.LayoutParams(-1, -2).also { it.bottomMargin = dp(8) }
+        return line
+    }
+
+    /**
+     * Разделы ВСЕЙ заметки, а не одной страницы.
+     *
+     * В заметке на сотни страниц оглавление отдельной страницы почти
+     * бесполезно: искать надо по всему тексту. Раньше здесь было
+     * "только в правке" - бесполезный ответ на осмысленный вопрос.
+     */
+    private fun showSections(noteId: Long) {
+        val r = repo ?: return
+        busy = true
+        toast("Собираю разделы…")
+        lifecycleScope.launch {
+            val list = withContext(Dispatchers.Default) { r.sections(noteId) }
+            busy = false
+            if (list.isEmpty()) {
+                toast("Заголовков нет. Начни строку с # или нажми «Заголовок»")
+                return@launch
             }
-            .setNegativeButton("Отмена", null)
-            .show()
+            val labels = list.map { s ->
+                "  ".repeat(s.level - 1) + s.text + "   · стр. " + (s.page + 1)
+            }.toTypedArray()
+            AlertDialog.Builder(this@VaultActivity)
+                .setTitle("Разделы · всего " + list.size)
+                .setItems(labels) { _, which ->
+                    val s = list[which]
+                    leavePage {
+                        pendingFind = s.text
+                        openNote(noteId, s.page)
+                    }
+                }
+                .setNegativeButton("Закрыть", null)
+                .show()
+        }
     }
 
     private fun askJump() {
@@ -1097,14 +1277,7 @@ class VaultActivity : AppCompatActivity() {
         val noteId = openNoteId
         val im = images
 
-        title("Стр. " + (openIdx + 1) + "/" + openPages,
-            if (top.isEmpty()) "Тап по заголовку — перейти на страницу"
-            else top.joinToString(" · ") + "   ·   тап по заголовку — перейти")
-        root.getChildAt(0).also {
-            it.isClickable = true
-            it.setOnClickListener { askJump() }
-        }
-
+        pageHeader(noteId, "чтение")
         chipsRow(openTags, noteId)
 
         val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -1170,7 +1343,9 @@ class VaultActivity : AppCompatActivity() {
         })
         tools.addView(tabButton("Правка", VaultIcon.Kind.PENCIL,
             VaultIcon.tintFor(VaultIcon.Kind.PENCIL)) {
+            readFromEdit = false
             preview = false
+            openingForRead = false
             openNote(noteId, openIdx)
         })
         tools.addView(tabButton("Ещё", VaultIcon.Kind.LIST, VaultIcon.tintFor(VaultIcon.Kind.LIST)) {
@@ -1320,7 +1495,14 @@ class VaultActivity : AppCompatActivity() {
             // Чтение - главный вид заметки, из него выходим к списку.
             // Раньше отсюда возвращало в ПРАВКУ: открыл заметку, нажал
             // назад - и оказался в редакторе, которого не просил.
-            Screen.PREVIEW -> showNotes()
+            // Из чтения назад: в правку, если пришли оттуда, иначе к
+            // списку. Смотреть оформление не должно стоить повторного
+            // открытия заметки.
+            Screen.PREVIEW -> if (readFromEdit) {
+                readFromEdit = false
+                preview = false
+                openNote(openNoteId, openIdx)
+            } else showNotes()
 
             // Правка возвращает в чтение, а не сразу к списку: цепочка
             // читается как правка -> чтение -> список, в обе стороны
@@ -1619,49 +1801,28 @@ class VaultActivity : AppCompatActivity() {
      * они наверху, каждый своим оттенком, и работают переходом. Чип «＋»
      * открывает правку тегов — отдельная кнопка внизу больше не нужна.
      */
+    /**
+     * Чипы классов заметки.
+     *
+     * Кнопка «＋» стоит ПЕРВОЙ и вне прокрутки: добавляют класс чаще, чем
+     * перечитывают уже проставленные, а при четырёх-пяти классах плюс в
+     * конце пришлось бы искать прокруткой.
+     */
     private fun chipsRow(tags: List<String>, noteId: Long) {
-        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
         val scroll = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
-            addView(row, LinearLayout.LayoutParams(-2, -2))
+            addView(row, FrameLayout.LayoutParams(-2, -2))
         }
-        // Ровно под шапкой: лишний отступ снизу сдвигал ряд классов, и
-        // он выглядел съехавшим.
-        root.addView(scroll, LinearLayout.LayoutParams(-1, dp(34)).also {
-            it.topMargin = dp(2)
-            it.bottomMargin = dp(6)
-        })
 
-        for (t in tags) {
-            val hue = classHues[t.trim().lowercase()]
-            val c = if (hue == null) 0xFF8A8A98.toInt() else VaultHues.color(hue, 12)
-            row.addView(chip("#" + t, c) { pendingTag = t; showNotes() })
-        }
-        // Переименование рядом с классами: и то, и другое - свойства
-        // самой заметки, им место в одной строке.
-        row.addView(chip("✎ имя", 0xFFB9A6E8.toInt()) {
-            val r0 = repo ?: return@chip
-            val current = rowTexts[noteId]?.title ?: ""
-            askText("Название заметки", current) { v ->
-                if (v.isBlank()) { toast("Название не может быть пустым"); return@askText }
-                leavePage {
-                    lifecycleScope.launch {
-                        r0.rename(noteId, v)
-                        toast("Переименовано")
-                        openNote(noteId, openIdx)
-                    }
-                }
-            }
-        })
-        row.addView(chip(if (tags.isEmpty()) "＋ класс" else "＋", 0xFF8A8A98.toInt()) {
+        val plus = chip(if (tags.isEmpty()) "＋ класс" else "＋", 0xFF9FD9A8.toInt()) {
             val r = repo ?: return@chip
             askText("Классы через запятую", tags.joinToString(", ")) { v ->
-                // СНАЧАЛА сохранить страницу, потом менять классы.
-                //
-                // Правка классов перечитывает заметку из базы, а текст в
-                // редакторе к этому моменту ещё не записан - он пропадал
-                // целиком при каждом добавлении класса. Уход со страницы
-                // всегда идёт через leavePage, и здесь тоже.
+                // Сначала сохранить страницу: правка классов перечитывает
+                // заметку из базы, и несохранённый текст пропал бы.
                 leavePage {
                     lifecycleScope.launch {
                         r.setTags(noteId, v)
@@ -1672,7 +1833,21 @@ class VaultActivity : AppCompatActivity() {
                     }
                 }
             }
-        })
+        }
+
+        val line = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        line.addView(plus)
+        line.addView(scroll, LinearLayout.LayoutParams(0, -2, 1f))
+        root.addView(line, LinearLayout.LayoutParams(-1, -2).also { it.bottomMargin = dp(6) })
+
+        for (t in tags) {
+            val hue = classHues[t.trim().lowercase()]
+            val c = if (hue == null) 0xFF8A8A98.toInt() else VaultHues.color(hue, 12)
+            row.addView(chip("#" + t, c) { pendingTag = t; showNotes() })
+        }
     }
 
     /**
