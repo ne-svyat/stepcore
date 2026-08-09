@@ -130,23 +130,28 @@ object VaultMark {
                 val glow = RectF(r.left - spread, r.top - spread,
                     r.right + spread, r.bottom + spread)
                 paint.strokeWidth = density * 1.6f
-                paint.color = ((a * (0x26 / step)).toInt().coerceIn(0, 255) shl 24) or rgb
+                paint.color = ((a * (0x44 / step)).toInt().coerceIn(0, 255) shl 24) or rgb
                 canvas.drawRoundRect(glow, 6 * density + spread, 6 * density + spread, paint)
             }
 
             paint.style = Paint.Style.FILL
-            paint.color = ((a * 0x4A).toInt() shl 24) or rgb
+            paint.color = ((a * 0x7A).toInt().coerceIn(0, 255) shl 24) or rgb
             canvas.drawRoundRect(r, 6 * density, 6 * density, paint)
 
             // Толщина растёт вместе с яркостью: цвета мало, когда страница
             // пёстрая, а толщина заметна боковым зрением.
             paint.style = Paint.Style.STROKE
             paint.strokeWidth = density * (1.2f + a * 1.3f)
-            paint.color = ((0x50 + a * 0xAF).toInt().coerceIn(0, 255) shl 24) or rgb
+            // До полной непрозрачности: приглушённая обводка на тёмном
+            // фоне читается как прозрачная, а не как тонкая.
+            paint.color = ((0x80 + a * 0x7F).toInt().coerceIn(0, 255) shl 24) or rgb
             canvas.drawRoundRect(r, 6 * density, 6 * density, paint)
 
             paint.style = Paint.Style.FILL
-            paint.color = 0xFFFFFFFF.toInt()
+            // На белой ступени белые буквы исчезли бы в собственной
+            // заливке: на светлом тоне пишем тёмным.
+            val bright = ((rgb shr 16 and 0xFF) + (rgb shr 8 and 0xFF) + (rgb and 0xFF)) / 3
+            paint.color = if (bright > 190 && a > 0.35f) 0xFF14131A.toInt() else 0xFFFFFFFF.toInt()
             canvas.drawText(text, start, end, x + pad, y.toFloat(), paint)
 
             paint.color = old
@@ -163,7 +168,20 @@ object VaultMark {
      * сильнее. Переходы плавные - резкая смена читается как поломка
      * отрисовки, а не как замысел.
      */
-    private val STAGES = intArrayOf(0xFFE0483A.toInt(), 0xFF4A90E2.toInt(), 0xFFF2F0F7.toInt())
+    private val STAGES = intArrayOf(
+        0xFFFF2D20.toInt(),   // красный: чистый, без примеси серого
+        0xFF2E7BFF.toInt(),   // синий: прежний был приглушён до пыльного
+        0xFFFFFFFF.toInt()    // белый: именно белый, а не почти белый
+    )
+
+    /**
+     * Тон СТРОКИ: всегда другая ступень, чем у рамки.
+     *
+     * Одинаковый тон у строки и рамки сливал их в одно пятно: рамка
+     * переставала читаться как отдельная вещь. Сдвиг на пол-оборота
+     * держит их разными на всём пути, а не только в начале.
+     */
+    fun lineColor(t: Float): Int = stageColor((t + 0.5f) % 1f)
 
     /** Тон на долю пути от 0 до 1. */
     fun stageColor(t: Float): Int {

@@ -92,6 +92,9 @@ class VaultActivity : AppCompatActivity() {
     /** Принял ли приёмник фокус в прошлый раз. Нужно только для отладки. */
     private var lastFocusGrant = false
 
+    /** Отложенный возврат способности брать фокус. */
+    private var focusBack: Runnable = Runnable { }
+
     /**
      * Отладочная строка про фокус.
      *
@@ -1182,6 +1185,26 @@ class VaultActivity : AppCompatActivity() {
     }
 
     /**
+     * Вернуть полю способность принимать фокус.
+     *
+     * Через полсекунды: за это время перестройка списка успевает пройти,
+     * и раздавать фокус система уже не будет. Возврат способности сам по
+     * себе фокуса не просит - поле просто снова готово к нажатию.
+     *
+     * Отложенное возвращение снимается при уходе с экрана: иначе оно
+     * сработало бы по вьюхе, которой уже нет.
+     */
+    private fun releaseFocusable(v: View) {
+        v.removeCallbacks(focusBack)
+        focusBack = Runnable {
+            v.isFocusableInTouchMode = true
+            v.isFocusable = true
+            updateFocusReport()
+        }
+        v.postDelayed(focusBack, 500L)
+    }
+
+    /**
      * Приёмник фокуса: завести, если его нет или он выброшен из дерева.
      *
      * РАЗМЕР В ТОЧКУ, А НЕ НОЛЬ. Вьюха нулевого размера не считается
@@ -1269,11 +1292,23 @@ class VaultActivity : AppCompatActivity() {
      * значит городить ещё одну сущность.
      */
     private fun hideKeyboard(v: View) {
-        // 1. Фокус - на приёмник. Пока он в поле, система вправе показать
-        //    клавиатуру снова, что бы мы ей ни говорили.
+        // 1. Отбираем у поля саму СПОСОБНОСТЬ брать фокус.
+        //
+        // Отладка показала: запрос фокуса принимался, приёмник его брал -
+        // и всё равно фокус возвращался в поле. Возвращала система: при
+        // перестройке списка она ищет, кому отдать фокус, и первым
+        // подходящим оказывается то же поле. Спорить с ней бесполезно.
+        //
+        // Пока поле не фокусируемо, отдавать фокус некому и клавиатуре
+        // незачем висеть. Способность возвращается через полсекунды:
+        // нажать и печатать снова можно, но само по себе поле фокус уже
+        // не заберёт.
         val sink = ensureSink()
+        v.isFocusableInTouchMode = false
+        v.isFocusable = false
         v.clearFocus()
         lastFocusGrant = sink.requestFocus()
+        releaseFocusable(v)
 
         // 2. Гасим. Через окно, а не через вьюху: у вьюхи, только что
         //    потерявшей фокус, распорядителя может уже не быть.
@@ -2523,10 +2558,13 @@ class VaultActivity : AppCompatActivity() {
                 // Короткая вспышка на прощание: последний удар ярче всех,
                 // иначе конец подсветки просто не замечают.
                 val bye = if (t > 0.93f) ((t - 0.93f) / 0.07f) * 0.8f else 0f
+                // Строка - ДРУГОЙ ступенью, чем рамка: одинаковый тон
+                // сливал их в одно пятно, и рамка переставала читаться.
+                val lineTone = VaultMark.lineColor(t)
                 for ((i, ls) in lineSpans.withIndex()) {
                     setBg(ls.first, keys[i], ls.second, ls.third,
-                        (((fade * 0x66) + bye * 0x40).toInt().coerceIn(0, 255) shl 24)
-                            or (stage and 0xFFFFFF))
+                        (((fade * 0x8C) + bye * 0x40).toInt().coerceIn(0, 255) shl 24)
+                            or (lineTone and 0xFFFFFF))
                 }
                 for (pl in pulses) {
                     pl.color = stage
@@ -2564,6 +2602,12 @@ class VaultActivity : AppCompatActivity() {
         val touched = ArrayList<Pair<TextView, CharSequence>>()
         val pulses = ArrayList<VaultMark.Pulse>()
 
+        // Полоса под всей надписью, как строка в тексте: в названии и на
+        // значке класса «строки» нет, и без полосы там пульсировала одна
+        // рамка - глазу не за что было зацепиться.
+        val bars = ArrayList<Triple<android.text.Spannable, Int, Int>>()
+        val barKeys = ArrayList<android.text.style.BackgroundColorSpan>()
+
         fun paint(v: TextView) {
             val src = v.text.toString()
             val marks = VaultQuery.spans(src, parsed, opts)
@@ -2577,6 +2621,8 @@ class VaultActivity : AppCompatActivity() {
                     android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
             }
             v.text = sb
+            bars.add(Triple(sb, 0, sb.length))
+            barKeys.add(android.text.style.BackgroundColorSpan(0))
         }
 
         // Обходим ВЕСЬ экран: шапка и классы лежат в разных ветках, а
@@ -2600,6 +2646,12 @@ class VaultActivity : AppCompatActivity() {
                        else ((1f - t) / 0.34f).coerceIn(0f, 1f) * 0.83f
             val beat = ((kotlin.math.sin(t * 42.0).toFloat() + 1f) / 2f)
             val bye = if (t > 0.93f) ((t - 0.93f) / 0.07f) * 0.8f else 0f
+            val lineTone = VaultMark.lineColor(t)
+            for ((i, b) in bars.withIndex()) {
+                setBg(b.first, barKeys[i], b.second, b.third,
+                    (((fade * 0x8C) + bye * 0x40).toInt().coerceIn(0, 255) shl 24)
+                        or (lineTone and 0xFFFFFF))
+            }
             for (pl in pulses) {
                 pl.color = stage
                 pl.k = (fade * (0.5f + 0.5f * beat) + bye).coerceIn(0f, 1f)
