@@ -85,7 +85,7 @@ class VaultActivity : AppCompatActivity() {
      * плодить записи в списке задач, которых у скрытого модуля быть не
      * должно.
      */
-    private enum class Screen { ENTRANCE, CREATE, NOTES, PAGE, PREVIEW, HISTORY, IMAGE, TRAILS, ROOTS, ARCHIVE, GUARD, SHARES, SHARE_IN }
+    private enum class Screen { ENTRANCE, CREATE, NOTES, PAGE, PREVIEW, HISTORY, IMAGE, TRAILS, ROOTS, ARCHIVE, GUARD, SHARES, SHARE_IN, IMPORT }
     private var screen = Screen.ENTRANCE
     private var histNoteId = 0L
     private var histIdx = 0
@@ -1636,6 +1636,10 @@ class VaultActivity : AppCompatActivity() {
 
             Screen.SHARE_IN -> showEntrance()
 
+            // Уход с разбора - отказ от импорта целиком: половину списка
+            // мы не вливаем молча.
+            Screen.IMPORT -> showNotes()
+
             Screen.ROOTS -> showNotes()
 
             Screen.TRAILS -> openNote(histNoteId, histIdx)
@@ -3150,19 +3154,168 @@ class VaultActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Открыть архив и показать разбор.
+     *
+     * Ничего не вливается до того, как человек увидел список: импорт
+     * добавляет, а не заменяет, и лишний экземпляр всего архива потом
+     * вычищается только руками.
+     */
     private fun absorbArchive(r: VaultRepo, head: VaultArchive.Head, key: ByteArray) {
         busy = true
+        toast("Разбираю архив…")
         lifecycleScope.launch {
-            val added = withContext(Dispatchers.Default) {
-                val archive = VaultArchive.open(head, key) ?: return@withContext -1
-                r.absorb(archive)
+            val pair = withContext(Dispatchers.Default) {
+                val archive = VaultArchive.open(head, key) ?: return@withContext null
+                archive to r.compareArchive(archive)
             }
             busy = false
-            if (added < 0) toast("Ключ не подходит к этому файлу")
-            else {
-                toast("Добавлено заметок: " + added)
-                showNotes()
+            if (pair == null) toast("Ключ не подходит к этому файлу")
+            else showImportChoice(pair.first, pair.second)
+        }
+    }
+
+    /**
+     * Разбор архива перед вливанием.
+     *
+     * УМОЛЧАНИЯ ВЫБРАНЫ ЗА ЧЕЛОВЕКА, НО НЕ ВМЕСТО НЕГО
+     * ------------------------------------------------
+     * Совпавшие слово в слово выключены - именно они и давали второй
+     * экземпляр всего. Новые и отличающиеся включены: потерять текст
+     * страшнее, чем получить лишнюю заметку.
+     *
+     * Ни один пункт не заблокирован: если человек ХОЧЕТ второй экземпляр
+     * одинаковой заметки, это его дело.
+     */
+    private fun showImportChoice(a: VaultArchive.Archive, marks: List<Int>) {
+        dropKeyboard()
+        mount(scrollable = true)
+        screen = Screen.IMPORT
+        root.removeAllViews()
+        root.setPadding(dp(20), dp(24), dp(20), dp(32))
+        editor = null
+
+        val take = HashSet<Int>()
+        for (i in a.notes.indices) if (marks[i] != VaultRepo.Match.SAME) take.add(i)
+
+        val fresh = marks.count { it == VaultRepo.Match.FRESH }
+        val same = marks.count { it == VaultRepo.Match.SAME }
+        val similar = marks.count { it == VaultRepo.Match.TITLE_ONLY }
+
+        title("Что вливаем", "В архиве заметок: " + a.notes.size)
+
+        val summary = StringBuilder()
+        summary.append("Новых: ").append(fresh)
+        if (same > 0) summary.append("\nУже есть слово в слово: ").append(same)
+        if (similar > 0) summary.append("\nСовпало название, текст другой: ").append(similar)
+        dim(summary.toString())
+
+        if (same > 0) {
+            dim("Совпавшие выключены заранее — похоже, этот архив уже " +
+                "вливали. Импорт не заменяет, а добавляет, поэтому они " +
+                "легли бы вторым экземпляром.")
+        }
+
+        val counter = TextView(this).apply {
+            textSize = 15f
+            setTextColor(0xFFB9A6E8.toInt())
+            setPadding(0, dp(6), 0, dp(10))
+        }
+        root.addView(counter)
+
+        lateinit var refresh: () -> Unit
+        val rows = HashMap<Int, TextView>()
+
+        refresh = {
+            counter.text = "Выбрано: " + take.size + " из " + a.notes.size
+            for ((i, v) in rows) paintImportRow(v, a.notes[i], marks[i], i in take)
+        }
+
+        val quick = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        for ((label, action) in listOf<Pair<String, () -> Unit>>(
+            "Только новые" to {
+                take.clear()
+                for (i in marks.indices) if (marks[i] == VaultRepo.Match.FRESH) take.add(i)
+            },
+            "Все" to { take.clear(); take.addAll(a.notes.indices) },
+            "Ничего" to { take.clear() }
+        )) {
+            quick.addView(TextView(this).apply {
+                text = label
+                textSize = 13f
+                gravity = Gravity.CENTER
+                setTextColor(0xFF9A94A8.toInt())
+                minHeight = dp(40)
+                background = GradientDrawable().apply {
+                    cornerRadius = dp(8).toFloat()
+                    setColor(SURFACE_RAISED)
+                    setStroke(dp(1), LINE_EDGE)
+                }
+                isClickable = true
+                setOnClickListener { action(); refresh() }
+                layoutParams = LinearLayout.LayoutParams(0, dp(40), 1f).also {
+                    it.marginStart = dp(3); it.marginEnd = dp(3)
+                }
+            })
+        }
+        root.addView(quick, LinearLayout.LayoutParams(-1, -2).also { it.bottomMargin = dp(12) })
+
+        for ((i, n) in a.notes.withIndex()) {
+            val row = TextView(this).apply {
+                textSize = 15f
+                setPadding(dp(14), dp(12), dp(14), dp(12))
+                isClickable = true
+                setOnClickListener {
+                    if (i in take) take.remove(i) else take.add(i)
+                    refresh()
+                }
             }
+            rows[i] = row
+            root.addView(row, LinearLayout.LayoutParams(-1, -2).also { it.bottomMargin = dp(8) })
+        }
+        refresh()
+
+        button("Влить выбранные").setOnClickListener {
+            if (busy) return@setOnClickListener
+            if (take.isEmpty()) { toast("Ничего не выбрано"); return@setOnClickListener }
+            doAbsorb(a, take.toSet())
+        }
+        secondaryButton("Отмена").setOnClickListener { showNotes() }
+    }
+
+    private fun paintImportRow(v: TextView, n: VaultArchive.Note, mark: Int, on: Boolean) {
+        val tint = when (mark) {
+            VaultRepo.Match.SAME -> 0xFF9A94A8.toInt()
+            VaultRepo.Match.TITLE_ONLY -> 0xFFE0C08A.toInt()
+            else -> 0xFF9FD9A8.toInt()
+        }
+        val what = when (mark) {
+            VaultRepo.Match.SAME -> "уже есть слово в слово"
+            VaultRepo.Match.TITLE_ONLY -> "название совпало, текст другой"
+            else -> "новая"
+        }
+        v.text = (if (on) "◉  " else "○  ") +
+            (if (n.title.isBlank()) "Без названия" else n.title) +
+            "\n" + n.pages.size + " стр. · " + what
+        v.setTextColor(if (on) 0xFFEEEEEE.toInt() else 0xFF83808C.toInt())
+        v.background = GradientDrawable().apply {
+            cornerRadius = dp(8).toFloat()
+            setColor(if (on) SURFACE_RAISED else SURFACE_SUNKEN)
+            setStroke(dp(if (on) 2 else 1), if (on) tint else LINE_EDGE)
+        }
+    }
+
+    private fun doAbsorb(a: VaultArchive.Archive, take: Set<Int>) {
+        val r = repo ?: return
+        busy = true
+        lifecycleScope.launch {
+            val added = withContext(Dispatchers.Default) { r.absorbChosen(a, take) }
+            busy = false
+            toast("Добавлено заметок: " + added)
+            showNotes()
         }
     }
 

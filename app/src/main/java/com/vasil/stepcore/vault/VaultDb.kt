@@ -541,6 +541,91 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
      *
      * @return сколько заметок добавлено.
      */
+    // ------------------------------------------------------------ импорт
+
+    /**
+     * Что архивная заметка означает для этого тайника.
+     *
+     * Отдельный объект, а не companion: companion у VaultRepo уже занят
+     * пределами страниц, а второго в классе быть не может.
+     */
+    object Match {
+        /** Такой заметки здесь нет. */
+        const val FRESH = 0
+
+        /** Название, число страниц и ВЕСЬ текст совпадают слово в слово. */
+        const val SAME = 1
+
+        /** Название совпало, текст отличается. */
+        const val TITLE_ONLY = 2
+    }
+
+    /**
+     * Разобрать архив против того, что уже лежит в тайнике.
+     *
+     * ПОЧЕМУ НЕ ПРОЦЕНТ СХОЖЕСТИ
+     * --------------------------
+     * Мерить схожесть текстов нам нечем, и «совпадение 87%» было бы
+     * выдуманным числом. Здесь только доказуемое: тексты либо совпадают
+     * посимвольно, либо нет.
+     *
+     * ПОЧЕМУ СРАВНИВАЕМ ПО НАЗВАНИЮ, А НЕ ПО НОМЕРУ
+     * ---------------------------------------------
+     * Номер заметки в архив не пишется и писаться не должен: архив можно
+     * влить в ДРУГОЙ тайник, где эти номера заняты чужими заметками.
+     * Название - единственное, что переживает переезд.
+     *
+     * ЦЕНА
+     * ----
+     * Точное сравнение читает страницы кандидатов с диска и расшифровывает
+     * их. Импорт - редкая операция, и лучше подождать секунду, чем
+     * получить второй экземпляр всего.
+     */
+    suspend fun compareArchive(a: VaultArchive.Archive): List<Int> {
+        val mine = notes()
+        val byTitle = HashMap<String, MutableList<NoteHead>>()
+        for (n in mine) {
+            byTitle.getOrPut(n.title.trim().lowercase()) { ArrayList() }.add(n)
+        }
+
+        val out = ArrayList<Int>(a.notes.size)
+        for (n in a.notes) {
+            val title = (if (n.title.isBlank()) "Без названия" else n.title).trim().lowercase()
+            val cands = byTitle[title]
+            if (cands == null || cands.isEmpty()) {
+                out.add(Match.FRESH)
+                continue
+            }
+            var same = false
+            for (c in cands) {
+                if (c.pageCount != n.pages.size) continue
+                var equal = true
+                for (i in n.pages.indices) {
+                    if (readPage(c.id, i) != n.pages[i]) { equal = false; break }
+                }
+                if (equal) { same = true; break }
+            }
+            out.add(if (same) Match.SAME else Match.TITLE_ONLY)
+        }
+        return out
+    }
+
+    /** Влить только выбранные заметки архива. */
+    suspend fun absorbChosen(a: VaultArchive.Archive, take: Set<Int>): Int {
+        var added = 0
+        for ((i, n) in a.notes.withIndex()) {
+            if (i !in take) continue
+            val id = createNote(if (n.title.isBlank()) "Без названия" else n.title)
+            if (n.tags.isNotEmpty()) setTags(id, VaultText.formatTags(n.tags))
+            for ((j, p) in n.pages.withIndex()) {
+                if (j >= VaultRepo.MAX_PAGES) break
+                writePage(id, j, if (p.length > MAX_PAGE_CHARS) p.take(MAX_PAGE_CHARS) else p)
+            }
+            added++
+        }
+        return added
+    }
+
     suspend fun absorb(a: VaultArchive.Archive): Int {
         var added = 0
         for (n in a.notes) {
