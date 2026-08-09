@@ -1,8 +1,11 @@
 package com.vasil.stepcore.vault
 
+import android.content.BroadcastReceiver
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.text.InputType
@@ -194,6 +197,23 @@ class VaultActivity : AppCompatActivity() {
      */
     private val unlockBudgetMs = 1500L
 
+    /**
+     * Экран погас. Приёмник НЕ запирает тайник сам - он лишь сообщает
+     * факт, а решение принимает VaultSession. Иначе появился бы второй
+     * путь запирания в обход единой точки.
+     */
+    private val screenOffReceiver = object : BroadcastReceiver() {
+        override fun onReceive(c: Context?, i: Intent?) {
+            VaultSession.onScreenOff()
+            if (VaultSession.shouldRelock(System.currentTimeMillis())) {
+                // Ключ гасится немедленно, не дожидаясь возвращения:
+                // смысл этого режима в том, что заблокированный телефон
+                // не хранит расшифрованный ключ ни секунды.
+                VaultSession.lock()
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Скриншоты РАЗРЕШЕНЫ сознательно.
@@ -216,6 +236,8 @@ class VaultActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(24), dp(40), dp(24), dp(32))
         }
+
+        registerReceiver(screenOffReceiver, IntentFilter(Intent.ACTION_SCREEN_OFF))
         mount(scrollable = true)
 
         // Случайный выход из заметки - самая обидная потеря, и она
@@ -359,6 +381,13 @@ class VaultActivity : AppCompatActivity() {
         VaultSession.leave(System.currentTimeMillis())
     }
 
+    override fun onDestroy() {
+        // Снятие в try: система могла снять приёмник сама при убийстве
+        // процесса, и повторное снятие роняет приложение.
+        try { unregisterReceiver(screenOffReceiver) } catch (e: Exception) { }
+        super.onDestroy()
+    }
+
     /** Возврат: льгота цела - продолжаем, истекла - запираем. */
     override fun onStart() {
         super.onStart()
@@ -415,9 +444,7 @@ class VaultActivity : AppCompatActivity() {
             }
             busy = false
             if (key != null) {
-                VaultSession.open(key)
-                repo = VaultRepo(this@VaultActivity, key)
-                images = VaultImages(this@VaultActivity, key)
+                openSession(key)
                 showNotes()
             } else {
                 go.isEnabled = true
@@ -511,13 +538,13 @@ class VaultActivity : AppCompatActivity() {
                         val n = VaultCrypto.calibrateN(unlockBudgetMs)
                         val box = VaultFile.createFirst(n, pass, phrase)
                         store.write(box)
-                        VaultSession.open(VaultFile.open(box, pass)!!)
+                        openSession(VaultFile.open(box, pass)!!)
                         VaultFile.AddResult.OK
                     } else {
                         val added = VaultFile.addVault(existing, pass, phrase)
                         if (added.result == VaultFile.AddResult.OK) {
                             store.write(added.box!!)
-                            VaultSession.open(VaultFile.open(added.box, pass)!!)
+                            openSession(VaultFile.open(added.box, pass)!!)
                         }
                         added.result
                     }
@@ -2093,6 +2120,20 @@ class VaultActivity : AppCompatActivity() {
      * Это не мелкий шрифт: человек, потерявший телефон с одним из двух,
      * узнает об этом слишком поздно.
      */
+    /**
+     * Открытие сессии - ЕДИНСТВЕННЫМ путём.
+     *
+     * Раньше VaultSession.open(), создание repo и images стояли в трёх
+     * местах подряд. Появление четвёртой вещи, которую надо сделать при
+     * входе (льгота), означало бы три места, где её можно забыть. Теперь
+     * место одно.
+     */
+    private fun openSession(key: ByteArray) {
+        VaultSession.open(key, store.read()?.grace ?: VaultFile.GRACE_90S)
+        repo = VaultRepo(this, key)
+        images = VaultImages(this, key)
+    }
+
     // ------------------------------------------------------------------ защита
 
     /**
@@ -2132,11 +2173,83 @@ class VaultActivity : AppCompatActivity() {
         }
         root.addView(warn, LinearLayout.LayoutParams(-1, -2).also { it.bottomMargin = dp(16) })
 
+        graceSection()
+
         dangerButton("Удалить этот тайник").setOnClickListener {
             if (!busy) askDestroyVault()
         }
         gap()
         secondaryButton("←  К списку заметок").setOnClickListener { goBack() }
+    }
+
+    /**
+     * Выбор льготы.
+     *
+     * Под каждым вариантом стоит его ЦЕНА, а не только удобство: льгота в
+     * час означает, что расшифрованный ключ живёт в памяти час. Прятать
+     * это в справку нельзя - решение принимается здесь, и объяснение
+     * должно быть здесь же.
+     */
+    private fun graceSection() {
+        val current = VaultSession.graceMode
+        dim("Сколько тайник остаётся открытым, если свернуть приложение.")
+
+        val opts = listOf(
+            Triple(VaultFile.GRACE_90S, "Полторы минуты",
+                "Ответить в мессенджере и вернуться. Ключ живёт в памяти " +
+                    "полторы минуты — против того, кто выхватил телефон, " +
+                    "этого достаточно."),
+            Triple(VaultFile.GRACE_15M, "Пятнадцать минут",
+                "Для работы урывками. Ключ живёт в памяти четверть часа."),
+            Triple(VaultFile.GRACE_1H, "Час",
+                "Удобно и заметно слабее: расшифрованный ключ лежит в " +
+                    "памяти целый час. Получивший телефон на это время " +
+                    "войдёт без пароля."),
+            Triple(VaultFile.GRACE_SCREEN, "Пока горит экран",
+                "Времени нет вовсе: погас экран — заперто сразу. Самый " +
+                    "строгий вариант и при этом не мешающий, пока телефон " +
+                    "в руках.")
+        )
+
+        for ((mode, name, explain) in opts) {
+            val chosenNow = mode == current
+            val tint = if (chosenNow) getColor(R.color.accent_violet_bright)
+                else VaultIcon.tintFor(VaultIcon.Kind.SHIELD)
+            val label = if (chosenNow) name + "  ✓" else name
+            root.addView(
+                optionButton(label, explain, VaultIcon.Kind.SHIELD, tint) {
+                    if (!busy && !chosenNow) setGrace(mode)
+                },
+                LinearLayout.LayoutParams(-1, -2).also { it.bottomMargin = dp(8) }
+            )
+        }
+        gap()
+    }
+
+    /**
+     * Смена льготы: файл ключей переписывается целиком и атомарно, слоты
+     * при этом не трогаются - пароли остаются прежними.
+     */
+    private fun setGrace(mode: Int) {
+        busy = true
+        lifecycleScope.launch {
+            val ok = withContext(Dispatchers.Default) {
+                try {
+                    val box = store.read() ?: return@withContext false
+                    store.write(VaultFile.withGrace(box, mode))
+                    true
+                } catch (e: Exception) {
+                    false
+                }
+            }
+            busy = false
+            if (ok) {
+                VaultSession.setMode(mode)
+                showGuard()
+            } else {
+                toast("Не удалось сохранить")
+            }
+        }
     }
 
     /**

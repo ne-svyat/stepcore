@@ -40,7 +40,38 @@ object VaultFile {
     private const val M0 = 'S'.code.toByte()
     private const val M1 = 'C'.code.toByte()
     private const val M2 = 'V'.code.toByte()
-    private const val M3 = '2'.code.toByte()
+
+    /** Старый формат: без байта льготы в хвосте. Читается по-прежнему. */
+    private const val M3_V2 = '2'.code.toByte()
+
+    /** Текущий формат: тот же заголовок плюс байт льготы в конце. */
+    private const val M3_V3 = '3'.code.toByte()
+
+    // ------------------------------------------------------------- льгота
+    //
+    // Сколько живёт расшифрованный ключ после ухода с экрана.
+    //
+    // Настройка лежит В ФАЙЛЕ КЛЮЧЕЙ, а не в общих настройках приложения:
+    // строка "льгота тайника" в общем бэкапе выдала бы, что тайник вообще
+    // существует. Здесь она соседствует с числом слотов - то есть на том
+    // же уровне открытости, о котором сказано выше честно.
+    //
+    // Значение общее на файл, а не на тайник: разная льгота у соседних
+    // тайников выдала бы, что их несколько.
+
+    const val GRACE_90S = 0
+    const val GRACE_15M = 1
+    const val GRACE_1H = 2
+
+    /** Ключ живёт, пока горит экран. Гаснет экран - запирается сразу. */
+    const val GRACE_SCREEN = 3
+
+    /** Сколько миллисекунд ждать. Для GRACE_SCREEN время не при чём. */
+    fun graceMs(mode: Int): Long = when (mode) {
+        GRACE_15M -> 15L * 60_000L
+        GRACE_1H -> 60L * 60_000L
+        else -> 90_000L
+    }
 
     /** Восемь тайников по два ключа. */
     const val MAX_VAULTS = 8
@@ -50,7 +81,13 @@ object VaultFile {
     private const val HEAD = 4 + 4 + VaultCrypto.SALT_LEN + 1
 
     /** Содержимое файла в разобранном виде. */
-    class Box(val n: Int, val salt: ByteArray, val slots: List<ByteArray>) {
+    class Box(
+        val n: Int,
+        val salt: ByteArray,
+        val slots: List<ByteArray>,
+        /** Файлы старого формата читаются как полторы минуты - так было. */
+        val grace: Int = GRACE_90S,
+    ) {
         val vaultCount: Int get() = slots.size / 2
         val isFull: Boolean get() = slots.size >= MAX_SLOTS
     }
@@ -63,8 +100,13 @@ object VaultFile {
         require(b.slots.size % 2 == 0) { "slots must come in pairs" }
         require(b.slots.all { it.size == SLOT_LEN }) { "bad slot size" }
 
-        val out = ByteArray(HEAD + b.slots.size * SLOT_LEN)
-        out[0] = M0; out[1] = M1; out[2] = M2; out[3] = M3
+        require(b.grace in GRACE_90S..GRACE_SCREEN) { "bad grace" }
+
+        // Байт льготы дописывается В КОНЕЦ, а не в заголовок: тогда
+        // раскладка слотов не сдвигается, и разбор старого файла отличается
+        // от нового ровно одним хвостовым байтом.
+        val out = ByteArray(HEAD + b.slots.size * SLOT_LEN + 1)
+        out[0] = M0; out[1] = M1; out[2] = M2; out[3] = M3_V3
         out[4] = (b.n ushr 24).toByte()
         out[5] = (b.n ushr 16).toByte()
         out[6] = (b.n ushr 8).toByte()
@@ -73,24 +115,30 @@ object VaultFile {
         out[8 + VaultCrypto.SALT_LEN] = b.slots.size.toByte()
         var o = HEAD
         for (s in b.slots) { s.copyInto(out, o); o += SLOT_LEN }
+        out[o] = b.grace.toByte()
         return out
     }
 
     /** @return null при любой порче: обрезке, чужом файле, враньё в длине. */
     fun decode(raw: ByteArray): Box? {
         if (raw.size < HEAD) return null
-        if (raw[0] != M0 || raw[1] != M1 || raw[2] != M2 || raw[3] != M3) return null
+        if (raw[0] != M0 || raw[1] != M1 || raw[2] != M2) return null
+        val v3 = raw[3] == M3_V3
+        if (!v3 && raw[3] != M3_V2) return null
         val n = ((raw[4].toInt() and 0xFF) shl 24) or ((raw[5].toInt() and 0xFF) shl 16) or
                 ((raw[6].toInt() and 0xFF) shl 8) or (raw[7].toInt() and 0xFF)
         if (n < VaultCrypto.N_MIN || n > VaultCrypto.N_MAX || Integer.bitCount(n) != 1) return null
         val salt = raw.copyOfRange(8, 8 + VaultCrypto.SALT_LEN)
         val count = raw[8 + VaultCrypto.SALT_LEN].toInt() and 0xFF
         if (count == 0 || count > MAX_SLOTS || count % 2 != 0) return null
-        if (raw.size != HEAD + count * SLOT_LEN) return null
+        val body = HEAD + count * SLOT_LEN
+        if (raw.size != body + (if (v3) 1 else 0)) return null
+        val grace = if (v3) raw[body].toInt() and 0xFF else GRACE_90S
+        if (grace < GRACE_90S || grace > GRACE_SCREEN) return null
         val slots = ArrayList<ByteArray>(count)
         var o = HEAD
         repeat(count) { slots.add(raw.copyOfRange(o, o + SLOT_LEN)); o += SLOT_LEN }
-        return Box(n, salt, slots)
+        return Box(n, salt, slots, grace)
     }
 
     // -------------------------------------------------------------------- вход
@@ -142,7 +190,7 @@ object VaultFile {
             val slots = ArrayList(box.slots)
             slots.add(seal(box.salt, box.n, password, dataKey))
             slots.add(seal(box.salt, box.n, phrase, dataKey))
-            return Added(AddResult.OK, Box(box.n, box.salt, slots))
+            return Added(AddResult.OK, Box(box.n, box.salt, slots, box.grace))
         } finally {
             dataKey.fill(0)
         }
@@ -194,7 +242,16 @@ object VaultFile {
             if (i != first && i != first + 1) rest.add(box.slots[i])
         }
         if (rest.isEmpty()) return null
-        return Box(box.n, box.salt, rest)
+        return Box(box.n, box.salt, rest, box.grace)
+    }
+
+    /**
+     * Сменить льготу. Слоты и соль не трогаются: пароли остаются теми же,
+     * scrypt не пересчитывается, менять настройку можно хоть каждый день.
+     */
+    fun withGrace(box: Box, mode: Int): Box {
+        require(mode in GRACE_90S..GRACE_SCREEN) { "bad grace" }
+        return Box(box.n, box.salt, box.slots, mode)
     }
 
     private fun seal(salt: ByteArray, n: Int, secret: CharArray, dataKey: ByteArray): ByteArray {

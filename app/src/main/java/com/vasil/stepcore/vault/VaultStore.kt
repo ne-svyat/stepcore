@@ -79,14 +79,39 @@ object VaultSession {
      * работают. Против случайного взгляда - нет, потому что превью в
      * списке задач запрещено отдельно.
      */
-    const val GRACE_MS = 90_000L
+    /**
+     * ЕДИНСТВЕННАЯ ТОЧКА, РЕШАЮЩАЯ, ПОРА ЛИ ЗАПИРАТЬ.
+     *
+     * Вариантов льготы четыре, и они держатся на ДВУХ разных механизмах:
+     * три - обычный таймер, четвёртый - гашение экрана, где время вообще
+     * ни при чём. Два механизма за одним переключателем неминуемо
+     * расходятся: однажды добавят третий путь ухода с экрана и забудут
+     * про один из них.
+     *
+     * Поэтому наружу торчит один вопрос - shouldRelock(now). Экран не
+     * знает, какой режим выбран; приёмник гашения экрана не запирает сам,
+     * а лишь сообщает факт. Решение принимается здесь и только здесь.
+     */
+    @Volatile private var mode = VaultFile.GRACE_90S
+    @Volatile private var screenWentOff = false
+
+    val graceMode: Int get() = mode
 
     val isOpen: Boolean get() = dataKey != null
 
-    fun open(key: ByteArray) {
+    fun open(key: ByteArray, graceMode: Int) {
         lock()
         dataKey = key
         leftAtMs = 0L
+        mode = graceMode
+    }
+
+    /** Смена настройки на лету: ключ и слоты не трогаются. */
+    fun setMode(graceMode: Int) {
+        mode = graceMode
+        // Прошлое гашение экрана не должно запереть тайник задним числом
+        // после того, как человек только что выбрал другой режим.
+        screenWentOff = false
     }
 
     /** Ушли с экрана: ключ пока живёт, но время пошло. */
@@ -95,12 +120,30 @@ object VaultSession {
     }
 
     /**
-     * Вернулись. Если льгота истекла - запираем.
+     * Экран погас. Сам по себе этот факт ничего не запирает - он лишь
+     * записывается, а решение принимает shouldRelock.
+     */
+    fun onScreenOff() {
+        if (dataKey != null) screenWentOff = true
+    }
+
+    /**
+     * Пора ли запирать. Единственное место, где сравнивается время.
+     */
+    fun shouldRelock(nowMs: Long): Boolean {
+        if (dataKey == null) return false
+        if (mode == VaultFile.GRACE_SCREEN) return screenWentOff
+        if (leftAtMs == 0L) return false
+        return nowMs - leftAtMs > VaultFile.graceMs(mode)
+    }
+
+    /**
+     * Вернулись. Если пора - запираем.
      * @return true, если тайник всё ещё открыт.
      */
     fun resume(nowMs: Long): Boolean {
         if (dataKey == null) return false
-        if (leftAtMs != 0L && nowMs - leftAtMs > GRACE_MS) {
+        if (shouldRelock(nowMs)) {
             lock()
             return false
         }
@@ -116,5 +159,6 @@ object VaultSession {
         dataKey?.fill(0)
         dataKey = null
         leftAtMs = 0L
+        screenWentOff = false
     }
 }
