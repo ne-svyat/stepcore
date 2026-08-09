@@ -132,19 +132,31 @@ class VaultRootsView(context: Context) : View(context) {
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (event.action != MotionEvent.ACTION_UP || strands.isEmpty()) return true
 
-        // Сначала узелки: попал в заметку - открываем её. Узелок меньше
-        // жилы, поэтому проверяется первым, иначе до него не дотянуться.
-        var bestNode: Node? = null
-        var bestDist = Float.MAX_VALUE
-        for ((nx, ny, node) in hits) {
-            val dx = event.x - nx
-            val dy = event.y - ny
-            val dist = kotlin.math.sqrt(dx * dx + dy * dy)
-            if (dist < bestDist) { bestDist = dist; bestNode = node }
-        }
-        if (bestNode != null && bestDist < 22f * d) {
-            onNote?.invoke(bestNode.id)
-            return true
+        // Узелки нажимаются ТОЛЬКО у выбранной жилы.
+        //
+        // Раньше они ловили палец по всей карте, и до самой жилы было не
+        // дотянуться: узелков много, они разбросаны по всей высоте, и
+        // любое касание попадало в какой-нибудь из них. Причём в какой
+        // именно - на глаз не определить.
+        //
+        // Теперь порядок естественный: первый тап всегда выбирает жилу,
+        // у неё появляются подписи узелков, и только тогда по ним можно
+        // попасть. Радиус тоже уменьшен: подписанный узелок видно, и
+        // целиться в него можно точно.
+        val sel = picked
+        if (sel != null) {
+            var bestNode: Node? = null
+            var bestDist = Float.MAX_VALUE
+            for ((nx, ny, node) in hits) {
+                val dx = event.x - nx
+                val dy = event.y - ny
+                val dist = kotlin.math.sqrt(dx * dx + dy * dy)
+                if (dist < bestDist) { bestDist = dist; bestNode = node }
+            }
+            if (bestNode != null && bestDist < 15f * d) {
+                onNote?.invoke(bestNode.id)
+                return true
+            }
         }
 
         // Ближайшая жила, но не дальше половины шага: промах не должен
@@ -243,16 +255,22 @@ class VaultRootsView(context: Context) : View(context) {
             for (n in 0 until nodes) {
                 val t = if (nodes == 1) 0.5f else n.toFloat() / (nodes - 1)
                 val y = top + (bottom - top) * (0.06f + 0.88f * t)
-                canvas.drawCircle(x, y, thick * 0.62f, nodePaint)
-                if (n < shown.size) hits.add(Triple(x, y, shown[n]))
+                val isSel = s.name == sel
+                canvas.drawCircle(x, y, thick * (if (isSel) 0.85f else 0.62f), nodePaint)
+                // В список попаданий идут только узелки ВЫБРАННОЙ жилы:
+                // иначе они снова перехватят касание у соседей.
+                if (isSel && n < shown.size) hits.add(Triple(x, y, shown[n]))
             }
 
             // Названия заметок подписываются только там, где их мало.
             // На жиле из двадцати узелков подписи налезут друг на друга и
             // превратят карту в кашу - лучше честно ничего не писать.
-            if (shown.size in 1..4) {
-                textPaint.textSize = 9f * d
-                textPaint.color = (0x99 shl 24) or (s.color and 0xFFFFFF)
+            // Подписи узелков: всегда у выбранной жилы, а у прочих -
+            // только когда их мало и они не налезут друг на друга.
+            if (s.name == sel || shown.size in 1..4) {
+                textPaint.textSize = if (s.name == sel) 10f * d else 9f * d
+                textPaint.color = ((if (s.name == sel) 0xEE else 0x99) shl 24) or
+                    (s.color and 0xFFFFFF)
                 textPaint.textAlign = Paint.Align.LEFT
                 for (n in shown.indices) {
                     val t = if (shown.size == 1) 0.5f else n.toFloat() / (shown.size - 1)

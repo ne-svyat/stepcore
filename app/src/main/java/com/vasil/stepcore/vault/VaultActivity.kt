@@ -980,13 +980,31 @@ class VaultActivity : AppCompatActivity() {
         editor = e
         pendingFind?.let { q -> pendingFind = null; flashMatch(e, q) }
 
+        // Быстрый прыжок по длинной странице. При двадцати тысячах
+        // символов свайпами до конца добираться долго, а мысль обычно
+        // дописывается именно в конец.
+        val jump = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        root.addView(jump, LinearLayout.LayoutParams(-1, -2))
+
         val counter = TextView(this).apply {
             this.text = e.text.length.toString() + " / " + VaultRepo.MAX_PAGE_CHARS
             textSize = 12f
             setTextColor(0xFF7A7A88.toInt())
             setPadding(0, dp(6), 0, dp(2))
         }
-        root.addView(counter)
+        jump.addView(counter, LinearLayout.LayoutParams(0, -2, 1f))
+        jump.addView(smallJump("↑ верх") {
+            e.setSelection(0)
+            e.scrollTo(0, 0)
+        })
+        jump.addView(smallJump("↓ низ") {
+            e.setSelection(e.text.length)
+            val last = e.layout?.getLineTop(e.lineCount) ?: 0
+            e.scrollTo(0, maxOf(0, last - e.height + e.paddingTop + e.paddingBottom))
+        })
         e.addTextChangedListener(object : android.text.TextWatcher {
             override fun afterTextChanged(s: android.text.Editable?) {
                 counter.text = (s?.length ?: 0).toString() + " / " + VaultRepo.MAX_PAGE_CHARS
@@ -2010,6 +2028,29 @@ class VaultActivity : AppCompatActivity() {
             it.marginStart = dp(8)
         }
         return v
+    }
+
+    /** Компактная кнопка прыжка по тексту. */
+    private fun smallJump(label: String, action: () -> Unit): TextView {
+        val bg = GradientDrawable().apply {
+            cornerRadius = dp(8).toFloat()
+            setColor(SURFACE_SUNKEN)
+            setStroke(dp(1), LINE_EDGE)
+        }
+        val t = TextView(this).apply {
+            text = label
+            textSize = 12f
+            isSingleLine = true
+            gravity = Gravity.CENTER
+            setTextColor(0xFFA9A4BC.toInt())
+            setPadding(dp(10), dp(6), dp(10), dp(6))
+            isClickable = true
+            background = android.graphics.drawable.RippleDrawable(
+                android.content.res.ColorStateList.valueOf(0x22FFFFFF), bg, null)
+            setOnClickListener { action() }
+        }
+        t.layoutParams = LinearLayout.LayoutParams(-2, -2).also { it.marginStart = dp(6) }
+        return t
     }
 
     /** Маленькая нажимаемая метка. Цвет несёт смысл, форма одинакова. */
