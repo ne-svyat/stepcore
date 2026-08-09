@@ -89,6 +89,9 @@ class VaultActivity : AppCompatActivity() {
      */
     private var focusSink: View? = null
 
+    /** Принял ли приёмник фокус в прошлый раз. Нужно только для отладки. */
+    private var lastFocusGrant = false
+
     /**
      * Отладочная строка про фокус.
      *
@@ -717,6 +720,9 @@ class VaultActivity : AppCompatActivity() {
         openNoteId = 0L
         mount(scrollable = false)
         root.removeAllViews()
+        // Приёмник фокуса - первым делом: он должен существовать раньше,
+        // чем поле ввода успеет забрать фокус на себя.
+        ensureSink()
         root.setPadding(dp(16), dp(16), dp(16), dp(8))
         val r = repo ?: return
         pendingTag?.let { activeTag = it; pendingTag = null }
@@ -1175,6 +1181,28 @@ class VaultActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Приёмник фокуса: завести, если его нет или он выброшен из дерева.
+     *
+     * РАЗМЕР В ТОЧКУ, А НЕ НОЛЬ. Вьюха нулевого размера не считается
+     * кандидатом на фокус вообще: requestFocus() на ней отклоняется
+     * молча. Отладка показала это прямо - «приёмник в дереве: НЕТ» при
+     * живой ссылке.
+     *
+     * Заводится вместе с экраном, а не при первом гашении: ленивое
+     * создание попадало уже на пересобранное дерево.
+     */
+    private fun ensureSink(): View {
+        val cur = focusSink
+        if (cur != null && cur.parent === root) return cur
+        val v = View(this)
+        v.isFocusable = true
+        v.isFocusableInTouchMode = true
+        root.addView(v, 0, LinearLayout.LayoutParams(1, 1))
+        focusSink = v
+        return v
+    }
+
     /** Снимок состояния фокуса и клавиатуры. Только факты. */
     private fun updateFocusReport() {
         val v = focusReport ?: return
@@ -1195,8 +1223,9 @@ class VaultActivity : AppCompatActivity() {
             false
         }
         v.text = "фокус: " + who +
-            "  ·  приёмник в дереве: " + (if (inTree) "да" else "НЕТ") +
-            "  ·  клавиатура: " + (if (ime) "видна" else "скрыта")
+            " · приёмник: " + (if (inTree) "в дереве" else "НЕ В ДЕРЕВЕ") +
+            " · запрос фокуса: " + (if (lastFocusGrant) "принят" else "ОТКЛОНЁН") +
+            " · клавиатура: " + (if (ime) "видна" else "скрыта")
     }
 
     /** Как сейчас ищется - в несколько слов, для шапки. */
@@ -1242,20 +1271,9 @@ class VaultActivity : AppCompatActivity() {
     private fun hideKeyboard(v: View) {
         // 1. Фокус - на приёмник. Пока он в поле, система вправе показать
         //    клавиатуру снова, что бы мы ей ни говорили.
-        // Приёмник обязан быть В ДЕРЕВЕ. Экран пересобирается через
-        // root.removeAllViews(), и прежний приёмник оттуда выбрасывается:
-        // ссылка живёт, вьюхи в окне нет, requestFocus() на оторванной
-        // вьюхе молча не срабатывает. Первый раз работало, дальше нет.
-        val sinkAttached = focusSink?.parent === root
-        val sink = if (sinkAttached) focusSink!! else View(this).apply {
-            isFocusable = true
-            isFocusableInTouchMode = true
-            layoutParams = LinearLayout.LayoutParams(0, 0)
-            root.addView(this, 0)
-            focusSink = this
-        }
+        val sink = ensureSink()
         v.clearFocus()
-        sink.requestFocus()
+        lastFocusGrant = sink.requestFocus()
 
         // 2. Гасим. Через окно, а не через вьюху: у вьюхи, только что
         //    потерявшей фокус, распорядителя может уже не быть.
@@ -2460,7 +2478,7 @@ class VaultActivity : AppCompatActivity() {
             for (m in marks) {
                 // Золотая рамка на КАЖДОМ совпадении страницы, а не только
                 // на первом: второе искали через список заново.
-                val pulse = VaultMark.Pulse(0xFFE8C86A.toInt(), dens)
+                val pulse = VaultMark.Pulse(VaultMark.stageColor(0f), dens)
                 pulses.add(pulse)
                 sb.setSpan(pulse, m[0], minOf(m[1], sb.length),
                     android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
@@ -2494,14 +2512,26 @@ class VaultActivity : AppCompatActivity() {
             anim.duration = 15000L
             anim.addUpdateListener { a ->
                 val t = a.animatedFraction
-                val fade = (1f - t).coerceIn(0f, 1f)
-                // Биение живёт всё время, но слабеет вместе с яркостью.
+                val stage = VaultMark.stageColor(t)
+                // Затухание НЕ линейное: первые две трети держим почти
+                // полную яркость, гаснем в последней. Линейное угасание
+                // тускнеет уже на третьей секунде, когда смотреть только
+                // начали.
+                val fade = if (t < 0.66f) 1f - t * 0.25f
+                           else ((1f - t) / 0.34f).coerceIn(0f, 1f) * 0.83f
                 val beat = ((kotlin.math.sin(t * 42.0).toFloat() + 1f) / 2f)
+                // Короткая вспышка на прощание: последний удар ярче всех,
+                // иначе конец подсветки просто не замечают.
+                val bye = if (t > 0.93f) ((t - 0.93f) / 0.07f) * 0.8f else 0f
                 for ((i, ls) in lineSpans.withIndex()) {
                     setBg(ls.first, keys[i], ls.second, ls.third,
-                        ((fade * 0x72).toInt() shl 24) or 0xC0392B)
+                        (((fade * 0x66) + bye * 0x40).toInt().coerceIn(0, 255) shl 24)
+                            or (stage and 0xFFFFFF))
                 }
-                for (pl in pulses) pl.k = fade * (0.45f + 0.55f * beat)
+                for (pl in pulses) {
+                    pl.color = stage
+                    pl.k = (fade * (0.5f + 0.5f * beat) + bye).coerceIn(0f, 1f)
+                }
                 // Отрезок сам себя не перерисует: просим вьюху.
                 for ((v, _) in touched) v.invalidate()
             }
@@ -2541,7 +2571,7 @@ class VaultActivity : AppCompatActivity() {
             touched.add(v to v.text)
             val sb = android.text.SpannableStringBuilder(src)
             for (m in marks) {
-                val pulse = VaultMark.Pulse(0xFFE8C86A.toInt(), dens)
+                val pulse = VaultMark.Pulse(VaultMark.stageColor(0f), dens)
                 pulses.add(pulse)
                 sb.setSpan(pulse, m[0], minOf(m[1], sb.length),
                     android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
@@ -2565,9 +2595,15 @@ class VaultActivity : AppCompatActivity() {
         anim.duration = 15000L
         anim.addUpdateListener { a ->
             val t = a.animatedFraction
-            val fade = (1f - t).coerceIn(0f, 1f)
+            val stage = VaultMark.stageColor(t)
+            val fade = if (t < 0.66f) 1f - t * 0.25f
+                       else ((1f - t) / 0.34f).coerceIn(0f, 1f) * 0.83f
             val beat = ((kotlin.math.sin(t * 42.0).toFloat() + 1f) / 2f)
-            for (pl in pulses) pl.k = fade * (0.45f + 0.55f * beat)
+            val bye = if (t > 0.93f) ((t - 0.93f) / 0.07f) * 0.8f else 0f
+            for (pl in pulses) {
+                pl.color = stage
+                pl.k = (fade * (0.5f + 0.5f * beat) + bye).coerceIn(0f, 1f)
+            }
             for ((v, _) in touched) v.invalidate()
         }
         anim.addListener(object : android.animation.AnimatorListenerAdapter() {

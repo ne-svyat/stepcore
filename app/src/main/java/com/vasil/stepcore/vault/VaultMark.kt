@@ -94,45 +94,91 @@ object VaultMark {
      * Яркость меняется снаружи, а вьюха перерисовывается по требованию:
      * отрезок сам себя перерисовать не может.
      */
-    class Pulse(private val color: Int, private val density: Float) : ReplacementSpan() {
+    class Pulse(start: Int, private val density: Float) : ReplacementSpan() {
 
         /** 0 - погасла совсем, 1 - полная яркость. */
         var k: Float = 1f
 
+        /** Тон меняется по ходу: снаружи виднее, какая сейчас ступень. */
+        var color: Int = start
+
         override fun getSize(paint: Paint, text: CharSequence, start: Int, end: Int,
                              fm: Paint.FontMetricsInt?): Int {
             fm?.let { paint.getFontMetricsInt(it) }
-            return (paint.measureText(text, start, end) + density * 6).toInt()
+            return (paint.measureText(text, start, end) + density * 8).toInt()
         }
 
         override fun draw(canvas: Canvas, text: CharSequence, start: Int, end: Int,
                           x: Float, top: Int, y: Int, bottom: Int, paint: Paint) {
             val w = paint.measureText(text, start, end)
-            val r = RectF(x, top + density, x + w + density * 6, bottom - density)
+            val pad = density * 4
+            val a = k.coerceIn(0f, 1f)
+            val rgb = color and 0xFFFFFF
+            val r = RectF(x, top + density, x + w + pad * 2, bottom - density)
+
             val old = paint.color
             val oldStyle = paint.style
             val oldWidth = paint.strokeWidth
 
-            val a = k.coerceIn(0f, 1f)
-            paint.style = Paint.Style.FILL
-            paint.color = ((a * 0x55).toInt() shl 24) or (color and 0xFFFFFF)
-            canvas.drawRoundRect(r, 5 * density, 5 * density, paint)
-
-            // Рамка толстеет вместе с яркостью: одного цвета мало, когда
-            // страница пёстрая, а толщина заметна боковым зрением.
+            // ВНЕШНЕЕ СВЕЧЕНИЕ. Одна тонкая линия выглядит дёшево: у неё
+            // нет глубины, и на пёстрой странице она читается как артефакт
+            // отрисовки. Три обводки с падающей плотностью дают ореол,
+            // который глаз принимает за свет.
             paint.style = Paint.Style.STROKE
-            paint.strokeWidth = density * (1f + a)
-            paint.color = ((0x40 + a * 0xBF).toInt() shl 24) or (color and 0xFFFFFF)
-            canvas.drawRoundRect(r, 5 * density, 5 * density, paint)
+            for (step in 3 downTo 1) {
+                val spread = density * step
+                val glow = RectF(r.left - spread, r.top - spread,
+                    r.right + spread, r.bottom + spread)
+                paint.strokeWidth = density * 1.6f
+                paint.color = ((a * (0x26 / step)).toInt().coerceIn(0, 255) shl 24) or rgb
+                canvas.drawRoundRect(glow, 6 * density + spread, 6 * density + spread, paint)
+            }
+
+            paint.style = Paint.Style.FILL
+            paint.color = ((a * 0x4A).toInt() shl 24) or rgb
+            canvas.drawRoundRect(r, 6 * density, 6 * density, paint)
+
+            // Толщина растёт вместе с яркостью: цвета мало, когда страница
+            // пёстрая, а толщина заметна боковым зрением.
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = density * (1.2f + a * 1.3f)
+            paint.color = ((0x50 + a * 0xAF).toInt().coerceIn(0, 255) shl 24) or rgb
+            canvas.drawRoundRect(r, 6 * density, 6 * density, paint)
 
             paint.style = Paint.Style.FILL
             paint.color = 0xFFFFFFFF.toInt()
-            canvas.drawText(text, start, end, x + density * 3, y.toFloat(), paint)
+            canvas.drawText(text, start, end, x + pad, y.toFloat(), paint)
 
             paint.color = old
             paint.style = oldStyle
             paint.strokeWidth = oldWidth
         }
+    }
+
+    /**
+     * Ступени подсветки: красная, синяя, белая.
+     *
+     * Один тон на пятнадцать секунд глаз перестаёт замечать через две.
+     * Смена ступени возвращает внимание, не заставляя ничего мигать
+     * сильнее. Переходы плавные - резкая смена читается как поломка
+     * отрисовки, а не как замысел.
+     */
+    private val STAGES = intArrayOf(0xFFE0483A.toInt(), 0xFF4A90E2.toInt(), 0xFFF2F0F7.toInt())
+
+    /** Тон на долю пути от 0 до 1. */
+    fun stageColor(t: Float): Int {
+        val x = (t.coerceIn(0f, 1f) * (STAGES.size - 1))
+        val i = x.toInt().coerceAtMost(STAGES.size - 2)
+        return lerp(STAGES[i], STAGES[i + 1], (x - i).coerceIn(0f, 1f))
+    }
+
+    private fun lerp(a: Int, b: Int, k: Float): Int {
+        fun ch(shift: Int): Int {
+            val x = (a shr shift) and 0xFF
+            val y = (b shr shift) and 0xFF
+            return (x + (y - x) * k).toInt().coerceIn(0, 255)
+        }
+        return (0xFF shl 24) or (ch(16) shl 16) or (ch(8) shl 8) or ch(0)
     }
 
     /** Слово в рамке своего тона. Только для кусков без пробелов. */
