@@ -78,6 +78,18 @@ class VaultActivity : AppCompatActivity() {
     private var keyboardView: VaultKeyboard? = null
 
     /**
+     * Приёмник фокуса.
+     *
+     * root.requestFocus() фокус не забирал: группа отдаёт его обратно
+     * первому подходящему потомку, а это то же самое поле поиска. Курсор
+     * оставался в поле, система держала клавиатуру, клавиатура забирала
+     * полэкрана - и список результатов оставался с нулевой высотой.
+     *
+     * Пустая вьюха нулевого размера, у которой отнять фокус некому.
+     */
+    private var focusSink: View? = null
+
+    /**
      * Идущая вспышка. Уход с экрана обязан её оборвать: она держит ссылку
      * на текст чужой вьюхи и красит его по таймеру - после смены экрана
      * это работа вхолостую, а при возврате на ту же страницу ещё и следы.
@@ -718,11 +730,36 @@ class VaultActivity : AppCompatActivity() {
             // однажды не сойдётся.
             imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
         }
+        // Крестик: очистить поле и снять фокус одним нажатием. Снять
+        // курсор иначе было нечем - приходилось лезть в сортировку или
+        // на другую вкладку.
+        val clearBtn = TextView(this).apply {
+            text = "✕"
+            textSize = 17f
+            gravity = Gravity.CENTER
+            setTextColor(0xFF9A94A8.toInt())
+            isClickable = true
+            background = GradientDrawable().apply {
+                cornerRadius = dp(9).toFloat()
+                setColor(SURFACE_RAISED)
+                setStroke(dp(1), LINE_EDGE)
+            }
+        }
+
         // Кнопка поиска РЯДОМ с полем. Раньше она стояла внизу экрана, и
         // рука ехала через весь экран туда и обратно.
         val searchRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         root.addView(searchRow, LinearLayout.LayoutParams(-1, -2))
         searchRow.addView(q, LinearLayout.LayoutParams(0, -2, 1f))
+        searchRow.addView(clearBtn, LinearLayout.LayoutParams(dp(44), dp(44)).also {
+            it.marginStart = dp(6)
+        })
+        clearBtn.setOnClickListener {
+            if (busy) return@setOnClickListener
+            q.setText("")
+            hideKeyboard(q)
+            runSearch("", holder, status)
+        }
 
         val holder = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val status = TextView(this).apply {
@@ -852,6 +889,12 @@ class VaultActivity : AppCompatActivity() {
             addView(holder, LinearLayout.LayoutParams(-1, -2))
         }
         this.listPane = listPane
+        // Касание списка снимает курсор с поля: человек уже смотрит на
+        // результаты, держать клавиатуру не для чего.
+        listPane.setOnTouchListener { _, e ->
+            if (e.action == android.view.MotionEvent.ACTION_DOWN && q.hasFocus()) hideKeyboard(q)
+            false
+        }
         // Список ГИБКИЙ, а не в жёстких процентах экрана. С фиксированной
         // долей появление строки фильтра выталкивало нижнюю панель за край:
         // сумма высот переставала помещаться, а внешняя прокрутка здесь
@@ -1134,20 +1177,23 @@ class VaultActivity : AppCompatActivity() {
      * значит городить ещё одну сущность.
      */
     private fun hideKeyboard(v: View) {
-        val parking = root
-        parking.isFocusableInTouchMode = true
-        parking.isFocusable = true
+        // 1. Фокус - на приёмник. Пока он в поле, система вправе показать
+        //    клавиатуру снова, что бы мы ей ни говорили.
+        val sink = focusSink ?: View(this).apply {
+            isFocusable = true
+            isFocusableInTouchMode = true
+            layoutParams = LinearLayout.LayoutParams(0, 0)
+            root.addView(this, 0)
+            focusSink = this
+        }
         v.clearFocus()
-        parking.requestFocus()
+        sink.requestFocus()
 
-        // Способ 30-й версии: у нас она минимальная, так что путь основной.
-        v.windowInsetsController?.hide(android.view.WindowInsets.Type.ime())
-        // Запасной: на части прошивок первый способ молча ничего не делает.
+        // 2. Гасим. Через окно, а не через вьюху: у вьюхи, только что
+        //    потерявшей фокус, распорядителя может уже не быть.
+        window.decorView.windowInsetsController?.hide(android.view.WindowInsets.Type.ime())
         val imm = getSystemService(android.view.inputmethod.InputMethodManager::class.java)
-        // Без флагов. HIDE_NOT_ALWAYS означает «не прятать, если человек
-        // открыл её сам» - а он именно сам и открыл, нажав на поле. Флаг
-        // сломал даже тот путь, что работал.
-        imm?.hideSoftInputFromWindow(v.windowToken, 0)
+        imm?.hideSoftInputFromWindow(window.decorView.windowToken, 0)
     }
 
     /**
@@ -2266,80 +2312,73 @@ class VaultActivity : AppCompatActivity() {
         val opts = VaultQuery.Options(searchWord, searchAny, searchWhere)
         val dens = resources.displayMetrics.density
 
-        var target: TextView? = null
-        var targetAt = -1
-        val painted = ArrayList<Pair<TextView, List<IntArray>>>()
+        // Исходный текст запоминается ЦЕЛИКОМ и возвращается в конце.
+        // Снимать отрезки по одному значит однажды забыть один: рамка уже
+        // так и осталась висеть до выхода из заметки.
+        val touched = ArrayList<Pair<TextView, CharSequence>>()
+        val pulses = ArrayList<VaultMark.Pulse>()
+        var first: TextView? = null
+        var firstAt = -1
 
         for (i in 0 until body.childCount) {
             val v = body.getChildAt(i) as? TextView ?: continue
             val src = v.text.toString()
             val marks = VaultQuery.spans(src, parsed, opts)
             if (marks.isEmpty()) continue
+            touched.add(v to v.text)
+
             val sb = android.text.SpannableStringBuilder(src)
-            VaultMark.apply(sb, src, 0, parsed, opts, dens)
+            for (m in marks) {
+                // Золотая рамка на КАЖДОМ совпадении страницы, а не только
+                // на первом: второе искали через список заново.
+                val pulse = VaultMark.Pulse(0xFFE8C86A.toInt(), dens)
+                pulses.add(pulse)
+                sb.setSpan(pulse, m[0], minOf(m[1], sb.length),
+                    android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
             v.text = sb
-            painted.add(v to marks)
-            if (target == null) { target = v; targetAt = marks[0][0] }
+            if (first == null) { first = v; firstAt = marks[0][0] }
         }
-        val first = target ?: return
-        val at = targetAt
+        val head = first ?: return
+        val at = firstAt
 
-        // Раскладка нужна целиком: до неё нет ни строк, ни координат.
-        first.post {
-            val layout = first.layout ?: return@post
-            val line = layout.getLineForOffset(at.coerceIn(0, first.text.length))
-            pane.smoothScrollTo(0,
-                maxOf(0, first.top + layout.getLineTop(line) - dp(80)))
+        head.post {
+            val layout = head.layout ?: return@post
+            val line = layout.getLineForOffset(at.coerceIn(0, head.text.length))
+            pane.smoothScrollTo(0, maxOf(0, head.top + layout.getLineTop(line) - dp(80)))
 
-            // Готовим отрезки для КАЖДОГО совпадения на странице, а не
-            // только для первого. Второе совпадение на той же странице
-            // иначе приходилось искать через список заново.
-            class Mark(val text: android.text.Spannable, val lineFrom: Int,
-                       val lineTo: Int, val from: Int, val to: Int,
-                       val lineSpan: android.text.style.BackgroundColorSpan,
-                       val glowSpan: android.text.style.BackgroundColorSpan)
-
-            val marks = ArrayList<Mark>()
-            for ((v, hits) in painted) {
+            // Красная строка. Насыщенно: прежний тон был почти прозрачным
+            // и читался как грязь на экране, а не как указание.
+            val lineSpans = ArrayList<Triple<android.text.Spannable, Int, Int>>()
+            for ((v, _) in touched) {
                 val sp = v.text as? android.text.Spannable ?: continue
                 val lay = v.layout ?: continue
-                for (h in hits) {
-                    val ln = lay.getLineForOffset(h[0].coerceIn(0, sp.length))
-                    marks.add(Mark(sp, lay.getLineStart(ln), lay.getLineEnd(ln),
-                        h[0], minOf(h[1], sp.length),
-                        android.text.style.BackgroundColorSpan(0),
-                        android.text.style.BackgroundColorSpan(0)))
+                for (m in VaultQuery.spans(v.text.toString(), parsed, opts)) {
+                    val ln = lay.getLineForOffset(m[0].coerceIn(0, sp.length))
+                    lineSpans.add(Triple(sp, lay.getLineStart(ln), lay.getLineEnd(ln)))
                 }
             }
-            if (marks.isEmpty()) return@post
 
-            // Пятнадцать секунд: биение первые пять, потом плавное
-            // угасание. Хватает, чтобы пролистать страницу и осмотреться,
-            // а дальше подсветка мешала бы читать.
-            val total = 15000L
+            val keys = lineSpans.map { android.text.style.BackgroundColorSpan(0) }
+
             val anim = android.animation.ValueAnimator.ofFloat(0f, 1f)
-            anim.duration = total
+            anim.duration = 15000L
             anim.addUpdateListener { a ->
                 val t = a.animatedFraction
-                // Биение затухает к пятой секунде, яркость - к пятнадцатой.
-                val pulse = if (t < 0.33f)
-                    (kotlin.math.sin(t * 30.0).toFloat() + 1f) / 2f else 0f
                 val fade = (1f - t).coerceIn(0f, 1f)
-                for (m in marks) {
-                    // Строка ЗОЛОТАЯ: она ведёт глаз к месту.
-                    setBg(m.text, m.lineSpan, m.lineFrom, m.lineTo,
-                        ((fade * 0x4A).toInt() shl 24) or 0xE0C08A)
-                    // Само совпадение КРАСНОЕ и живое.
-                    setBg(m.text, m.glowSpan, m.from, m.to,
-                        (((0x50 + pulse * 0x80) * fade).toInt().coerceIn(0, 255) shl 24)
-                            or 0xCF5C4A)
+                // Биение живёт всё время, но слабеет вместе с яркостью.
+                val beat = ((kotlin.math.sin(t * 42.0).toFloat() + 1f) / 2f)
+                for ((i, ls) in lineSpans.withIndex()) {
+                    setBg(ls.first, keys[i], ls.second, ls.third,
+                        ((fade * 0x72).toInt() shl 24) or 0xC0392B)
                 }
+                for (pl in pulses) pl.k = fade * (0.45f + 0.55f * beat)
+                // Отрезок сам себя не перерисует: просим вьюху.
+                for ((v, _) in touched) v.invalidate()
             }
             anim.addListener(object : android.animation.AnimatorListenerAdapter() {
-                override fun onAnimationEnd(a: android.animation.Animator) = clearMarks(marks.map {
-                    Triple(it.text, it.lineSpan, it.glowSpan) })
-                override fun onAnimationCancel(a: android.animation.Animator) = clearMarks(marks.map {
-                    Triple(it.text, it.lineSpan, it.glowSpan) })
+                override fun onAnimationEnd(a: android.animation.Animator) = restore(touched)
+                override fun onAnimationCancel(a: android.animation.Animator) = restore(touched)
             })
             flashAnim?.cancel()
             flashAnim = anim
@@ -2348,22 +2387,14 @@ class VaultActivity : AppCompatActivity() {
     }
 
     /**
-     * Снять всё, что положила вспышка.
+     * Вернуть тексту исходный вид.
      *
-     * Отрезки ложатся на текст ЧУЖИХ вьюх. Оставленные, они дожили бы до
-     * следующего открытия страницы и читались бы как поломка.
+     * Возвращаем ЦЕЛИКОМ прежнюю строку, а не снимаем отрезки по одному.
+     * Снятие по списку однажды пропустит один вид - так и вышло с рамкой:
+     * она пережила затухание и висела до выхода из заметки.
      */
-    private fun clearMarks(all: List<Triple<android.text.Spannable,
-            android.text.style.BackgroundColorSpan,
-            android.text.style.BackgroundColorSpan>>) {
-        for ((text, a, b) in all) {
-            text.removeSpan(a)
-            text.removeSpan(b)
-            for (sp in text.getSpans(0, text.length,
-                android.text.style.BackgroundColorSpan::class.java)) {
-                text.removeSpan(sp)
-            }
-        }
+    private fun restore(touched: List<Pair<TextView, CharSequence>>) {
+        for ((v, original) in touched) v.text = original
     }
 
     /**

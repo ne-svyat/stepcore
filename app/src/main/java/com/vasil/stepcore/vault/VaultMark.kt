@@ -82,6 +82,59 @@ object VaultMark {
         }
     }
 
+    /**
+     * Живая рамка для перехода из поиска.
+     *
+     * ПОЧЕМУ ОТДЕЛЬНЫЙ КЛАСС, А НЕ ЦВЕТ ФОНА
+     * --------------------------------------
+     * Обычная рамка рисуется отрисовщиком ПОВЕРХ фона, и любая заливка под
+     * ней не видна вовсе. Пульсация фоном была не видна именно поэтому:
+     * её закрашивала рамка. Пульсировать должна сама рамка.
+     *
+     * Яркость меняется снаружи, а вьюха перерисовывается по требованию:
+     * отрезок сам себя перерисовать не может.
+     */
+    class Pulse(private val color: Int, private val density: Float) : ReplacementSpan() {
+
+        /** 0 - погасла совсем, 1 - полная яркость. */
+        var k: Float = 1f
+
+        override fun getSize(paint: Paint, text: CharSequence, start: Int, end: Int,
+                             fm: Paint.FontMetricsInt?): Int {
+            fm?.let { paint.getFontMetricsInt(it) }
+            return (paint.measureText(text, start, end) + density * 6).toInt()
+        }
+
+        override fun draw(canvas: Canvas, text: CharSequence, start: Int, end: Int,
+                          x: Float, top: Int, y: Int, bottom: Int, paint: Paint) {
+            val w = paint.measureText(text, start, end)
+            val r = RectF(x, top + density, x + w + density * 6, bottom - density)
+            val old = paint.color
+            val oldStyle = paint.style
+            val oldWidth = paint.strokeWidth
+
+            val a = k.coerceIn(0f, 1f)
+            paint.style = Paint.Style.FILL
+            paint.color = ((a * 0x55).toInt() shl 24) or (color and 0xFFFFFF)
+            canvas.drawRoundRect(r, 5 * density, 5 * density, paint)
+
+            // Рамка толстеет вместе с яркостью: одного цвета мало, когда
+            // страница пёстрая, а толщина заметна боковым зрением.
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = density * (1f + a)
+            paint.color = ((0x40 + a * 0xBF).toInt() shl 24) or (color and 0xFFFFFF)
+            canvas.drawRoundRect(r, 5 * density, 5 * density, paint)
+
+            paint.style = Paint.Style.FILL
+            paint.color = 0xFFFFFFFF.toInt()
+            canvas.drawText(text, start, end, x + density * 3, y.toFloat(), paint)
+
+            paint.color = old
+            paint.style = oldStyle
+            paint.strokeWidth = oldWidth
+        }
+    }
+
     /** Слово в рамке своего тона. Только для кусков без пробелов. */
     private class Framed(private val color: Int, private val density: Float) : ReplacementSpan() {
 
