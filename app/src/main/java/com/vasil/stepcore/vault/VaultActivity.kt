@@ -104,6 +104,24 @@ class VaultActivity : AppCompatActivity() {
      * умолчанию выключена и никому не мешает.
      */
     private var focusDebug = false
+
+    /**
+     * Журнал событий фокуса и клавиатуры.
+     *
+     * ПОЧЕМУ ЖУРНАЛ, А НЕ СНИМОК
+     * --------------------------
+     * Снимок показывал ИТОГ и противоречил сам себе: поле сделано
+     * нефокусируемым, приёмник фокус принял, а через четверть секунды
+     * фокус снова в поле. Кто вернул и когда - по итогу не узнать никак,
+     * и пять попыток чинить вслепую это подтвердили.
+     *
+     * Журнал пишет последовательность с отметками времени. Виновник виден
+     * из порядка событий, а не из догадок.
+     */
+    private val focusLog = ArrayList<String>()
+    private var focusLogStart = 0L
+    private var focusWatcher: android.view.ViewTreeObserver.OnGlobalFocusChangeListener? = null
+    private var imeWasVisible = false
     private var focusReport: TextView? = null
 
     /**
@@ -438,6 +456,11 @@ class VaultActivity : AppCompatActivity() {
         flashAnim?.cancel()
         flashAnim = null
         focusReport = null
+        // Наблюдатель держит ссылку на дерево, которого сейчас не станет.
+        focusWatcher?.let {
+            root.viewTreeObserver.removeOnGlobalFocusChangeListener(it)
+            focusWatcher = null
+        }
         if (this.scrollable == scrollable && root.parent != null) return
         this.scrollable = scrollable
         // Без ведущей скобки на новой строке: Kotlin прочитал бы её как
@@ -726,6 +749,7 @@ class VaultActivity : AppCompatActivity() {
         // Приёмник фокуса - первым делом: он должен существовать раньше,
         // чем поле ввода успеет забрать фокус на себя.
         ensureSink()
+        if (focusDebug) watchFocus()
         root.setPadding(dp(16), dp(16), dp(16), dp(8))
         val r = repo ?: return
         pendingTag?.let { activeTag = it; pendingTag = null }
@@ -838,17 +862,26 @@ class VaultActivity : AppCompatActivity() {
         root.addView(explain, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(8) })
 
         val dbg = TextView(this).apply {
-            textSize = 10f
+            textSize = 9f
+            typeface = android.graphics.Typeface.MONOSPACE
             setTextColor(0xFFE0C08A.toInt())
-            setPadding(dp(10), dp(2), dp(10), dp(2))
+            setPadding(dp(8), dp(4), dp(8), dp(4))
+            setTextIsSelectable(true)
             visibility = View.GONE
         }
         root.addView(dbg, LinearLayout.LayoutParams(-1, -2))
         focusReport = dbg
         explain.setOnLongClickListener {
             focusDebug = !focusDebug
-            updateFocusReport()
-            toast(if (focusDebug) "Отладка фокуса включена" else "Отладка выключена")
+            focusLog.clear()
+            focusLogStart = 0L
+            if (focusDebug) {
+                logFocus("журнал включён · фокус у: " + viewName(currentFocus))
+                watchFocus()
+            }
+            renderFocusLog()
+            toast(if (focusDebug) "Журнал фокуса включён — повтори поиск"
+                  else "Журнал выключен")
             true
         }
 
@@ -1199,7 +1232,7 @@ class VaultActivity : AppCompatActivity() {
         focusBack = Runnable {
             v.isFocusableInTouchMode = true
             v.isFocusable = true
-            updateFocusReport()
+            logFocus("вернул полю способность брать фокус")
         }
         v.postDelayed(focusBack, 500L)
     }
@@ -1226,29 +1259,59 @@ class VaultActivity : AppCompatActivity() {
         return v
     }
 
-    /** Снимок состояния фокуса и клавиатуры. Только факты. */
-    private fun updateFocusReport() {
+    /** Короткое имя вьюхи для журнала. */
+    private fun viewName(v: View?): String = when {
+        v == null -> "никто"
+        v === focusSink -> "ПРИЁМНИК"
+        v is EditText -> "поле «" + (v.hint ?: "").toString().take(12) + "»"
+        else -> v.javaClass.simpleName
+    }
+
+    /** Записать событие. Время - от первой записи, так читается легче. */
+    private fun logFocus(what: String) {
+        if (!focusDebug) return
+        if (focusLogStart == 0L) focusLogStart = System.currentTimeMillis()
+        val ms = System.currentTimeMillis() - focusLogStart
+        focusLog.add(ms.toString().padStart(4) + "мс  " + what)
+        // Держим последние: длинный журнал не помещается на экран, а
+        // интересен всегда хвост.
+        while (focusLog.size > 14) focusLog.removeAt(0)
+        renderFocusLog()
+    }
+
+    private fun renderFocusLog() {
         val v = focusReport ?: return
         if (!focusDebug) { v.visibility = View.GONE; return }
         v.visibility = View.VISIBLE
-        val cur = currentFocus
-        val who = when {
-            cur == null -> "фокуса нет ни у кого"
-            cur === focusSink -> "приёмник"
-            cur is EditText -> "поле ввода"
-            else -> cur.javaClass.simpleName
+        v.text = focusLog.joinToString("\n")
+    }
+
+    /**
+     * Слежка за фокусом и клавиатурой.
+     *
+     * Наблюдатель снимается при пересборке экрана: он держит ссылку на
+     * дерево, которого уже нет.
+     */
+    private fun watchFocus() {
+        val obs = root.viewTreeObserver
+        focusWatcher?.let { obs.removeOnGlobalFocusChangeListener(it) }
+        val w = android.view.ViewTreeObserver.OnGlobalFocusChangeListener { old, now ->
+            logFocus("фокус: " + viewName(old) + "  →  " + viewName(now))
         }
-        val inTree = focusSink?.parent === root
-        val ime = try {
-            window.decorView.rootWindowInsets
-                ?.isVisible(android.view.WindowInsets.Type.ime()) ?: false
-        } catch (e: Exception) {
-            false
+        obs.addOnGlobalFocusChangeListener(w)
+        focusWatcher = w
+
+        // Клавиатура: следим за тем, как меняется её видимость. Это
+        // единственный способ отличить «не спрятали» от «спрятали и
+        // кто-то показал заново».
+        root.setOnApplyWindowInsetsListener { view, insets ->
+            val vis = insets.isVisible(android.view.WindowInsets.Type.ime())
+            if (vis != imeWasVisible) {
+                imeWasVisible = vis
+                logFocus("клавиатура: " + (if (vis) "ПОЯВИЛАСЬ" else "ушла"))
+            }
+            view.onApplyWindowInsets(insets)
         }
-        v.text = "фокус: " + who +
-            " · приёмник: " + (if (inTree) "в дереве" else "НЕ В ДЕРЕВЕ") +
-            " · запрос фокуса: " + (if (lastFocusGrant) "принят" else "ОТКЛОНЁН") +
-            " · клавиатура: " + (if (ime) "видна" else "скрыта")
     }
 
     /** Как сейчас ищется - в несколько слов, для шапки. */
@@ -1303,6 +1366,7 @@ class VaultActivity : AppCompatActivity() {
         // незачем висеть. Способность возвращается через полсекунды:
         // нажать и печатать снова можно, но само по себе поле фокус уже
         // не заберёт.
+        logFocus("--- прячу клавиатуру ---")
         val sink = ensureSink()
         v.isFocusableInTouchMode = false
         v.isFocusable = false
@@ -1315,10 +1379,16 @@ class VaultActivity : AppCompatActivity() {
         window.decorView.windowInsetsController?.hide(android.view.WindowInsets.Type.ime())
         val imm = getSystemService(android.view.inputmethod.InputMethodManager::class.java)
         imm?.hideSoftInputFromWindow(window.decorView.windowToken, 0)
+        logFocus("попросил спрятать · приёмник взял фокус: " +
+            (if (lastFocusGrant) "да" else "НЕТ"))
 
-        // Снимок ПОСЛЕ попытки: он и покажет, сработала она или нет.
-        // Клавиатура прячется не мгновенно, поэтому смотрим с задержкой.
-        v.postDelayed({ updateFocusReport() }, 250L)
+        // Отметка через секунду: если к этому моменту клавиатура ещё
+        // видна и никто её не показывал заново - значит система просто не
+        // послушалась, и это уже другая болезнь.
+        v.postDelayed({
+            logFocus("через 1с · фокус у: " + viewName(currentFocus) +
+                " · клавиатура: " + (if (imeWasVisible) "видна" else "скрыта"))
+        }, 1000L)
     }
 
     /**
