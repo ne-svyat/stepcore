@@ -1335,7 +1335,10 @@ class VaultActivity : AppCompatActivity() {
                         legend.append("   ")
                     }
                     holder.addView(TextView(this@VaultActivity).apply {
-                        text = legend
+                        // this. обязательно: в этой функции есть локальная
+                        // `text` с запросом, и она перекрывает свойство
+                        // вьюхи - присваивание ушло бы в неё.
+                        this.text = legend
                         textSize = 11f
                         setPadding(dp(2), 0, 0, dp(8))
                     }, LinearLayout.LayoutParams(-1, -2))
