@@ -264,7 +264,13 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
                /** Сколько слов запроса нашлось. Считается, а не выдумано. */
                val score: Int = 1,
                /** Нашлось в названии или тегах, а не в тексте страницы. */
-               val inHead: Boolean = false)
+               val inHead: Boolean = false,
+               /**
+                * Где именно на странице. Нужен, чтобы открыть заметку
+                * ровно на этом месте, а не искать его заново: второй
+                * поиск по той же странице мог бы найти ДРУГОЕ вхождение.
+                */
+               val at: Int = 0)
 
     /**
      * Список заметок ЭТОГО тайника.
@@ -399,7 +405,7 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
                     val pos = VaultQuery.firstHit(text, q, opts)
                     out.add(Hit(h.id, h.title, p.idx,
                         VaultText.snippet(text, if (pos < 0) 0 else pos),
-                        VaultQuery.score(text, q, opts), false))
+                        VaultQuery.score(text, q, opts), false, if (pos < 0) 0 else pos))
                     if (out.size >= limit) break
                 }
                 from += PAGE_CHUNK

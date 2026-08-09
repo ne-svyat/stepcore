@@ -59,6 +59,17 @@ class VaultActivity : AppCompatActivity() {
 
     // Настройки поиска живут до закрытия тайника: человек, включивший
     // «слово целиком», ищет так подряд несколько раз.
+    /**
+     * Режим подбирается сам, пока человек не выбрал своё.
+     *
+     * Это ответ на «а система может сама?»: может, и почти всегда лучше
+     * человека, потому что знает, НАШЛОСЬ ли что-нибудь. Настройки
+     * остаются для тех редких случаев, когда самоподбор промахнулся.
+     */
+    private var searchAuto = true
+
+    /** Отдельное значение для окна настроек: «пусть решает само». */
+    private val AUTO_WORD = 99
     private var searchWord = VaultQuery.WORD_PREFIX
     private var searchAny = false
     private var searchWhere = VaultQuery.IN_ALL
@@ -98,6 +109,13 @@ class VaultActivity : AppCompatActivity() {
 
     /** Что подсветить на странице после перехода из поиска. */
     private var pendingFind: String? = null
+
+    /** Точное место найденного. Искать его заново нельзя: на странице
+     *  может быть другое вхождение, и прыжок ушёл бы не туда. */
+    private var pendingFindAt: Int = -1
+
+    /** Прокрутка списка результатов: нужна, чтобы вернуть её наверх. */
+    private var listPane: ScrollView? = null
 
     /** Тоны классов. Считаются при открытии списка и живут до ухода. */
     private var classHues: Map<String, Float> = emptyMap()
@@ -657,7 +675,7 @@ class VaultActivity : AppCompatActivity() {
         title("Тайник")
 
         val q = EditText(this).apply {
-            hint = "Слова через пробел, или #класс"
+            hint = "Например: красная машина"
             setText(query)
             textSize = 15f
             isSingleLine = true
@@ -685,46 +703,67 @@ class VaultActivity : AppCompatActivity() {
 
         searchRow.addView(iconButton(VaultIcon.Kind.SEARCH, "Найти",
             VaultIcon.tintFor(VaultIcon.Kind.SEARCH)) {
-            if (!busy) runSearch(q.text.toString(), holder, status)
+            if (!busy) {
+                // Прячем клавиатуру ПЕРЕД поиском: иначе она закрывает
+                // собой ровно ту половину экрана, где появятся результаты.
+                hideKeyboard(q)
+                runSearch(q.text.toString(), holder, status)
+            }
         })
 
         // Объяснение и шторка. Строка объяснения стоит ВСЕГДА, шторка
         // раскрывается по ней: человек сначала видит, как его поняли, и
         // только потом лезет крутить.
-        // Две строки и не больше: этот блок стоит в ЖЁСТКОМ каркасе, и
-        // каждая его лишняя строка отнимается у списка результатов.
+        // ШАПКА. Раньше здесь было три сообщения об одном и том же:
+        // подсказка в пустом поле, «Впиши, что искать» и «Настроено».
+        // Вместе они складывались в кашу, где непонятно, что от тебя
+        // хотят. Осталось одно утверждение: КАК сейчас ищется.
+        //
+        // Две строки и не больше: блок стоит в жёстком каркасе, и каждая
+        // лишняя строка отнимается у списка результатов.
         val explain = TextView(this).apply {
             textSize = 12f
-            maxLines = 3
+            maxLines = 2
             ellipsize = android.text.TextUtils.TruncateAt.END
-            setPadding(dp(10), dp(6), dp(10), dp(6))
+            setPadding(dp(10), dp(7), dp(10), dp(7))
             isClickable = true
         }
         root.addView(explain, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(8) })
 
         lateinit var repaint: () -> Unit
         repaint = {
-            val parsed = VaultQuery.parse(q.text.toString())
-            val opts = VaultQuery.Options(searchWord, searchAny, searchWhere)
-            val tuned = searchWord != VaultQuery.WORD_PREFIX || searchAny ||
-                searchWhere != VaultQuery.IN_ALL
-            // Тон говорит о состоянии раньше слов: синий - обычный поиск,
-            // янтарный - настройки изменены, и результат может быть
-            // непохожим на ожидаемый.
-            val tint = if (tuned) 0xFFE0C08A.toInt() else 0xFF8FC4D8.toInt()
-            explain.setTextColor(tint)
+            // Ровно одно утверждение: как ищется прямо сейчас. Не «впиши»
+            // - поле само об этом просит подсказкой, и повторять незачем.
+            val how = if (searchAuto) "Подбирается само" else searchHowShort()
+            val head = android.text.SpannableStringBuilder("Как ищу:  ")
+            head.append(how)
+            head.setSpan(
+                android.text.style.ForegroundColorSpan(0xFF7A7488.toInt()),
+                0, 9, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            head.setSpan(
+                android.text.style.ForegroundColorSpan(0xFFCFCFDA.toInt()),
+                10, head.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            head.append("\nНастроить  ▸")
+            head.setSpan(
+                android.text.style.ForegroundColorSpan(0xFFB9A6E8.toInt()),
+                head.length - 12, head.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            explain.text = head
+            // Спокойная рамка вместо цветной заливки: этот блок не событие
+            // и не предупреждение, он просто сообщает состояние.
             explain.background = GradientDrawable().apply {
                 cornerRadius = dp(8).toFloat()
-                setColor(SURFACE_SUNKEN)
-                setStroke(dp(1), (tint and 0xFFFFFF) or 0x55000000.toInt())
+                setColor(SURFACE_RAISED)
+                setStroke(dp(1), if (searchAuto) LINE_EDGE else 0x66B9A6E8)
             }
-            explain.text = VaultQuery.explain(parsed, opts) +
-                (if (tuned) "\nНастроено · нажми, чтобы изменить"
-                 else "\nНажми, чтобы настроить поиск")
         }
 
         explain.setOnClickListener {
-            if (!busy) showSearchOptions { repaint(); runSearch(q.text.toString(), holder, status) }
+            if (!busy) {
+                hideKeyboard(q)
+                showSearchOptions(q.text.toString()) {
+                    repaint(); runSearch(q.text.toString(), holder, status)
+                }
+            }
         }
         q.addTextChangedListener(object : android.text.TextWatcher {
             override fun afterTextChanged(e: android.text.Editable?) = repaint()
@@ -769,8 +808,13 @@ class VaultActivity : AppCompatActivity() {
         // Список со своей прокруткой: примерно до середины экрана.
         val listPane = ScrollView(this).apply {
             isFillViewport = false
+            // Своя прокрутка и никакой внешней: вложенные прокрутки
+            // перехватывают палец друг у друга, и список начинает
+            // «залипать». Главный экран потому и жёсткий каркас.
+            isNestedScrollingEnabled = false
             addView(holder, LinearLayout.LayoutParams(-1, -2))
         }
+        this.listPane = listPane
         // Список ГИБКИЙ, а не в жёстких процентах экрана. С фиксированной
         // долей появление строки фильтра выталкивало нижнюю панель за край:
         // сумма высот переставала помещаться, а внешняя прокрутка здесь
@@ -1012,6 +1056,29 @@ class VaultActivity : AppCompatActivity() {
         }
     }
 
+    /** Как сейчас ищется - в несколько слов, для шапки. */
+    private fun searchHowShort(): String {
+        val a = when (searchWord) {
+            VaultQuery.WORD_EXACT -> "слова целиком"
+            VaultQuery.WORD_INSIDE -> "внутри слов"
+            else -> "по началу слова"
+        }
+        val b = if (searchAny) ", хотя бы одно" else ""
+        val c = when (searchWhere) {
+            VaultQuery.IN_TITLE -> ", только названия"
+            VaultQuery.IN_TAGS -> ", только теги"
+            else -> ""
+        }
+        return a + b + c
+    }
+
+    /** Убрать системную клавиатуру: она закрывает собой результаты. */
+    private fun hideKeyboard(v: View) {
+        val imm = getSystemService(android.view.inputmethod.InputMethodManager::class.java)
+        imm?.hideSoftInputFromWindow(v.windowToken, 0)
+        v.clearFocus()
+    }
+
     /**
      * Настройки поиска ОТДЕЛЬНЫМ ОКНОМ.
      *
@@ -1030,7 +1097,7 @@ class VaultActivity : AppCompatActivity() {
      *        список на каждое нажатие внутри окна значило бы гонять поиск
      *        по всем страницам три раза подряд.
      */
-    private fun showSearchOptions(onChange: () -> Unit) {
+    private fun showSearchOptions(query: String, onChange: () -> Unit) {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(12), dp(20), dp(8))
@@ -1038,14 +1105,34 @@ class VaultActivity : AppCompatActivity() {
         // Своя прокрутка: у окна её нет, а содержимое выше маленького экрана.
         val pane = ScrollView(this).apply { addView(box) }
 
-        var word = searchWord
+        var word = if (searchAuto) AUTO_WORD else searchWord
         var any = searchAny
         var where = searchWhere
 
         lateinit var rebuild: () -> Unit
         rebuild = {
             box.removeAllViews()
+            // Живое объяснение ЗДЕСЬ, а не в шапке: тут есть место на
+            // полную фразу, и человек видит, как меняется смысл запроса,
+            // пока перебирает положения.
+            box.addView(TextView(this).apply {
+                text = VaultQuery.explain(VaultQuery.parse(query),
+                    VaultQuery.Options(
+                        if (word == AUTO_WORD) VaultQuery.WORD_PREFIX else word,
+                        any, where))
+                textSize = 13f
+                setTextColor(0xFF8FC4D8.toInt())
+                setPadding(dp(10), dp(8), dp(10), dp(8))
+                background = GradientDrawable().apply {
+                    cornerRadius = dp(8).toFloat()
+                    setColor(SURFACE_SUNKEN)
+                    setStroke(dp(1), 0x338FC4D8)
+                }
+            }, LinearLayout.LayoutParams(-1, -2).also { it.bottomMargin = dp(12) })
             box.addView(searchGroup("Как искать слова", listOf(
+                Triple(AUTO_WORD, "Автоматически",
+                    "Сначала по началу слова. Не нашлось — ищу внутри слов, " +
+                        "потом по любому слову. Что сделал, напишу над списком"),
                 Triple(VaultQuery.WORD_PREFIX, "По началу слова",
                     "«машин» найдёт «машина», «машины», «машинам». Обычный поиск"),
                 Triple(VaultQuery.WORD_EXACT, "Слово целиком",
@@ -1085,12 +1172,14 @@ class VaultActivity : AppCompatActivity() {
             .setTitle("Как искать")
             .setView(pane)
             .setPositiveButton("Готово") { _, _ ->
-                searchWord = word
+                searchAuto = word == AUTO_WORD
+                if (!searchAuto) searchWord = word
                 searchAny = any
                 searchWhere = where
                 onChange()
             }
-            .setNeutralButton("Обычный поиск") { _, _ ->
+            .setNeutralButton("Сбросить") { _, _ ->
+                searchAuto = true
                 searchWord = VaultQuery.WORD_PREFIX
                 searchAny = false
                 searchWhere = VaultQuery.IN_ALL
@@ -1169,17 +1258,43 @@ class VaultActivity : AppCompatActivity() {
                 busy = false
                 return@launch
             }
-            val opts = VaultQuery.Options(searchWord, searchAny, searchWhere)
             val parsed = VaultQuery.parse(text)
-            val hits = withContext(Dispatchers.Default) { r.search(text, opts) }
+
+            // САМОПОДБОР. Пробуем от строгого к широкому и останавливаемся
+            // на первом, что дало результат. Лишние проходы случаются
+            // только когда НЕ НАШЛОСЬ - то есть там, где человек всё равно
+            // ждёт и всё равно полез бы крутить настройки руками.
+            var opts = VaultQuery.Options(searchWord, searchAny, searchWhere)
+            var hits = withContext(Dispatchers.Default) { r.search(text, opts) }
+            var relaxed = ""
+            if (searchAuto && hits.isEmpty()) {
+                val wide = VaultQuery.Options(VaultQuery.WORD_INSIDE, false, searchWhere)
+                val h2 = withContext(Dispatchers.Default) { r.search(text, wide) }
+                if (h2.isNotEmpty()) {
+                    opts = wide; hits = h2; relaxed = "искал внутри слов"
+                } else {
+                    val any = VaultQuery.Options(VaultQuery.WORD_INSIDE, true, searchWhere)
+                    val h3 = withContext(Dispatchers.Default) { r.search(text, any) }
+                    if (h3.isNotEmpty()) {
+                        opts = any; hits = h3; relaxed = "хватило одного слова из запроса"
+                    }
+                }
+            }
             busy = false
             holder.removeAllViews()
+            // Прокрутка наверх: иначе после нового поиска список открылся
+            // бы на середине прежнего, и казалось бы, что ничего не нашли.
+            listPane?.scrollTo(0, 0)
             status.text = when {
                 hits.isEmpty() -> "Ничего не нашлось"
+                // Самоподбор обязан признаваться, что сделал: иначе
+                // непонятно, почему нашлось не то, что просили.
+                relaxed.isNotEmpty() -> "Точно не нашлось — " + relaxed +
+                    ". Совпадений: " + hits.size
                 else -> "Найдено совпадений: " + hits.size +
                     (if (parsed.words.size > 1) " · сверху те, где совпало больше слов" else "")
             }
-            if (hits.isEmpty() && searchWord == VaultQuery.WORD_PREFIX) {
+            if (hits.isEmpty() && !searchAuto) {
                 // Подсказка вместо пустоты: пустой экран не говорит, что
                 // делать дальше, а тут вариантов ровно два и оба рядом.
                 holder.addView(TextView(this@VaultActivity).apply {
@@ -1220,9 +1335,69 @@ class VaultActivity : AppCompatActivity() {
                     }
                     setPadding(dp(14), dp(10), dp(14), dp(10))
                     isClickable = true
-                    setOnClickListener { pendingFind = text; openForRead(h.noteId, h.page) }
+                    setOnClickListener { previewHit(h, text, parsed, opts) }
                 }, LinearLayout.LayoutParams(-1, -2).also { it.bottomMargin = dp(8) })
             }
+        }
+    }
+
+    /**
+     * Предпросмотр найденного.
+     *
+     * ЗАЧЕМ ЛИШНЕЕ ОКНО
+     * ----------------
+     * Отрывок в списке короткий, и по нему часто не понять, та это заметка
+     * или нет. Открывать заметку ради проверки дорого: она греется, список
+     * теряется, и надо возвращаться. Окно показывает кусок втрое шире, и
+     * отказаться стоит одно нажатие.
+     *
+     * Переход отсюда идёт на ТО ЖЕ место, что нашёл поиск: смещение
+     * передаётся числом, а не ищется заново. Второй поиск по странице мог
+     * бы найти другое вхождение, и прыжок ушёл бы не туда.
+     */
+    private fun previewHit(h: VaultRepo.Hit, query: String,
+                           parsed: VaultQuery.Parsed, opts: VaultQuery.Options) {
+        val r = repo ?: return
+        if (busy) return
+        busy = true
+        lifecycleScope.launch {
+            val page = withContext(Dispatchers.Default) { r.readPage(h.noteId, h.page) } ?: ""
+            busy = false
+
+            val radius = 320
+            var from = maxOf(0, h.at - radius)
+            var to = minOf(page.length, h.at + radius)
+            while (from > 0 && !page[from].isWhitespace()) from--
+            while (to < page.length && !page[to].isWhitespace()) to++
+            val piece = page.substring(from, to)
+
+            val body = android.text.SpannableStringBuilder(
+                (if (from > 0) "…" else "") + piece + (if (to < page.length) "…" else ""))
+            val shift = if (from > 0) 1 else 0
+            for (sp in VaultQuery.spans(piece, parsed, opts)) {
+                body.setSpan(android.text.style.BackgroundColorSpan(0x55B9A6E8),
+                    shift + sp[0], shift + sp[1],
+                    android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+
+            val text = TextView(this@VaultActivity).apply {
+                this.text = body
+                textSize = 15f
+                setTextColor(0xFFDDDDE5.toInt())
+                setPadding(dp(20), dp(8), dp(20), dp(8))
+            }
+            val pane = ScrollView(this@VaultActivity).apply { addView(text) }
+
+            AlertDialog.Builder(this@VaultActivity)
+                .setTitle(h.noteTitle + " · стр. " + (h.page + 1))
+                .setView(pane)
+                .setPositiveButton("Открыть здесь") { _, _ ->
+                    pendingFind = query
+                    pendingFindAt = h.at
+                    openForRead(h.noteId, h.page)
+                }
+                .setNegativeButton("Не то", null)
+                .show()
         }
     }
 
@@ -1960,10 +2135,29 @@ class VaultActivity : AppCompatActivity() {
      * через минуту становится мусором на экране, поэтому она гаснет сама:
      * своё дело она уже сделала.
      */
+    /**
+     * Подсветить и показать найденное место.
+     *
+     * ЧТО БЫЛО СЛОМАНО
+     * ---------------
+     * Место искалось ПОДСТРОКОЙ. С переходом на поиск словами запрос
+     * «красная машина» подстрокой не находится нигде, и прыжок молча не
+     * срабатывал: заметка открывалась на первой строке.
+     *
+     * Теперь место приходит числом от самого поиска, а если его нет -
+     * ищется теми же правилами, какими нашли.
+     */
     private fun flashMatch(e: EditText, query: String) {
-        val pos = VaultText.find(e.text.toString(), query)
+        val whole = e.text.toString()
+        val parsed = VaultQuery.parse(query)
+        val opts = VaultQuery.Options(searchWord, searchAny, searchWhere)
+        val at = pendingFindAt.also { pendingFindAt = -1 }
+        val pos = if (at in 0 until whole.length) at
+                  else VaultQuery.firstHit(whole, parsed, opts)
         if (pos < 0) return
-        val end = minOf(e.text.length, pos + query.length)
+        val spans = VaultQuery.spans(whole, parsed, opts)
+        val end = spans.firstOrNull { it[0] == pos }?.get(1)
+            ?: minOf(e.text.length, pos + query.length)
         val span = android.text.style.BackgroundColorSpan(0xFF6A3B7A.toInt())
         e.text.setSpan(span, pos, end, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         e.setSelection(pos)
