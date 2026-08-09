@@ -90,6 +90,17 @@ class VaultActivity : AppCompatActivity() {
     private var focusSink: View? = null
 
     /**
+     * Отладочная строка про фокус.
+     *
+     * Клавиатуру чинили пять раз вслепую. Догадки кончились, значит нужны
+     * ФАКТЫ: кто держит фокус, лежит ли приёмник в дереве, видна ли
+     * клавиатура. Включается долгим нажатием на шапку поиска, по
+     * умолчанию выключена и никому не мешает.
+     */
+    private var focusDebug = false
+    private var focusReport: TextView? = null
+
+    /**
      * Идущая вспышка. Уход с экрана обязан её оборвать: она держит ссылку
      * на текст чужой вьюхи и красит его по таймеру - после смены экрана
      * это работа вхолостую, а при возврате на ту же страницу ещё и следы.
@@ -139,6 +150,15 @@ class VaultActivity : AppCompatActivity() {
     /** Точное место найденного. Искать его заново нельзя: на странице
      *  может быть другое вхождение, и прыжок ушёл бы не туда. */
     private var pendingFindAt: Int = -1
+
+    /**
+     * Нашлось в названии или классах, а не в тексте.
+     *
+     * Без этого признака заметка открывалась, а подсвечивать было нечего:
+     * вспышка искала только по тексту страницы, и человек видел ровно
+     * ничего - ни пульсации, ни строки.
+     */
+    private var pendingFindHead = false
 
     /** Прокрутка списка результатов: нужна, чтобы вернуть её наверх. */
     private var listPane: ScrollView? = null
@@ -411,6 +431,7 @@ class VaultActivity : AppCompatActivity() {
     private fun mount(scrollable: Boolean) {
         flashAnim?.cancel()
         flashAnim = null
+        focusReport = null
         if (this.scrollable == scrollable && root.parent != null) return
         this.scrollable = scrollable
         // Без ведущей скобки на новой строке: Kotlin прочитал бы её как
@@ -807,6 +828,21 @@ class VaultActivity : AppCompatActivity() {
         }
         root.addView(explain, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(8) })
 
+        val dbg = TextView(this).apply {
+            textSize = 10f
+            setTextColor(0xFFE0C08A.toInt())
+            setPadding(dp(10), dp(2), dp(10), dp(2))
+            visibility = View.GONE
+        }
+        root.addView(dbg, LinearLayout.LayoutParams(-1, -2))
+        focusReport = dbg
+        explain.setOnLongClickListener {
+            focusDebug = !focusDebug
+            updateFocusReport()
+            toast(if (focusDebug) "Отладка фокуса включена" else "Отладка выключена")
+            true
+        }
+
         lateinit var repaint: () -> Unit
         repaint = {
             // Ровно одно утверждение: как ищется прямо сейчас. Не «впиши»
@@ -1139,6 +1175,30 @@ class VaultActivity : AppCompatActivity() {
         }
     }
 
+    /** Снимок состояния фокуса и клавиатуры. Только факты. */
+    private fun updateFocusReport() {
+        val v = focusReport ?: return
+        if (!focusDebug) { v.visibility = View.GONE; return }
+        v.visibility = View.VISIBLE
+        val cur = currentFocus
+        val who = when {
+            cur == null -> "фокуса нет ни у кого"
+            cur === focusSink -> "приёмник"
+            cur is EditText -> "поле ввода"
+            else -> cur.javaClass.simpleName
+        }
+        val inTree = focusSink?.parent === root
+        val ime = try {
+            window.decorView.rootWindowInsets
+                ?.isVisible(android.view.WindowInsets.Type.ime()) ?: false
+        } catch (e: Exception) {
+            false
+        }
+        v.text = "фокус: " + who +
+            "  ·  приёмник в дереве: " + (if (inTree) "да" else "НЕТ") +
+            "  ·  клавиатура: " + (if (ime) "видна" else "скрыта")
+    }
+
     /** Как сейчас ищется - в несколько слов, для шапки. */
     private fun searchHowShort(): String {
         val a = when (searchWord) {
@@ -1202,6 +1262,10 @@ class VaultActivity : AppCompatActivity() {
         window.decorView.windowInsetsController?.hide(android.view.WindowInsets.Type.ime())
         val imm = getSystemService(android.view.inputmethod.InputMethodManager::class.java)
         imm?.hideSoftInputFromWindow(window.decorView.windowToken, 0)
+
+        // Снимок ПОСЛЕ попытки: он и покажет, сработала она или нет.
+        // Клавиатура прячется не мгновенно, поэтому смотрим с задержкой.
+        v.postDelayed({ updateFocusReport() }, 250L)
     }
 
     /**
@@ -1526,7 +1590,16 @@ class VaultActivity : AppCompatActivity() {
                     }
                     setPadding(dp(14), dp(10), dp(14), dp(10))
                     isClickable = true
-                    setOnClickListener { previewHit(h, text, parsed, opts) }
+                    setOnClickListener {
+                        // Совпадение в названии или классах предпросмотра
+                        // не имеет: показывать в окне нечего, оно всё уже
+                        // видно в самой карточке. Открываем сразу.
+                        if (h.inHead) {
+                            pendingFind = text
+                            pendingFindHead = true
+                            openForRead(h.noteId, h.page)
+                        } else previewHit(h, text, parsed, opts)
+                    }
                 }, LinearLayout.LayoutParams(0, -2, 1f).also {
                     // Внутри группы отступ мелкий, между группами крупный:
                     // так видно, где кончается одна заметка и начинается
@@ -2073,7 +2146,12 @@ class VaultActivity : AppCompatActivity() {
         // Пришли из поиска: подсветить найденное и подвести к нему глаз.
         pendingFind?.let { q ->
             pendingFind = null
-            flashFoundInRead(pane, body, q)
+            if (pendingFindHead) {
+                pendingFindHead = false
+                flashHead(q)
+            } else {
+                flashFoundInRead(pane, body, q)
+            }
         }
 
         val tools = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -2435,6 +2513,70 @@ class VaultActivity : AppCompatActivity() {
             flashAnim = anim
             anim.start()
         }
+    }
+
+    /**
+     * Вспышка по шапке: название заметки и её классы.
+     *
+     * Совпадение в названии или классе никак не отражалось на экране -
+     * подсвечивался только текст страницы. Человек попадал в заметку и не
+     * понимал, за что она вообще нашлась.
+     *
+     * Ищем те же вьюхи, что рисуют шапку и классы, и подсвечиваем ровно
+     * их. Правила поиска те же, значит и совпадения те же.
+     */
+    private fun flashHead(query: String) {
+        val parsed = VaultQuery.parse(query)
+        if (parsed.isEmpty) return
+        val opts = VaultQuery.Options(searchWord, searchAny, searchWhere)
+        val dens = resources.displayMetrics.density
+
+        val touched = ArrayList<Pair<TextView, CharSequence>>()
+        val pulses = ArrayList<VaultMark.Pulse>()
+
+        fun paint(v: TextView) {
+            val src = v.text.toString()
+            val marks = VaultQuery.spans(src, parsed, opts)
+            if (marks.isEmpty()) return
+            touched.add(v to v.text)
+            val sb = android.text.SpannableStringBuilder(src)
+            for (m in marks) {
+                val pulse = VaultMark.Pulse(0xFFE8C86A.toInt(), dens)
+                pulses.add(pulse)
+                sb.setSpan(pulse, m[0], minOf(m[1], sb.length),
+                    android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+            v.text = sb
+        }
+
+        // Обходим ВЕСЬ экран: шапка и классы лежат в разных ветках, а
+        // перечислять их по одной значит завести список, который отстанет
+        // от разметки при первой же правке.
+        fun walk(v: View) {
+            if (v is TextView) paint(v)
+            if (v is android.view.ViewGroup) {
+                for (i in 0 until v.childCount) walk(v.getChildAt(i))
+            }
+        }
+        walk(root)
+        if (touched.isEmpty()) return
+
+        val anim = android.animation.ValueAnimator.ofFloat(0f, 1f)
+        anim.duration = 15000L
+        anim.addUpdateListener { a ->
+            val t = a.animatedFraction
+            val fade = (1f - t).coerceIn(0f, 1f)
+            val beat = ((kotlin.math.sin(t * 42.0).toFloat() + 1f) / 2f)
+            for (pl in pulses) pl.k = fade * (0.45f + 0.55f * beat)
+            for ((v, _) in touched) v.invalidate()
+        }
+        anim.addListener(object : android.animation.AnimatorListenerAdapter() {
+            override fun onAnimationEnd(a: android.animation.Animator) = restore(touched)
+            override fun onAnimationCancel(a: android.animation.Animator) = restore(touched)
+        })
+        flashAnim?.cancel()
+        flashAnim = anim
+        anim.start()
     }
 
     /**

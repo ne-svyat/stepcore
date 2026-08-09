@@ -394,7 +394,7 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
                 out.add(Hit(h.id, h.title, 0, "в названии",
                     VaultQuery.score(h.title, q, opts) + 1, true, 0, hue))
             } else if (tagsHit && opts.where != VaultQuery.IN_TITLE) {
-                out.add(Hit(h.id, h.title, 0, "в тегах: " + h.tags.joinToString(", "),
+                out.add(Hit(h.id, h.title, 0, "в классах: " + h.tags.joinToString(", "),
                     VaultQuery.score(h.tags.joinToString(" "), q, opts), true, 0, hue))
             }
 
