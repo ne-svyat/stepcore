@@ -115,6 +115,13 @@ class VaultActivity : AppCompatActivity() {
     private var histIdx = 0
 
     /** Что подсветить на странице после перехода из поиска. */
+    /**
+     * Последний запрос. Возврат из заметки открывал ПУСТОЙ список, и
+     * запрос приходилось вбивать заново - а посмотреть второе совпадение
+     * на той же странице было почти нельзя.
+     */
+    private var lastQuery: String = ""
+
     private var pendingFind: String? = null
 
     /** Точное место найденного. Искать его заново нельзя: на странице
@@ -685,11 +692,7 @@ class VaultActivity : AppCompatActivity() {
 
         val q = EditText(this).apply {
             hint = "Например: красная машина"
-            // ПОРЯДОК ВАЖЕН: setInputType СБРАСЫВАЕТ imeOptions. Когда
-            // они стояли выше, кнопки «Поиск» на клавиатуре не появлялось
-            // вовсе - приходил чужой код действия, и обработчик молчал.
             inputType = android.text.InputType.TYPE_CLASS_TEXT
-            imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
             setText(query)
             textSize = 15f
             isSingleLine = true
@@ -701,6 +704,19 @@ class VaultActivity : AppCompatActivity() {
                 setStroke(dp(1), LINE_EDGE)
             }
             setPadding(dp(12), dp(10), dp(12), dp(10))
+
+            // imeOptions - ПОСЛЕДНИМИ, после всего, что трогает ввод.
+            //
+            // Их стирает не только setInputType: isSingleLine внутри себя
+            // тоже зовёт setInputType и тоже их сбрасывает. Пока эта
+            // строка стояла ниже, кнопки «Поиск» на клавиатуре не
+            // появлялось вовсе - и обработчик молчал, потому что молчать
+            // было нечему.
+            //
+            // Правило простое и проверяемое: последними. Разбираться,
+            // какой ещё вызов трогает ввод, значит вести список, который
+            // однажды не сойдётся.
+            imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
         }
         // Кнопка поиска РЯДОМ с полем. Раньше она стояла внизу экрана, и
         // рука ехала через весь экран туда и обратно.
@@ -1298,6 +1314,7 @@ class VaultActivity : AppCompatActivity() {
     private fun runSearch(query: String, holder: LinearLayout, status: TextView) {
         val r = repo ?: return
         val text = query.trim()
+        lastQuery = text
         busy = true
         status.text = "Ищу…"
         holder.removeAllViews()
@@ -2144,7 +2161,7 @@ class VaultActivity : AppCompatActivity() {
                 readFromEdit = false
                 preview = false
                 openNote(openNoteId, openIdx)
-            } else showNotes()
+            } else showNotes(lastQuery)
 
             // Правка возвращает в чтение, а не сразу к списку: цепочка
             // читается как правка -> чтение -> список, в обе стороны
@@ -2156,7 +2173,7 @@ class VaultActivity : AppCompatActivity() {
                     preview = true
                     openNote(openNoteId, openIdx)
                 } else {
-                    showNotes()
+                    showNotes(lastQuery)
                 }
             }
 
@@ -2251,6 +2268,8 @@ class VaultActivity : AppCompatActivity() {
 
         var target: TextView? = null
         var targetAt = -1
+        val painted = ArrayList<Pair<TextView, List<IntArray>>>()
+
         for (i in 0 until body.childCount) {
             val v = body.getChildAt(i) as? TextView ?: continue
             val src = v.text.toString()
@@ -2259,54 +2278,68 @@ class VaultActivity : AppCompatActivity() {
             val sb = android.text.SpannableStringBuilder(src)
             VaultMark.apply(sb, src, 0, parsed, opts, dens)
             v.text = sb
+            painted.add(v to marks)
             if (target == null) { target = v; targetAt = marks[0][0] }
         }
-        val hit = target ?: return
+        val first = target ?: return
         val at = targetAt
 
-        // Раскладка нужна ЦЕЛИКОМ: до неё нет ни строк, ни координат.
-        hit.post {
-            val layout = hit.layout ?: return@post
-            val line = layout.getLineForOffset(at.coerceIn(0, hit.text.length))
-            // Строка ЭКРАННАЯ, а не абзац. Экран чтения делает по вьюхе на
-            // абзац, и в заметке без заголовков абзац один: подсветка вьюхи
-            // красила всю заметку целиком.
-            val lineFrom = layout.getLineStart(line)
-            val lineTo = layout.getLineEnd(line)
-
+        // Раскладка нужна целиком: до неё нет ни строк, ни координат.
+        first.post {
+            val layout = first.layout ?: return@post
+            val line = layout.getLineForOffset(at.coerceIn(0, first.text.length))
             pane.smoothScrollTo(0,
-                maxOf(0, hit.top + layout.getLineTop(line) - dp(80)))
+                maxOf(0, first.top + layout.getLineTop(line) - dp(80)))
 
-            val text = hit.text as? android.text.Spannable ?: return@post
-            val hitEnd = VaultQuery.spans(hit.text.toString(), parsed, opts)
-                .firstOrNull { it[0] == at }?.get(1) ?: (at + 1)
+            // Готовим отрезки для КАЖДОГО совпадения на странице, а не
+            // только для первого. Второе совпадение на той же странице
+            // иначе приходилось искать через список заново.
+            class Mark(val text: android.text.Spannable, val lineFrom: Int,
+                       val lineTo: Int, val from: Int, val to: Int,
+                       val lineSpan: android.text.style.BackgroundColorSpan,
+                       val glowSpan: android.text.style.BackgroundColorSpan)
 
-            val lineSpan = android.text.style.BackgroundColorSpan(0)
-            val glowSpan = android.text.style.BackgroundColorSpan(0)
+            val marks = ArrayList<Mark>()
+            for ((v, hits) in painted) {
+                val sp = v.text as? android.text.Spannable ?: continue
+                val lay = v.layout ?: continue
+                for (h in hits) {
+                    val ln = lay.getLineForOffset(h[0].coerceIn(0, sp.length))
+                    marks.add(Mark(sp, lay.getLineStart(ln), lay.getLineEnd(ln),
+                        h[0], minOf(h[1], sp.length),
+                        android.text.style.BackgroundColorSpan(0),
+                        android.text.style.BackgroundColorSpan(0)))
+                }
+            }
+            if (marks.isEmpty()) return@post
 
-            // Пять секунд с биением: ровный цвет глаз перестаёт замечать
-            // через секунду, а мигание держит внимание до конца.
+            // Пятнадцать секунд: биение первые пять, потом плавное
+            // угасание. Хватает, чтобы пролистать страницу и осмотреться,
+            // а дальше подсветка мешала бы читать.
+            val total = 15000L
             val anim = android.animation.ValueAnimator.ofFloat(0f, 1f)
-            anim.duration = 500L
-            anim.repeatCount = 9
-            anim.repeatMode = android.animation.ValueAnimator.REVERSE
+            anim.duration = total
             anim.addUpdateListener { a ->
-                val k = a.animatedValue as Float
-                text.setSpan(lineSpan, lineFrom, lineTo,
-                    android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                text.setSpan(glowSpan, at, minOf(hitEnd, text.length),
-                    android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                setBg(text, lineSpan, lineFrom, lineTo, ((0x22 + k * 0x22).toInt() shl 24) or 0xCF5C4A)
-                setBg(text, glowSpan, at, minOf(hitEnd, text.length),
-                    ((0x66 + k * 0x99).toInt() shl 24) or 0xFF7A5C)
+                val t = a.animatedFraction
+                // Биение затухает к пятой секунде, яркость - к пятнадцатой.
+                val pulse = if (t < 0.33f)
+                    (kotlin.math.sin(t * 30.0).toFloat() + 1f) / 2f else 0f
+                val fade = (1f - t).coerceIn(0f, 1f)
+                for (m in marks) {
+                    // Строка ЗОЛОТАЯ: она ведёт глаз к месту.
+                    setBg(m.text, m.lineSpan, m.lineFrom, m.lineTo,
+                        ((fade * 0x4A).toInt() shl 24) or 0xE0C08A)
+                    // Само совпадение КРАСНОЕ и живое.
+                    setBg(m.text, m.glowSpan, m.from, m.to,
+                        (((0x50 + pulse * 0x80) * fade).toInt().coerceIn(0, 255) shl 24)
+                            or 0xCF5C4A)
+                }
             }
             anim.addListener(object : android.animation.AnimatorListenerAdapter() {
-                override fun onAnimationEnd(a: android.animation.Animator) {
-                    text.removeSpan(lineSpan); text.removeSpan(glowSpan)
-                }
-                override fun onAnimationCancel(a: android.animation.Animator) {
-                    text.removeSpan(lineSpan); text.removeSpan(glowSpan)
-                }
+                override fun onAnimationEnd(a: android.animation.Animator) = clearMarks(marks.map {
+                    Triple(it.text, it.lineSpan, it.glowSpan) })
+                override fun onAnimationCancel(a: android.animation.Animator) = clearMarks(marks.map {
+                    Triple(it.text, it.lineSpan, it.glowSpan) })
             })
             flashAnim?.cancel()
             flashAnim = anim
@@ -2314,13 +2347,43 @@ class VaultActivity : AppCompatActivity() {
         }
     }
 
-    /** Перекрасить отрезок: цвет у отрезка не меняется, его ставят заново. */
+    /**
+     * Снять всё, что положила вспышка.
+     *
+     * Отрезки ложатся на текст ЧУЖИХ вьюх. Оставленные, они дожили бы до
+     * следующего открытия страницы и читались бы как поломка.
+     */
+    private fun clearMarks(all: List<Triple<android.text.Spannable,
+            android.text.style.BackgroundColorSpan,
+            android.text.style.BackgroundColorSpan>>) {
+        for ((text, a, b) in all) {
+            text.removeSpan(a)
+            text.removeSpan(b)
+            for (sp in text.getSpans(0, text.length,
+                android.text.style.BackgroundColorSpan::class.java)) {
+                text.removeSpan(sp)
+            }
+        }
+    }
+
+    /**
+     * Перекрасить отрезок.
+     *
+     * У готового отрезка цвет не меняется - его снимают и ставят заново.
+     * Прежний снимается по ссылке, а не поиском: два отрезка на одном
+     * месте копились бы шестьдесят раз в секунду.
+     */
+    private var bgLive = HashMap<android.text.style.BackgroundColorSpan,
+            android.text.style.BackgroundColorSpan>()
+
     private fun setBg(text: android.text.Spannable,
-                      old: android.text.style.BackgroundColorSpan,
+                      key: android.text.style.BackgroundColorSpan,
                       from: Int, to: Int, color: Int) {
-        text.removeSpan(old)
-        text.setSpan(android.text.style.BackgroundColorSpan(color), from, to,
-            android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        bgLive[key]?.let { text.removeSpan(it) }
+        if (from >= to || to > text.length) return
+        val fresh = android.text.style.BackgroundColorSpan(color)
+        text.setSpan(fresh, from, to, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        bgLive[key] = fresh
     }
 
     /**
