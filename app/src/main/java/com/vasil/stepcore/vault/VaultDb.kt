@@ -54,6 +54,23 @@ data class VNote(
     // держать незачем: по зашифрованному тегу всё равно нельзя сделать
     // WHERE, а расшифровывать пришлось бы то же самое.
     val tags: ByteArray = ByteArray(0),
+    /**
+     * Номер закрепления, ШИФРОТЕКСТОМ. Пусто - не закреплена.
+     *
+     * ПОЧЕМУ НЕ ОТКРЫТОЕ ЧИСЛО
+     * ------------------------
+     * Колонки vaultId у нас нет специально. Открытый номер выдал бы,
+     * сколько заметок закреплено и в каком порядке, во ВСЕХ тайниках
+     * сразу, не открывая ни одного. Сортировать по нему в SQL нельзя,
+     * но список и так грузится целиком и сортируется в памяти.
+     *
+     * ЧТО ВСЁ-ТАКИ ВИДНО
+     * -----------------
+     * Непустой блоб виден как факт «эта заметка закреплена», без
+     * возможности узнать её номер и содержимое. Это строго меньше, чем
+     * уже открытые updatedMs и heat, но умолчать об этом нельзя.
+     */
+    val pin: ByteArray = ByteArray(0),
 )
 
 @Entity(tableName = "v_pages", primaryKeys = ["noteId", "idx"])
@@ -121,6 +138,13 @@ interface VaultDao {
     suspend fun setTags(id: Long, tags: ByteArray, ms: Long)
 
     /**
+     * Закрепление НЕ трогает updatedMs: порядок в списке - не правка
+     * заметки, и «Новые» от перестановки перемешиваться не должны.
+     */
+    @Query("UPDATE v_notes SET pin = :pin WHERE id = :id")
+    suspend fun setPin(id: Long, pin: ByteArray)
+
+    /**
      * Страницы куском. Поиск обязан читать порциями: тысяча страниц по
      * десять тысяч символов разом в память не поместится.
      */
@@ -158,7 +182,7 @@ interface VaultDao {
     suspend fun dropNote(noteId: Long)
 }
 
-@Database(entities = [VNote::class, VPage::class, VHist::class], version = 4, exportSchema = false)
+@Database(entities = [VNote::class, VPage::class, VHist::class], version = 5, exportSchema = false)
 abstract class VaultDb : RoomDatabase() {
     abstract fun dao(): VaultDao
 
@@ -201,12 +225,19 @@ abstract class VaultDb : RoomDatabase() {
             }
         }
 
+        /** Закрепление. Прошлое неизменно: старые заметки не закреплены. */
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE v_notes ADD COLUMN pin BLOB NOT NULL DEFAULT x''")
+            }
+        }
+
         @Volatile private var instance: VaultDb? = null
         fun get(context: Context): VaultDb =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
                     context.applicationContext, VaultDb::class.java, "vault.db"
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build().also { instance = it }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5).build().also { instance = it }
             }
     }
 }
@@ -224,7 +255,9 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
 
     /** Заметка в разобранном виде. Текст страниц сюда не попадает. */
     class NoteHead(val id: Long, val title: String, val pageCount: Int,
-                   val updatedMs: Long, val tags: List<String>, val heat: Float = 0f)
+                   val updatedMs: Long, val tags: List<String>, val heat: Float = 0f,
+                   /** 0 - не закреплена, иначе место в верхнем блоке. */
+                   val pin: Int = 0)
 
     /** Находка поиска: где именно и что видно вокруг. */
     class Hit(val noteId: Long, val noteTitle: String, val page: Int, val snippet: String)
@@ -242,7 +275,8 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
                 n.id, t, n.pageCount, n.updatedMs, tagsOf(n),
                 // Остывание считается при ЧТЕНИИ: хранить приходится два
                 // числа вместо журнала касаний.
-                VaultHeat.decay(n.heat, n.heatAtMs, System.currentTimeMillis())
+                VaultHeat.decay(n.heat, n.heatAtMs, System.currentTimeMillis()),
+                pinOf(n)
             )
         }
 
@@ -251,6 +285,29 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
         val n = dao.note(noteId) ?: return
         val now = System.currentTimeMillis()
         dao.setHeat(noteId, VaultHeat.bump(n.heat, n.heatAtMs, now, weight), now)
+    }
+
+    /** Испорченный или чужой номер читается как «не закреплена». */
+    private fun pinOf(n: VNote): Int {
+        if (n.pin.isEmpty()) return 0
+        val raw = VaultCrypto.decrypt(dataKey, n.pin)?.toString(Charsets.UTF_8) ?: return 0
+        return raw.toIntOrNull()?.coerceAtLeast(0) ?: 0
+    }
+
+    /**
+     * Переписать номера закрепления списком.
+     *
+     * Номера всегда сплошные с единицы: дыры копились бы при каждом
+     * откреплении, и однажды перестановка начала бы вести себя странно
+     * там, где номера разошлись.
+     *
+     * @param ordered закреплённые заметки в нужном порядке.
+     */
+    suspend fun renumberPins(ordered: List<Long>, unpin: List<Long> = emptyList()) {
+        for (id in unpin) dao.setPin(id, ByteArray(0))
+        for ((i, id) in ordered.withIndex()) {
+            dao.setPin(id, VaultCrypto.encrypt(dataKey, (i + 1).toString().toByteArray()))
+        }
     }
 
     private fun tagsOf(n: VNote): List<String> {

@@ -759,6 +759,12 @@ class VaultActivity : AppCompatActivity() {
                     VaultIcon.Kind.JUMP, VaultIcon.tintFor(VaultIcon.Kind.JUMP)) {
                     askExport(chosen.toList())
                 })
+                // Закрепление живёт там же, где выгрузка и удаление:
+                // новый жест учить не надо, режим выбора уже знаком.
+                bottomBox.addView(tabButton(pinActionLabel(), VaultIcon.Kind.TAG,
+                    VaultIcon.tintFor(VaultIcon.Kind.TAG)) {
+                    togglePins(chosen.toList())
+                })
                 bottomBox.addView(tabButton("Удалить " + chosen.size,
                     VaultIcon.Kind.TRASH, VaultIcon.tintFor(VaultIcon.Kind.TRASH)) {
                     askDeleteMany(chosen.toList())
@@ -861,7 +867,7 @@ class VaultActivity : AppCompatActivity() {
                           raw: List<VaultRepo.NoteHead>) {
         rowViews.clear()
         rowTexts.clear()
-        val list = when (sortBy) {
+        val sorted = when (sortBy) {
             // «Живые» по умолчанию: то, чем занимаешься сейчас, а не то,
             // что случайно завёл последним.
             SortBy.HOT -> raw.sortedWith(
@@ -871,10 +877,27 @@ class VaultActivity : AppCompatActivity() {
             SortBy.OLD -> raw.sortedBy { it.id }
             SortBy.TITLE -> raw.sortedBy { it.title.lowercase() }
         }
+        // Закреплённые ВСЕГДА сверху и своим порядком - в любой сортировке.
+        // Иначе человек расставил бы их, переключил порядок и решил, что
+        // приложение потеряло его расстановку.
+        val pinned = sorted.filter { it.pin > 0 }.sortedBy { it.pin }
+        val list = pinned + sorted.filter { it.pin == 0 }
         holder.removeAllViews()
         status.text = if (list.isEmpty()) "Пусто. Заметки этого тайника видны только с его паролем."
                       else "Заметок: " + list.size
+        var separatorDone = pinned.isEmpty()
         for (n in list) {
+            // Черта между закреплёнными и остальными: без неё верхний
+            // блок читается как «просто первые заметки».
+            if (!separatorDone && n.pin == 0) {
+                separatorDone = true
+                holder.addView(TextView(this).apply {
+                    text = "Остальные"
+                    textSize = 12f
+                    setTextColor(0xFF7A7488.toInt())
+                    setPadding(dp(2), dp(6), 0, dp(6))
+                })
+            }
             val row = TextView(this).apply {
                 textSize = 17f
                 setPadding(dp(14), dp(10), dp(14), dp(10))
@@ -904,7 +927,28 @@ class VaultActivity : AppCompatActivity() {
             rowTexts[n.id] = n
             rowViews[n.id] = row
             paintRow(row, n.id)
-            holder.addView(row, LinearLayout.LayoutParams(-1, -2).also { it.bottomMargin = dp(8) })
+
+            if (n.pin > 0 && !selecting) {
+                // Строка и стрелки одной полосой: стрелки НЕ поверх
+                // строки, иначе мелкая цель перехватывала бы нажатие у
+                // крупной и заметка перестала бы открываться.
+                val line = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                }
+                line.addView(row, LinearLayout.LayoutParams(0, -2, 1f))
+                val first = n.id == pinned.first().id
+                val last = n.id == pinned.last().id
+                line.addView(arrowButton("▲", !first) { movePin(n.id, -1) })
+                line.addView(arrowButton("▼", !last) { movePin(n.id, 1) })
+                holder.addView(line, LinearLayout.LayoutParams(-1, -2).also {
+                    it.bottomMargin = dp(8)
+                })
+            } else {
+                holder.addView(row, LinearLayout.LayoutParams(-1, -2).also {
+                    it.bottomMargin = dp(8)
+                })
+            }
         }
     }
 
@@ -2883,6 +2927,101 @@ class VaultActivity : AppCompatActivity() {
      * Выбор показан РАМКОЙ и заливкой, а не только значком: значок в углу
      * читается как украшение, а изменившийся фон виден сразу и целиком.
      */
+    /**
+     * Подпись действия зависит от того, что выбрано.
+     *
+     * Если среди выбранных есть хоть одна незакреплённая - закрепляем все.
+     * Если все уже закреплены - открепляем. Одна кнопка вместо двух: две
+     * кнопки в нижней панели заставляют выбирать, а выбор здесь очевиден
+     * из самого набора.
+     */
+    /**
+     * Стрелка перестановки. Недоступная не исчезает, а гаснет: пропадающая
+     * кнопка сдвигает соседнюю под палец, и следующее нажатие попадает не
+     * туда, куда целились.
+     */
+    private fun arrowButton(glyph: String, enabled: Boolean, action: () -> Unit): View {
+        val tint = if (enabled) 0xFFB9A6E8.toInt() else 0xFF3A3646.toInt()
+        return TextView(this).apply {
+            text = glyph
+            textSize = 15f
+            gravity = Gravity.CENTER
+            setTextColor(tint)
+            minWidth = dp(40)
+            minHeight = dp(40)
+            isClickable = enabled
+            background = GradientDrawable().apply {
+                cornerRadius = dp(8).toFloat()
+                setColor(SURFACE_RAISED)
+                setStroke(dp(1), if (enabled) tint and 0x66FFFFFF.toInt() else LINE_EDGE)
+            }
+            layoutParams = LinearLayout.LayoutParams(dp(40), dp(40)).also {
+                it.marginStart = dp(6)
+            }
+            if (enabled) setOnClickListener { if (!busy) action() }
+        }
+    }
+
+    private fun pinActionLabel(): String {
+        val any = chosen.any { (rowTexts[it]?.pin ?: 0) == 0 }
+        return (if (any) "Закрепить " else "Открепить ") + chosen.size
+    }
+
+    private fun togglePins(ids: List<Long>) {
+        val r = repo ?: return
+        if (ids.isEmpty()) return
+        busy = true
+        lifecycleScope.launch {
+            val all = r.notes()
+            val pinnedNow = all.filter { it.pin > 0 }.sortedBy { it.pin }.map { it.id }
+            val addAny = ids.any { id -> (all.firstOrNull { it.id == id }?.pin ?: 0) == 0 }
+
+            val ordered: List<Long>
+            val unpin: List<Long>
+            if (addAny) {
+                // Новые уходят в КОНЕЦ блока: закрепление не должно
+                // перетасовывать то, что человек уже расставил.
+                ordered = pinnedNow + ids.filter { it !in pinnedNow }
+                unpin = emptyList()
+            } else {
+                ordered = pinnedNow.filter { it !in ids }
+                unpin = ids
+            }
+            r.renumberPins(ordered, unpin)
+            busy = false
+            selecting = false
+            chosen.clear()
+            showNotes()
+        }
+    }
+
+    /**
+     * Переставить закреплённую заметку на шаг.
+     *
+     * Стрелки, а не перетаскивание. Перетаскивание внутри прокручиваемого
+     * списка - это перехват касаний, автопрокрутка у краёв и подменная
+     * строка; там живут ошибки, которые ловятся только пальцем и только
+     * через неделю. Закреплённых обычно единицы, и стрелками это столько
+     * же нажатий, зато ломаться нечему.
+     */
+    private fun movePin(id: Long, delta: Int) {
+        val r = repo ?: return
+        busy = true
+        lifecycleScope.launch {
+            val pinned = r.notes().filter { it.pin > 0 }.sortedBy { it.pin }
+                .map { it.id }.toMutableList()
+            val i = pinned.indexOf(id)
+            val j = i + delta
+            if (i >= 0 && j >= 0 && j < pinned.size) {
+                pinned[i] = pinned[j]
+                pinned[j] = id
+                r.renumberPins(pinned)
+            }
+            busy = false
+            showNotes()
+        }
+    }
+
     private fun paintRow(v: TextView, id: Long) {
         val n = rowTexts[id] ?: return
         val picked = selecting && id in chosen
@@ -2896,7 +3035,10 @@ class VaultActivity : AppCompatActivity() {
             setColor(if (picked) 0xFF241E33.toInt() else SURFACE_RAISED)
             setStroke(dp(if (picked) 2 else 1), edge)
         }
-        val mark = if (!selecting) "" else if (picked) "◉  " else "○  "
+        // Глиф, а не эмодзи: цветную картинку каждая прошивка рисует
+        // по-своему, и тон тайника от неё ломается.
+        val pinMark = if (n.pin > 0) "⚑ " else ""
+        val mark = (if (!selecting) "" else if (picked) "◉  " else "○  ") + pinMark
         val tags = if (n.tags.isEmpty()) "" else "\n#" + n.tags.joinToString(" #")
         v.text = mark + n.title + "\n" + n.pageCount + " стр." + tags
         v.setTextColor(if (picked) 0xFFF2F0F7.toInt() else 0xFFEEEEEE.toInt())
