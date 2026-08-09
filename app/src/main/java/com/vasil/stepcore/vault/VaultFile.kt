@@ -44,8 +44,40 @@ object VaultFile {
     /** Старый формат: без байта льготы в хвосте. Читается по-прежнему. */
     private const val M3_V2 = '2'.code.toByte()
 
-    /** Текущий формат: тот же заголовок плюс байт льготы в конце. */
+    /** Формат с одним байтом льготы в конце. Читается по-прежнему. */
     private const val M3_V3 = '3'.code.toByte()
+
+    /**
+     * Текущий формат: в конце длина блока настроек и сам блок.
+     *
+     * ПОЧЕМУ БЛОК, А НЕ ОЧЕРЕДНОЙ БАЙТ
+     * --------------------------------
+     * Льгота уже потребовала поднять версию формата, клавиатура потребовала
+     * бы второй раз, запрет скриншотов - третий. Каждая такая правка
+     * трогает разбор ключей, то есть самое опасное место модуля.
+     *
+     * Блок переменной длины закрывает вопрос навсегда: новая настройка -
+     * это новый байт внутри блока, а не новая версия файла. Неизвестные
+     * байты в конце блока пропускаются, короткий блок читается со
+     * значениями по умолчанию.
+     */
+    private const val M3_V4 = '4'.code.toByte()
+
+    /** Место каждой настройки в блоке. Порядок менять нельзя. */
+    private const val OPT_GRACE = 0
+    private const val OPT_KB_LAYOUT = 1
+    private const val OPT_KB_SCOPE = 2
+    private const val OPTS_LEN = 3
+
+    // ---------------------------------------------------------- клавиатура
+    //
+    // Где действует своя клавиатура.
+
+    /** Везде системная. Так было до появления этой настройки. */
+    const val KB_OFF = 0
+
+    /** Только ввод пароля тайника. */
+    const val KB_PASSWORD = 1
 
     // ------------------------------------------------------------- льгота
     //
@@ -87,6 +119,10 @@ object VaultFile {
         val slots: List<ByteArray>,
         /** Файлы старого формата читаются как полторы минуты - так было. */
         val grace: Int = GRACE_90S,
+        /** Раскладка своей клавиатуры. */
+        val kbLayout: Int = VaultKeys.LAYOUT_NORMAL,
+        /** Где своя клавиатура применяется. По умолчанию нигде. */
+        val kbScope: Int = KB_OFF,
     ) {
         val vaultCount: Int get() = slots.size / 2
         val isFull: Boolean get() = slots.size >= MAX_SLOTS
@@ -101,12 +137,14 @@ object VaultFile {
         require(b.slots.all { it.size == SLOT_LEN }) { "bad slot size" }
 
         require(b.grace in GRACE_90S..GRACE_SCREEN) { "bad grace" }
+        require(b.kbLayout in VaultKeys.LAYOUT_NORMAL..VaultKeys.LAYOUT_CHAOS) { "bad layout" }
+        require(b.kbScope in KB_OFF..KB_PASSWORD) { "bad scope" }
 
         // Байт льготы дописывается В КОНЕЦ, а не в заголовок: тогда
         // раскладка слотов не сдвигается, и разбор старого файла отличается
         // от нового ровно одним хвостовым байтом.
-        val out = ByteArray(HEAD + b.slots.size * SLOT_LEN + 1)
-        out[0] = M0; out[1] = M1; out[2] = M2; out[3] = M3_V3
+        val out = ByteArray(HEAD + b.slots.size * SLOT_LEN + 1 + OPTS_LEN)
+        out[0] = M0; out[1] = M1; out[2] = M2; out[3] = M3_V4
         out[4] = (b.n ushr 24).toByte()
         out[5] = (b.n ushr 16).toByte()
         out[6] = (b.n ushr 8).toByte()
@@ -115,7 +153,10 @@ object VaultFile {
         out[8 + VaultCrypto.SALT_LEN] = b.slots.size.toByte()
         var o = HEAD
         for (s in b.slots) { s.copyInto(out, o); o += SLOT_LEN }
-        out[o] = b.grace.toByte()
+        out[o] = OPTS_LEN.toByte()
+        out[o + 1 + OPT_GRACE] = b.grace.toByte()
+        out[o + 1 + OPT_KB_LAYOUT] = b.kbLayout.toByte()
+        out[o + 1 + OPT_KB_SCOPE] = b.kbScope.toByte()
         return out
     }
 
@@ -123,8 +164,9 @@ object VaultFile {
     fun decode(raw: ByteArray): Box? {
         if (raw.size < HEAD) return null
         if (raw[0] != M0 || raw[1] != M1 || raw[2] != M2) return null
+        val v4 = raw[3] == M3_V4
         val v3 = raw[3] == M3_V3
-        if (!v3 && raw[3] != M3_V2) return null
+        if (!v4 && !v3 && raw[3] != M3_V2) return null
         val n = ((raw[4].toInt() and 0xFF) shl 24) or ((raw[5].toInt() and 0xFF) shl 16) or
                 ((raw[6].toInt() and 0xFF) shl 8) or (raw[7].toInt() and 0xFF)
         if (n < VaultCrypto.N_MIN || n > VaultCrypto.N_MAX || Integer.bitCount(n) != 1) return null
@@ -132,13 +174,35 @@ object VaultFile {
         val count = raw[8 + VaultCrypto.SALT_LEN].toInt() and 0xFF
         if (count == 0 || count > MAX_SLOTS || count % 2 != 0) return null
         val body = HEAD + count * SLOT_LEN
-        if (raw.size != body + (if (v3) 1 else 0)) return null
-        val grace = if (v3) raw[body].toInt() and 0xFF else GRACE_90S
+
+        // Настройки: у старых файлов их нет или есть только льгота.
+        var grace = GRACE_90S
+        var kbLayout = VaultKeys.LAYOUT_NORMAL
+        var kbScope = KB_OFF
+        when {
+            v4 -> {
+                if (raw.size < body + 1) return null
+                val optsLen = raw[body].toInt() and 0xFF
+                if (raw.size != body + 1 + optsLen) return null
+                // Читаем только то, что знаем. Лишние байты в конце - это
+                // настройки будущих версий, и они нам не мешают.
+                if (optsLen > OPT_GRACE) grace = raw[body + 1 + OPT_GRACE].toInt() and 0xFF
+                if (optsLen > OPT_KB_LAYOUT) kbLayout = raw[body + 1 + OPT_KB_LAYOUT].toInt() and 0xFF
+                if (optsLen > OPT_KB_SCOPE) kbScope = raw[body + 1 + OPT_KB_SCOPE].toInt() and 0xFF
+            }
+            v3 -> {
+                if (raw.size != body + 1) return null
+                grace = raw[body].toInt() and 0xFF
+            }
+            else -> if (raw.size != body) return null
+        }
         if (grace < GRACE_90S || grace > GRACE_SCREEN) return null
+        if (kbLayout < VaultKeys.LAYOUT_NORMAL || kbLayout > VaultKeys.LAYOUT_CHAOS) return null
+        if (kbScope < KB_OFF || kbScope > KB_PASSWORD) return null
         val slots = ArrayList<ByteArray>(count)
         var o = HEAD
         repeat(count) { slots.add(raw.copyOfRange(o, o + SLOT_LEN)); o += SLOT_LEN }
-        return Box(n, salt, slots, grace)
+        return Box(n, salt, slots, grace, kbLayout, kbScope)
     }
 
     // -------------------------------------------------------------------- вход
@@ -190,7 +254,8 @@ object VaultFile {
             val slots = ArrayList(box.slots)
             slots.add(seal(box.salt, box.n, password, dataKey))
             slots.add(seal(box.salt, box.n, phrase, dataKey))
-            return Added(AddResult.OK, Box(box.n, box.salt, slots, box.grace))
+            return Added(AddResult.OK,
+                Box(box.n, box.salt, slots, box.grace, box.kbLayout, box.kbScope))
         } finally {
             dataKey.fill(0)
         }
@@ -242,7 +307,7 @@ object VaultFile {
             if (i != first && i != first + 1) rest.add(box.slots[i])
         }
         if (rest.isEmpty()) return null
-        return Box(box.n, box.salt, rest, box.grace)
+        return Box(box.n, box.salt, rest, box.grace, box.kbLayout, box.kbScope)
     }
 
     /**
@@ -251,7 +316,14 @@ object VaultFile {
      */
     fun withGrace(box: Box, mode: Int): Box {
         require(mode in GRACE_90S..GRACE_SCREEN) { "bad grace" }
-        return Box(box.n, box.salt, box.slots, mode)
+        return Box(box.n, box.salt, box.slots, mode, box.kbLayout, box.kbScope)
+    }
+
+    /** Сменить раскладку клавиатуры. Слоты и соль не трогаются. */
+    fun withKeyboard(box: Box, layout: Int, scope: Int): Box {
+        require(layout in VaultKeys.LAYOUT_NORMAL..VaultKeys.LAYOUT_CHAOS) { "bad layout" }
+        require(scope in KB_OFF..KB_PASSWORD) { "bad scope" }
+        return Box(box.n, box.salt, box.slots, box.grace, layout, scope)
     }
 
     private fun seal(salt: ByteArray, n: Int, secret: CharArray, dataKey: ByteArray): ByteArray {

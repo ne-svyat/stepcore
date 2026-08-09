@@ -56,6 +56,12 @@ class VaultActivity : AppCompatActivity() {
     private val store by lazy { VaultStore(this) }
     private lateinit var root: LinearLayout
     private var busy = false
+
+    /** Своя клавиатура текущего экрана, если она развёрнута. */
+    private var keyboardView: VaultKeyboard? = null
+    private var entranceField: EditText? = null
+    private var entranceGo: Button? = null
+    private var entranceWarn: TextView? = null
     private var repo: VaultRepo? = null
 
     // Открытая страница. Держим ровно одну: тысяча страниц по десять тысяч
@@ -338,6 +344,18 @@ class VaultActivity : AppCompatActivity() {
         if (p is ScrollView) p.post { p.scrollTo(0, 0) }
     }
 
+    /**
+     * Клавиатура принадлежит экрану, а не приложению. Экран сменился -
+     * клавиатуры больше нет: иначе она осталась бы висеть, привязанная к
+     * полю, которого уже не существует.
+     */
+    private fun dropKeyboard() {
+        keyboardView = null
+        entranceField = null
+        entranceGo = null
+        entranceWarn = null
+    }
+
     private fun mount(scrollable: Boolean) {
         if (this.scrollable == scrollable && root.parent != null) return
         this.scrollable = scrollable
@@ -406,24 +424,42 @@ class VaultActivity : AppCompatActivity() {
     private fun showEntrance() {
         mount(scrollable = true)
         screen = Screen.ENTRANCE
+        dropKeyboard()
         root.removeAllViews()
         title("Тайник")
 
-        val field = secretField("Пароль или секрет восстановления")
-        val warn = warnLabel()
-        val go = button("Открыть")
+        val warn: TextView
+        val go: Button
+        val field = secretFieldWithKeyboard("Пароль или секрет восстановления") {
+            tryUnlockFromKeyboard()
+        }
+        warn = warnLabel()
+        go = button("Открыть")
+        entranceGo = go
+        entranceField = field
+        entranceWarn = warn
 
         // Создание — вторым и тише: вход нужен каждый день, создание редко.
         val make = flatButton("Создать новый тайник")
 
-        go.setOnClickListener {
-            if (busy) return@setOnClickListener
-            val s = field.chars()
-            if (s.isEmpty()) return@setOnClickListener
-            warn.visibility = View.GONE
-            unlock(s, field, go, warn)
-        }
+        go.setOnClickListener { tryUnlockFromKeyboard() }
         make.setOnClickListener { if (!busy) showCreate() }
+    }
+
+    /**
+     * Единственный путь к попытке входа: и кнопка «Открыть», и клавиша
+     * «Готово» на своей клавиатуре идут сюда. Два пути к одному действию
+     * однажды разъезжаются.
+     */
+    private fun tryUnlockFromKeyboard() {
+        if (busy) return
+        val field = entranceField ?: return
+        val go = entranceGo ?: return
+        val warn = entranceWarn ?: return
+        val s = field.chars()
+        if (s.isEmpty()) return
+        warn.visibility = View.GONE
+        unlock(s, field, go, warn)
     }
 
     private fun unlock(secret: CharArray, field: EditText, go: Button, warn: TextView) {
@@ -587,6 +623,7 @@ class VaultActivity : AppCompatActivity() {
      * отбирает класс, тап по узелку открывает заметку.
      */
     private fun showNotes(query: String = "") {
+        dropKeyboard()
         screen = Screen.NOTES
         editor = null
         preview = false
@@ -2190,6 +2227,7 @@ class VaultActivity : AppCompatActivity() {
      * должно жить рядом с повседневными, иначе однажды палец промахнётся.
      */
     private fun showGuard() {
+        dropKeyboard()
         mount(scrollable = true)
         screen = Screen.GUARD
         root.removeAllViews()
@@ -2216,7 +2254,12 @@ class VaultActivity : AppCompatActivity() {
             VaultIcon.tintFor(VaultIcon.Kind.SHIELD))
         graceSection(grace)
 
-        // --- блок третий: необратимое. Предупреждение и кнопка ВНУТРИ
+        // --- блок третий: клавиатура.
+        val kbd = guardCard("Клавиатура пароля", VaultIcon.Kind.HEADING,
+            VaultIcon.tintFor(VaultIcon.Kind.SEARCH))
+        keyboardSection(kbd)
+
+        // --- блок четвёртый: необратимое. Предупреждение и кнопка ВНУТРИ
         // одной рамки: раньше их связывал только отступ, и связь читалась
         // не с первого взгляда.
         val danger = guardCard("Необратимое", VaultIcon.Kind.TRASH,
@@ -2230,6 +2273,88 @@ class VaultActivity : AppCompatActivity() {
         }
 
         secondaryButton("←  К списку заметок").setOnClickListener { goBack() }
+    }
+
+    /**
+     * Выбор клавиатуры.
+     *
+     * ЧЕСТНАЯ ГРАНИЦА
+     * ---------------
+     * Своя клавиатура защищает от взгляда через плечо и от следов пальца
+     * на стекле: движение перестаёт быть подписью пароля. От программного
+     * перехвата она не защищает никак, и это сказано на экране - иначе
+     * получилась бы точность, которой нет.
+     *
+     * ПОЧЕМУ ЗДЕСЬ НЕТ ПУНКТА ПРО ЗАМЕТКИ
+     * -----------------------------------
+     * Своя клавиатура в заметках отнимает выделение, буфер, подсказки и
+     * длинные нажатия. Страницу на двадцать тысяч символов ею не написать.
+     * Пункт появится, когда будет сделан редактор, который это переживает.
+     * Мёртвых пунктов в списке нет.
+     */
+    private fun keyboardSection(into: LinearLayout) {
+        val box = store.read()
+        val scope = box?.kbScope ?: VaultFile.KB_OFF
+        val current = box?.kbLayout ?: VaultKeys.LAYOUT_NORMAL
+
+        dim("Своя клавиатура при вводе пароля. Скрывает пароль от взгляда " +
+            "через плечо и от следов пальца на стекле. От программ, " +
+            "перехватывающих ввод, не защищает — это делается не здесь.", into)
+
+        into.addView(optionButton(
+            if (scope == VaultFile.KB_OFF) "Системная клавиатура  ✓" else "Системная клавиатура",
+            "Обычная клавиатура телефона. Так работало до сих пор.",
+            VaultIcon.Kind.CLOSE,
+            if (scope == VaultFile.KB_OFF) getColor(R.color.accent_violet_bright)
+                else 0xFF9A94A8.toInt()) {
+            if (!busy) setKeyboard(current, VaultFile.KB_OFF)
+        }, LinearLayout.LayoutParams(-1, -2).also { it.bottomMargin = dp(8) })
+
+        val opts = listOf(
+            Triple(VaultKeys.LAYOUT_NORMAL, "Обычная",
+                "Привычный порядок букв. Системная клавиатура не " +
+                    "участвует во вводе, но подсмотреть через плечо так же легко."),
+            Triple(VaultKeys.LAYOUT_SHUFFLED, "Перемешанная",
+                "Буквы в случайном порядке, новом при каждом входе. " +
+                    "Движение пальца перестаёт быть подписью пароля."),
+            Triple(VaultKeys.LAYOUT_GROUPED, "Сгруппированная",
+                "По алфавиту, а не по привычной раскладке. Искать глазами " +
+                    "легче, чем в хаосе, а мышечная память всё равно не работает."),
+            Triple(VaultKeys.LAYOUT_CHAOS, "Полный хаос",
+                "Перемешаны буквы, цифры и знаки, и сами клавиши разного " +
+                    "размера. Медленно и неудобно — в этом и смысл.")
+        )
+        for ((mode, name, explain) in opts) {
+            val on = scope == VaultFile.KB_PASSWORD && mode == current
+            val tint = if (on) getColor(R.color.accent_violet_bright)
+                else VaultIcon.tintFor(VaultIcon.Kind.SEARCH)
+            into.addView(optionButton(
+                if (on) name + "  ✓" else name, explain,
+                VaultIcon.Kind.HEADING, tint) {
+                if (!busy && !on) setKeyboard(mode, VaultFile.KB_PASSWORD)
+            }, LinearLayout.LayoutParams(-1, -2).also { it.bottomMargin = dp(8) })
+        }
+
+        dim("Возврат к системной клавиатуре есть всегда — отдельной клавишей " +
+            "на самой клавиатуре. Отключить её нельзя: если какой-то знак " +
+            "твоего пароля вдруг не наберётся, тайник открыть будет нечем.", into)
+    }
+
+    private fun setKeyboard(layout: Int, scope: Int) {
+        busy = true
+        lifecycleScope.launch {
+            val ok = withContext(Dispatchers.Default) {
+                try {
+                    val box = store.read() ?: return@withContext false
+                    store.write(VaultFile.withKeyboard(box, layout, scope))
+                    true
+                } catch (e: Exception) {
+                    false
+                }
+            }
+            busy = false
+            if (ok) showGuard() else toast("Не удалось сохранить")
+        }
     }
 
     /**
@@ -2857,6 +2982,38 @@ class VaultActivity : AppCompatActivity() {
 
     private fun gap() {
         root.addView(View(this), LinearLayout.LayoutParams(-1, dp(12)))
+    }
+
+    /**
+     * Поле секрета. Если включена своя клавиатура, системная гасится и
+     * под полем разворачивается наша.
+     *
+     * Возврат к системной остаётся клавишей на самой клавиатуре и не
+     * зависит от настройки: набор символов обязан покрывать всё, но если
+     * однажды не покроет, человек не должен остаться запертым.
+     */
+    private fun secretFieldWithKeyboard(hint: String, done: () -> Unit): EditText {
+        val e = secretField(hint)
+        val box = store.read()
+        val scope = box?.kbScope ?: VaultFile.KB_OFF
+        if (scope != VaultFile.KB_PASSWORD) return e
+
+        e.showSoftInputOnFocus = false
+        val kb = VaultKeyboard(this, e, onSystem = {
+            // Своя клавиатура снимается совсем: две клавиатуры на экране
+            // сбивали бы с толку.
+            e.showSoftInputOnFocus = true
+            keyboardView?.let { v -> (v.parent as? LinearLayout)?.removeView(v) }
+            keyboardView = null
+            e.requestFocus()
+            val imm = getSystemService(android.view.inputmethod.InputMethodManager::class.java)
+            imm?.showSoftInput(e, 0)
+        }, onDone = done)
+        keyboardView = kb
+        root.addView(kb, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(6) })
+        kb.show(box?.kbLayout ?: VaultKeys.LAYOUT_NORMAL)
+        e.requestFocus()
+        return e
     }
 
     private fun secretField(hint: String): EditText {
