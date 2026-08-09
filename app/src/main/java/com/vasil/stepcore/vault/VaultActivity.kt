@@ -1093,11 +1093,33 @@ class VaultActivity : AppCompatActivity() {
         runSearch(q.text.toString(), holder, status)
     }
 
-    /** Убрать системную клавиатуру: она закрывает собой результаты. */
+    /**
+     * Убрать системную клавиатуру.
+     *
+     * ПОЧЕМУ ПРОСТО «СПРЯТАТЬ» НЕ РАБОТАЛО
+     * ------------------------------------
+     * После clearFocus() фокус возвращался в ТО ЖЕ поле - оно первое
+     * фокусируемое на экране, - и система показывала клавиатуру снова.
+     * Со стороны это выглядело так, будто прятать не пробовали вовсе.
+     *
+     * Поэтому фокус сначала уводится на другой узел, и только потом
+     * гасится клавиатура. Узел делается фокусируемым на лету: своего
+     * приёмника фокуса на экране нет, а заводить пустую вьюху ради этого
+     * значит городить ещё одну сущность.
+     */
     private fun hideKeyboard(v: View) {
-        val imm = getSystemService(android.view.inputmethod.InputMethodManager::class.java)
-        imm?.hideSoftInputFromWindow(v.windowToken, 0)
+        val parking = root
+        parking.isFocusableInTouchMode = true
+        parking.isFocusable = true
         v.clearFocus()
+        parking.requestFocus()
+
+        // Способ 30-й версии: у нас она минимальная, так что путь основной.
+        v.windowInsetsController?.hide(android.view.WindowInsets.Type.ime())
+        // Запасной: на части прошивок первый способ молча ничего не делает.
+        val imm = getSystemService(android.view.inputmethod.InputMethodManager::class.java)
+        imm?.hideSoftInputFromWindow(v.windowToken,
+            android.view.inputmethod.InputMethodManager.HIDE_NOT_ALWAYS)
     }
 
     /**
@@ -1922,6 +1944,12 @@ class VaultActivity : AppCompatActivity() {
             }
         }
 
+        // Пришли из поиска: подсветить найденное и подвести к нему глаз.
+        pendingFind?.let { q ->
+            pendingFind = null
+            flashFoundInRead(pane, body, q)
+        }
+
         val tools = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         root.addView(tools, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(6) })
         tools.addView(tabButton("Назад", VaultIcon.Kind.PREV, VaultIcon.tintFor(VaultIcon.Kind.PREV)) {
@@ -2181,6 +2209,76 @@ class VaultActivity : AppCompatActivity() {
      * своё дело она уже сделала.
      */
     /**
+     * Найденное на экране ЧТЕНИЯ: подсветка всех совпадений плюс вспышка
+     * на первом.
+     *
+     * ПОЧЕМУ ЭТОГО НЕ БЫЛО
+     * -------------------
+     * Из поиска заметка открывается на чтение, а вспышка была написана
+     * только для экрана правки. На чтении её не существовало вовсе -
+     * человек попадал на первую строку и искал глазами заново.
+     *
+     * ПОЧЕМУ ПО ТЕКСТУ КАЖДОГО КУСКА, А НЕ ПО СМЕЩЕНИЮ
+     * ------------------------------------------------
+     * Чтение показывает не сырой текст, а разобранный на куски: заголовки
+     * без решёток, картинки вместо меток. Смещение в исходном тексте не
+     * совпадает ни с одним куском, и пересчитывать его пришлось бы через
+     * разбор - лишний источник расхождений. Совпадения ищутся заново в
+     * каждом куске: правила те же, значит и результат тот же.
+     *
+     * ПОЧЕМУ ВСПЫШКА СНИМАЕТСЯ ПОЛНОСТЬЮ
+     * ----------------------------------
+     * Подсветка накладывается на чужие вьюхи. Оставленный после себя фон
+     * дожил бы до следующего открытия и выглядел бы как поломка.
+     */
+    private fun flashFoundInRead(pane: ScrollView, body: LinearLayout, query: String) {
+        val parsed = VaultQuery.parse(query)
+        if (parsed.isEmpty) return
+        val opts = VaultQuery.Options(searchWord, searchAny, searchWhere)
+        val dens = resources.displayMetrics.density
+
+        var target: TextView? = null
+        for (i in 0 until body.childCount) {
+            val v = body.getChildAt(i) as? TextView ?: continue
+            val src = v.text.toString()
+            if (VaultQuery.spans(src, parsed, opts).isEmpty()) continue
+            val sb = android.text.SpannableStringBuilder(src)
+            VaultMark.apply(sb, src, 0, parsed, opts, dens)
+            v.text = sb
+            if (target == null) target = v
+        }
+        val hit = target ?: return
+
+        // Прокрутка после раскладки: до неё координаты вьюхи ещё нулевые.
+        pane.post {
+            // Отступ сверху: строка ровно под краем читается как «ничего
+            // не нашли», потому что глаз её не замечает.
+            pane.smoothScrollTo(0, maxOf(0, hit.top - dp(60)))
+        }
+
+        val base = 0xFFCF5C4A.toInt()
+        val anim = android.animation.ValueAnimator.ofFloat(1f, 0f)
+        anim.duration = 2200L
+        anim.startDelay = 300L
+        anim.addUpdateListener { a ->
+            val k = a.animatedValue as Float
+            val alpha = (k * 90).toInt().coerceIn(0, 255)
+            hit.setBackgroundColor((alpha shl 24) or (base and 0xFFFFFF))
+        }
+        anim.addListener(object : android.animation.AnimatorListenerAdapter() {
+            override fun onAnimationEnd(a: android.animation.Animator) {
+                // Снимаем начисто: вьюха чужая, и свой фон на ней остаться
+                // не должен ни при каком исходе.
+                hit.setBackgroundColor(0x00000000)
+            }
+            override fun onAnimationCancel(a: android.animation.Animator) {
+                hit.setBackgroundColor(0x00000000)
+            }
+        })
+        anim.start()
+    }
+
+    /**
      * Подсветить и показать найденное место.
      *
      * ЧТО БЫЛО СЛОМАНО
@@ -2203,22 +2301,45 @@ class VaultActivity : AppCompatActivity() {
         val spans = VaultQuery.spans(whole, parsed, opts)
         val end = spans.firstOrNull { it[0] == pos }?.get(1)
             ?: minOf(e.text.length, pos + query.length)
-        val span = android.text.style.BackgroundColorSpan(0xFF6A3B7A.toInt())
-        e.text.setSpan(span, pos, end, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        // Вспыхивает СТРОКА целиком, а не одно слово: слово в две буквы
+        // на середине страницы глаз не находит, даже когда оно покрашено.
+        var lineFrom = pos
+        while (lineFrom > 0 && whole[lineFrom - 1] != '\n') lineFrom--
+        var lineTo = end
+        while (lineTo < whole.length && whole[lineTo] != '\n') lineTo++
+
         e.setSelection(pos)
 
         val anim = android.animation.ValueAnimator.ofFloat(1f, 0f)
-        anim.duration = 1500L
-        anim.startDelay = 400L
+        anim.duration = 2200L
+        anim.startDelay = 300L
         anim.addUpdateListener { v ->
             val k = v.animatedValue as Float
-            val alpha = (k * 255).toInt().coerceIn(0, 255)
-            e.text.setSpan(
-                android.text.style.BackgroundColorSpan((alpha shl 24) or 0x6A3B7A),
-                pos, end, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-            )
+            val line = ((k * 70).toInt().coerceIn(0, 255) shl 24) or 0xCF5C4A
+            val word = ((k * 200).toInt().coerceIn(0, 255) shl 24) or 0xCF5C4A
+            e.text.setSpan(android.text.style.BackgroundColorSpan(line),
+                lineFrom, lineTo, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            e.text.setSpan(android.text.style.BackgroundColorSpan(word),
+                pos, end, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
+        anim.addListener(object : android.animation.AnimatorListenerAdapter() {
+            override fun onAnimationEnd(a: android.animation.Animator) = clearFlash(e)
+            override fun onAnimationCancel(a: android.animation.Animator) = clearFlash(e)
+        })
         anim.start()
+    }
+
+    /**
+     * Снять следы вспышки.
+     *
+     * Раньше отрезки оставались висеть прозрачными навсегда. На сам текст
+     * они не влияют - сохраняется он строкой, - но копятся при каждом
+     * переходе и мешают выделению.
+     */
+    private fun clearFlash(e: EditText) {
+        val spans = e.text.getSpans(0, e.text.length,
+            android.text.style.BackgroundColorSpan::class.java)
+        for (sp in spans) e.text.removeSpan(sp)
     }
 
     /**
