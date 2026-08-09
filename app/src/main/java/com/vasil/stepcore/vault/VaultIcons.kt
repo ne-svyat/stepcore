@@ -65,12 +65,18 @@ class VaultIcon(
             Kind.HISTORY -> 0xFFE0C08A.toInt()
             Kind.TAG -> 0xFF9FD9A8.toInt()
             Kind.JUMP -> 0xFF8FC4D8.toInt()
+            // Янтарный - тон предупреждения в модуле. Не красный: защита
+            // это не опасное действие. Не синий: в нижнем ряду уже два
+            // синих значка подряд, третий перестал бы опознаваться
+            // боковым зрением.
+            Kind.SHIELD -> 0xFFE0C08A.toInt()
         }
     }
 
     enum class Kind {
         SEARCH, PLUS, ROOTS, CLOSE, PENCIL, EYE, HEADING, TRASH,
-        PREV, NEXT, PAGE_PLUS, IMAGE, TRAIL, LIST, HISTORY, TAG, JUMP
+        PREV, NEXT, PAGE_PLUS, IMAGE, TRAIL, LIST, HISTORY, TAG, JUMP,
+        SHIELD
     }
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -205,6 +211,24 @@ class VaultIcon(
                 path.moveTo(3.5f, 11f); path.lineTo(11f, 3.5f); path.lineTo(20.5f, 3.5f)
                 path.lineTo(20.5f, 13f); path.lineTo(13f, 20.5f); path.close()
                 canvas.drawCircle(16.5f, 7.5f, 1.5f, paint)
+            }
+            /**
+             * Щит: плоский верх, прямые грани, острый низ.
+             *
+             * Округлый низ на двадцати точках превращал фигуру в
+             * шестиугольник, а острый ВЕРХ - в каплю. Узнаваемость держится
+             * ровно на двух чертах: горизонтальная кромка сверху и сход в
+             * точку снизу. Кривых нет вовсе - на этом размере они дают
+             * ступеньки, а не скругление.
+             *
+             * Внутреннего знака (замочной скважины, галочки) нет намеренно:
+             * мелкая деталь внутри контура сливается в пятно, и это уже
+             * дважды проверено на загнутом углу листа и на круге в горе.
+             */
+            Kind.SHIELD -> {
+                path.moveTo(5.5f, 4.5f); path.lineTo(18.5f, 4.5f)
+                path.lineTo(18.5f, 11.5f); path.lineTo(12f, 20.5f)
+                path.lineTo(5.5f, 11.5f); path.close()
             }
             // Переход на страницу: стрелка в поле.
             Kind.JUMP -> {

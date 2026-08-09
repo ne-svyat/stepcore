@@ -719,8 +719,8 @@ class VaultActivity : AppCompatActivity() {
                     VaultIcon.tintFor(VaultIcon.Kind.JUMP)) {
                     if (!busy) showArchive()
                 })
-                bottomBox.addView(tabButton("Защита", VaultIcon.Kind.TRASH,
-                    VaultIcon.tintFor(VaultIcon.Kind.TRASH)) {
+                bottomBox.addView(tabButton("Защита", VaultIcon.Kind.SHIELD,
+                    VaultIcon.tintFor(VaultIcon.Kind.SHIELD)) {
                     if (!busy) showGuard()
                 })
                 bottomBox.addView(tabButton("Закрыть", VaultIcon.Kind.CLOSE,
