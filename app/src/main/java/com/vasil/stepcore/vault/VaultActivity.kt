@@ -2134,6 +2134,53 @@ class VaultActivity : AppCompatActivity() {
         images = VaultImages(this, key)
     }
 
+    /**
+     * Обведённый блок с заголовком.
+     *
+     * ЗАЧЕМ РАМКИ
+     * -----------
+     * Экран рос кусками, и получилась лента: строка про число тайников,
+     * четыре карточки льготы и красная кнопка стояли подряд одним
+     * столбцом. Предупреждение про необратимость зрительно не
+     * принадлежало кнопке, к которой относится - между ними просто был
+     * отступ, такой же, как между всем остальным.
+     *
+     * Рамка отвечает на вопрос "где это кончается", отступ - не отвечает.
+     *
+     * ПОЧЕМУ ТОН РАЗНЫЙ У КАЖДОГО БЛОКА
+     * ---------------------------------
+     * Тот же довод, что и у значков: цвет опознаётся боковым зрением
+     * раньше очертания. Серый блок - справка, янтарный - настройка,
+     * красный - необратимое. Различать их по заголовкам значило бы
+     * читать экран целиком каждый раз.
+     *
+     * @return внутренний столбец, куда кладётся содержимое блока.
+     */
+    private fun guardCard(caption: String, icon: VaultIcon.Kind, tint: Int): LinearLayout {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(12), dp(14), dp(14))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(12).toFloat()
+                setColor(SURFACE_SUNKEN)
+                // Рамка приглушена до трети: полный тон спорил бы с
+                // содержимым и превращал экран в набор мишеней.
+                setStroke(dp(1), (tint and 0xFFFFFF) or 0x55000000.toInt())
+            }
+        }
+        box.addView(TextView(this).apply {
+            text = caption
+            textSize = 15f
+            setTextColor(tint)
+            setCompoundDrawablesRelativeWithIntrinsicBounds(
+                VaultIcon(icon, tint, dp(17)), null, null, null)
+            compoundDrawablePadding = dp(9)
+            setPadding(0, 0, 0, dp(10))
+        })
+        root.addView(box, LinearLayout.LayoutParams(-1, -2).also { it.bottomMargin = dp(14) })
+        return box
+    }
+
     // ------------------------------------------------------------------ защита
 
     /**
@@ -2150,35 +2197,38 @@ class VaultActivity : AppCompatActivity() {
         editor = null
         title("Защита", "Что можно сделать с самим тайником")
 
+        // --- блок первый: справка. Ничего не делает, только сообщает.
+        val about = guardCard("Файл тайников", VaultIcon.Kind.LIST,
+            VaultIcon.tintFor(VaultIcon.Kind.CLOSE))
         val count = store.read()?.vaultCount ?: 0
-        dim("Тайников в файле: " + count + " из " + VaultFile.MAX_VAULTS +
-            ". Это число лежит открыто и видно любому, кто добрался до папки " +
-            "приложения. Что внутри — не видно никому.")
+        about.addView(TextView(this).apply {
+            text = "Занято " + count + " из " + VaultFile.MAX_VAULTS
+            textSize = 20f
+            setTextColor(0xFFCFCFDA.toInt())
+            setPadding(0, 0, 0, dp(6))
+        })
+        dim("Это число лежит открыто: тот, кто добрался до папки " +
+            "приложения, увидит, сколько тайников создано. Что внутри — " +
+            "не увидит никто.", about)
 
-        val warn = TextView(this).apply {
-            text = "Удаление тайника необратимо.\n\n" +
-                "Сначала стираются заметки, страницы, история и картинки " +
-                "этого тайника, и только потом оба его ключа — пароль и " +
-                "секрет восстановления. Другие тайники в файле не " +
-                "затрагиваются.\n\n" +
-                "Восстановить нечем: копии ключа не существует нигде."
-            textSize = 14f
-            setTextColor(0xFFE0C08A.toInt())
-            setPadding(dp(14), dp(12), dp(14), dp(12))
-            background = GradientDrawable().apply {
-                cornerRadius = dp(9).toFloat()
-                setColor(SURFACE_SUNKEN)
-                setStroke(dp(1), 0x55E0C08A)
-            }
-        }
-        root.addView(warn, LinearLayout.LayoutParams(-1, -2).also { it.bottomMargin = dp(16) })
+        // --- блок второй: настройка.
+        val grace = guardCard("Пока приложение свёрнуто", VaultIcon.Kind.SHIELD,
+            VaultIcon.tintFor(VaultIcon.Kind.SHIELD))
+        graceSection(grace)
 
-        graceSection()
-
-        dangerButton("Удалить этот тайник").setOnClickListener {
+        // --- блок третий: необратимое. Предупреждение и кнопка ВНУТРИ
+        // одной рамки: раньше их связывал только отступ, и связь читалась
+        // не с первого взгляда.
+        val danger = guardCard("Необратимое", VaultIcon.Kind.TRASH,
+            VaultIcon.tintFor(VaultIcon.Kind.TRASH))
+        dim("Стираются заметки, страницы, история и картинки этого " +
+            "тайника, и только потом оба его ключа — пароль и секрет " +
+            "восстановления. Другие тайники не затрагиваются.\n\n" +
+            "Восстановить нечем: копии ключа не существует нигде.", danger)
+        dangerButton("Удалить этот тайник", danger).setOnClickListener {
             if (!busy) askDestroyVault()
         }
-        gap()
+
         secondaryButton("←  К списку заметок").setOnClickListener { goBack() }
     }
 
@@ -2190,9 +2240,9 @@ class VaultActivity : AppCompatActivity() {
      * это в справку нельзя - решение принимается здесь, и объяснение
      * должно быть здесь же.
      */
-    private fun graceSection() {
+    private fun graceSection(into: LinearLayout) {
         val current = VaultSession.graceMode
-        dim("Сколько тайник остаётся открытым, если свернуть приложение.")
+        dim("Сколько тайник остаётся открытым, если свернуть приложение.", into)
 
         val opts = listOf(
             Triple(VaultFile.GRACE_90S, "Полторы минуты",
@@ -2216,14 +2266,13 @@ class VaultActivity : AppCompatActivity() {
             val tint = if (chosenNow) getColor(R.color.accent_violet_bright)
                 else VaultIcon.tintFor(VaultIcon.Kind.SHIELD)
             val label = if (chosenNow) name + "  ✓" else name
-            root.addView(
+            into.addView(
                 optionButton(label, explain, VaultIcon.Kind.SHIELD, tint) {
                     if (!busy && !chosenNow) setGrace(mode)
                 },
                 LinearLayout.LayoutParams(-1, -2).also { it.bottomMargin = dp(8) }
             )
         }
-        gap()
     }
 
     /**
@@ -2791,8 +2840,14 @@ class VaultActivity : AppCompatActivity() {
             LinearLayout.LayoutParams(-1, dp(1)).also { it.bottomMargin = dp(12) })
     }
 
-    private fun dim(t: String) {
-        root.addView(TextView(this).apply {
+    private fun dim(t: String) = dim(t, root)
+
+    /**
+     * Куда класть - параметром. Раньше адрес был зашит в помощник, и любой
+     * блок внутри рамки всё равно уезжал в общий столбец.
+     */
+    private fun dim(t: String, into: LinearLayout) {
+        into.addView(TextView(this).apply {
             text = t
             textSize = 14f
             setTextColor(0xFF9A9AA5.toInt())
@@ -2839,13 +2894,17 @@ class VaultActivity : AppCompatActivity() {
      * обведено, опасное — приглушённо-красное, без фона и отделённое
      * пустотой. Форма несёт смысл, а не украшает.
      */
-    private fun button(label: String): Button = styledButton(label, LEVEL_PRIMARY)
+    private fun button(label: String): Button = styledButton(label, LEVEL_PRIMARY, root)
 
-    private fun secondaryButton(label: String): Button = styledButton(label, LEVEL_SECONDARY)
+    private fun secondaryButton(label: String): Button = styledButton(label, LEVEL_SECONDARY, root)
 
-    private fun dangerButton(label: String): Button = styledButton(label, LEVEL_DANGER)
+    private fun dangerButton(label: String): Button = styledButton(label, LEVEL_DANGER, root)
 
-    private fun styledButton(label: String, level: Int): Button {
+    /** Опасная кнопка внутри своей рамки, а не в общем столбце. */
+    private fun dangerButton(label: String, into: LinearLayout): Button =
+        styledButton(label, LEVEL_DANGER, into)
+
+    private fun styledButton(label: String, level: Int, into: LinearLayout): Button {
         val accent = getColor(R.color.accent_violet_bright)
         val danger = getColor(R.color.accent_red_bright)
         val bg = GradientDrawable().apply {
@@ -2890,7 +2949,7 @@ class VaultActivity : AppCompatActivity() {
         // Опасное действие отделено пустотой: промахнуться пальцем по
         // соседней кнопке не должно стоить заметки.
         lp.topMargin = if (level == LEVEL_DANGER) dp(28) else dp(8)
-        root.addView(b, lp)
+        into.addView(b, lp)
         return b
     }
 
