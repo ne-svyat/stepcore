@@ -76,7 +76,7 @@ class VaultActivity : AppCompatActivity() {
      * плодить записи в списке задач, которых у скрытого модуля быть не
      * должно.
      */
-    private enum class Screen { ENTRANCE, CREATE, NOTES, PAGE, PREVIEW, HISTORY, IMAGE, TRAILS, ROOTS, ARCHIVE }
+    private enum class Screen { ENTRANCE, CREATE, NOTES, PAGE, PREVIEW, HISTORY, IMAGE, TRAILS, ROOTS, ARCHIVE, GUARD }
     private var screen = Screen.ENTRANCE
     private var histNoteId = 0L
     private var histIdx = 0
@@ -718,6 +718,10 @@ class VaultActivity : AppCompatActivity() {
                 bottomBox.addView(tabButton("Архив", VaultIcon.Kind.JUMP,
                     VaultIcon.tintFor(VaultIcon.Kind.JUMP)) {
                     if (!busy) showArchive()
+                })
+                bottomBox.addView(tabButton("Защита", VaultIcon.Kind.TRASH,
+                    VaultIcon.tintFor(VaultIcon.Kind.TRASH)) {
+                    if (!busy) showGuard()
                 })
                 bottomBox.addView(tabButton("Закрыть", VaultIcon.Kind.CLOSE,
                     VaultIcon.tintFor(VaultIcon.Kind.CLOSE)) {
@@ -1501,6 +1505,8 @@ class VaultActivity : AppCompatActivity() {
 
             Screen.ARCHIVE -> showNotes()
 
+            Screen.GUARD -> showNotes()
+
             Screen.ROOTS -> showNotes()
 
             Screen.TRAILS -> openNote(histNoteId, histIdx)
@@ -2087,6 +2093,134 @@ class VaultActivity : AppCompatActivity() {
      * Это не мелкий шрифт: человек, потерявший телефон с одним из двух,
      * узнает об этом слишком поздно.
      */
+    // ------------------------------------------------------------------ защита
+
+    /**
+     * Защита тайника.
+     *
+     * Отдельный экран, а не кнопка в углу списка: опасное действие не
+     * должно жить рядом с повседневными, иначе однажды палец промахнётся.
+     */
+    private fun showGuard() {
+        mount(scrollable = true)
+        screen = Screen.GUARD
+        root.removeAllViews()
+        root.setPadding(dp(24), dp(24), dp(24), dp(32))
+        editor = null
+        title("Защита", "Что можно сделать с самим тайником")
+
+        val count = store.read()?.vaultCount ?: 0
+        dim("Тайников в файле: " + count + " из " + VaultFile.MAX_VAULTS +
+            ". Это число лежит открыто и видно любому, кто добрался до папки " +
+            "приложения. Что внутри — не видно никому.")
+
+        val warn = TextView(this).apply {
+            text = "Удаление тайника необратимо.\n\n" +
+                "Сначала стираются заметки, страницы, история и картинки " +
+                "этого тайника, и только потом оба его ключа — пароль и " +
+                "секрет восстановления. Другие тайники в файле не " +
+                "затрагиваются.\n\n" +
+                "Восстановить нечем: копии ключа не существует нигде."
+            textSize = 14f
+            setTextColor(0xFFE0C08A.toInt())
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(9).toFloat()
+                setColor(SURFACE_SUNKEN)
+                setStroke(dp(1), 0x55E0C08A)
+            }
+        }
+        root.addView(warn, LinearLayout.LayoutParams(-1, -2).also { it.bottomMargin = dp(16) })
+
+        dangerButton("Удалить этот тайник").setOnClickListener {
+            if (!busy) askDestroyVault()
+        }
+        gap()
+        secondaryButton("←  К списку заметок").setOnClickListener { goBack() }
+    }
+
+    /**
+     * Пароль спрашивается не потому, что он нужен технически — ключ уже в
+     * памяти. Он доказывает, что за экраном владелец, а не тот, кто взял
+     * телефон в льготные полторы минуты.
+     *
+     * Ввод пароля невозможно сделать случайно, поэтому ритуала из трёх
+     * предупреждений здесь нет: галочку «я понял» прокликивают не читая,
+     * а пароль набирают осознанно.
+     */
+    private fun askDestroyVault() {
+        val session = VaultSession.key() ?: return
+        val field = EditText(this).apply {
+            hint = "Пароль или секрет этого тайника"
+            textSize = 16f
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
+        val holder = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), dp(8))
+            addView(field)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Удалить тайник")
+            .setView(holder)
+            .setCancelable(false)
+            .setNegativeButton("Отмена", null)
+            .setPositiveButton("Удалить") { _, _ -> destroyVault(field.chars(), session) }
+            .show()
+    }
+
+    /**
+     * ПОРЯДОК ОПЕРАЦИЙ — самое важное здесь.
+     *
+     * Данные, потом картинки, ключи ПОСЛЕДНИМИ. Обрыв на данных оставляет
+     * ключ живым: человек входит и повторяет удаление. Обрыв после
+     * стирания ключа оставил бы нечитаемый мусор навсегда, и удалить его
+     * было бы уже нечем — сбой стал бы невосстановимым.
+     *
+     * Проверка секрета строгая: он обязан открыть слот, ключ которого
+     * СОВПАДАЕТ с ключом текущей сессии. Просто «открыл какой-то слот» не
+     * годится — иначе паролем от второго тайника сносился бы первый.
+     */
+    private fun destroyVault(secret: CharArray, session: ByteArray) {
+        if (busy || secret.isEmpty()) {
+            secret.fill('\u0000')
+            return
+        }
+        busy = true
+        toast("Удаляю…")
+        lifecycleScope.launch {
+            val report = withContext(Dispatchers.Default) {
+                try {
+                    val box = store.read() ?: return@withContext null
+                    val opened = VaultFile.openAt(box, secret) ?: return@withContext null
+                    val mine = opened.key.contentEquals(session)
+                    opened.key.fill(0)
+                    if (!mine) return@withContext null
+
+                    val done = VaultPurge(this@VaultActivity, session).purge()
+                    val rest = VaultFile.removeVault(box, opened.slot)
+                    if (rest == null) store.destroy() else store.write(rest)
+                    done
+                } catch (e: Exception) {
+                    null
+                } finally {
+                    secret.fill('\u0000')
+                }
+            }
+            busy = false
+            if (report == null) {
+                // Одно сообщение на все случаи, как и при входе: разные
+                // ответы выдали бы состояние файла тайников.
+                toast("Не подходит")
+            } else {
+                toast("Удалено: заметок " + report.notes +
+                    ", страниц " + report.pages +
+                    ", картинок " + report.images)
+                closeVault()
+            }
+        }
+    }
+
     private fun showArchive() {
         mount(scrollable = true)
         screen = Screen.ARCHIVE

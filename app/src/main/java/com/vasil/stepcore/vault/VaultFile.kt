@@ -100,19 +100,7 @@ object VaultFile {
      *
      * @return ключ данных подошедшего тайника, либо null.
      */
-    fun open(box: Box, secret: CharArray): ByteArray? {
-        val kek = Scrypt.derive(secret, box.salt, box.n, VaultCrypto.R, VaultCrypto.P,
-            VaultCrypto.KEY_LEN)
-        try {
-            for (s in box.slots) {
-                val k = VaultCrypto.decrypt(kek, s)
-                if (k != null) return k
-            }
-            return null
-        } finally {
-            kek.fill(0)
-        }
-    }
+    fun open(box: Box, secret: CharArray): ByteArray? = openAt(box, secret)?.key
 
     // ---------------------------------------------------------------- создание
 
@@ -158,6 +146,55 @@ object VaultFile {
         } finally {
             dataKey.fill(0)
         }
+    }
+
+    // ---------------------------------------------------------------- удаление
+
+    /**
+     * Что именно открылось. Для удаления одного ключа мало: стирать надо
+     * ПАРУ слотов одного тайника, а значит нужен индекс.
+     */
+    class Opened(val slot: Int, val key: ByteArray)
+
+    /**
+     * Вход с указанием слота. Один прогон scrypt, дальше примерка.
+     *
+     * Вызывающий обязан затереть key нулями после использования.
+     */
+    fun openAt(box: Box, secret: CharArray): Opened? {
+        val kek = Scrypt.derive(secret, box.salt, box.n, VaultCrypto.R, VaultCrypto.P,
+            VaultCrypto.KEY_LEN)
+        try {
+            for (i in box.slots.indices) {
+                val k = VaultCrypto.decrypt(kek, box.slots[i])
+                if (k != null) return Opened(i, k)
+            }
+            return null
+        } finally {
+            kek.fill(0)
+        }
+    }
+
+    /**
+     * Убрать тайник из файла: обе его обёртки разом.
+     *
+     * Слоты идут парами, и снятие одной обёртки оставило бы тайник
+     * открываемым вторым секретом — то есть удаление не удаляло бы.
+     * Поэтому индекс приводится к началу пары.
+     *
+     * @return новый Box, либо null если пара была последней. Null означает
+     *         «файла ключей быть не должно»: Box с нулём слотов невалиден
+     *         по формату, decode такой файл отверг бы как порченый.
+     */
+    fun removeVault(box: Box, slot: Int): Box? {
+        require(slot in box.slots.indices) { "bad slot" }
+        val first = slot and 1.inv()
+        val rest = ArrayList<ByteArray>(box.slots.size - 2)
+        for (i in box.slots.indices) {
+            if (i != first && i != first + 1) rest.add(box.slots[i])
+        }
+        if (rest.isEmpty()) return null
+        return Box(box.n, box.salt, rest)
     }
 
     private fun seal(salt: ByteArray, n: Int, secret: CharArray, dataKey: ByteArray): ByteArray {
