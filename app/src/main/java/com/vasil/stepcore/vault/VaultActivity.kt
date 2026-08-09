@@ -62,7 +62,6 @@ class VaultActivity : AppCompatActivity() {
     private var searchWord = VaultQuery.WORD_PREFIX
     private var searchAny = false
     private var searchWhere = VaultQuery.IN_ALL
-    private var searchOpen = false
 
     /** Своя клавиатура текущего экрана, если она развёрнута. */
     private var keyboardView: VaultKeyboard? = null
@@ -692,78 +691,45 @@ class VaultActivity : AppCompatActivity() {
         // Объяснение и шторка. Строка объяснения стоит ВСЕГДА, шторка
         // раскрывается по ней: человек сначала видит, как его поняли, и
         // только потом лезет крутить.
+        // Две строки и не больше: этот блок стоит в ЖЁСТКОМ каркасе, и
+        // каждая его лишняя строка отнимается у списка результатов.
         val explain = TextView(this).apply {
-            textSize = 13f
-            setTextColor(0xFF8FC4D8.toInt())
-            setPadding(dp(10), dp(8), dp(10), dp(8))
-            background = GradientDrawable().apply {
-                cornerRadius = dp(8).toFloat()
-                setColor(SURFACE_SUNKEN)
-                setStroke(dp(1), 0x338FC4D8)
-            }
+            textSize = 12f
+            maxLines = 3
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            setPadding(dp(10), dp(6), dp(10), dp(6))
             isClickable = true
         }
         root.addView(explain, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(8) })
-
-        val panel = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            visibility = if (searchOpen) View.VISIBLE else View.GONE
-            setPadding(dp(12), dp(10), dp(12), dp(12))
-            background = GradientDrawable().apply {
-                cornerRadius = dp(10).toFloat()
-                setColor(SURFACE_SUNKEN)
-                setStroke(dp(1), LINE_EDGE)
-            }
-        }
-        root.addView(panel, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(6) })
 
         lateinit var repaint: () -> Unit
         repaint = {
             val parsed = VaultQuery.parse(q.text.toString())
             val opts = VaultQuery.Options(searchWord, searchAny, searchWhere)
-            explain.text = (if (searchOpen) "▾  " else "▸  ") + VaultQuery.explain(parsed, opts)
-            panel.visibility = if (searchOpen) View.VISIBLE else View.GONE
+            val tuned = searchWord != VaultQuery.WORD_PREFIX || searchAny ||
+                searchWhere != VaultQuery.IN_ALL
+            // Тон говорит о состоянии раньше слов: синий - обычный поиск,
+            // янтарный - настройки изменены, и результат может быть
+            // непохожим на ожидаемый.
+            val tint = if (tuned) 0xFFE0C08A.toInt() else 0xFF8FC4D8.toInt()
+            explain.setTextColor(tint)
+            explain.background = GradientDrawable().apply {
+                cornerRadius = dp(8).toFloat()
+                setColor(SURFACE_SUNKEN)
+                setStroke(dp(1), (tint and 0xFFFFFF) or 0x55000000.toInt())
+            }
+            explain.text = VaultQuery.explain(parsed, opts) +
+                (if (tuned) "\nНастроено · нажми, чтобы изменить"
+                 else "\nНажми, чтобы настроить поиск")
         }
 
         explain.setOnClickListener {
-            searchOpen = !searchOpen
-            repaint()
+            if (!busy) showSearchOptions { repaint(); runSearch(q.text.toString(), holder, status) }
         }
         q.addTextChangedListener(object : android.text.TextWatcher {
             override fun afterTextChanged(e: android.text.Editable?) = repaint()
             override fun beforeTextChanged(c: CharSequence?, a: Int, b: Int, d: Int) = Unit
             override fun onTextChanged(c: CharSequence?, a: Int, b: Int, d: Int) = Unit
-        })
-
-        panel.addView(searchGroup("Как искать слова", listOf(
-            Triple(VaultQuery.WORD_PREFIX, "По началу",
-                "«машин» найдёт «машина», «машины», «машинам»"),
-            Triple(VaultQuery.WORD_EXACT, "Целиком",
-                "«машин» найдёт только «машин». Когда находится слишком много"),
-            Triple(VaultQuery.WORD_INSIDE, "Внутри слов",
-                "«асть» найдёт «часть», «счастье». Когда помнишь середину")
-        ), searchWord) { searchWord = it; repaint(); runSearch(q.text.toString(), holder, status) })
-
-        panel.addView(searchGroup("Сколько слов должно совпасть", listOf(
-            Triple(0, "Все слова", "Строже. Так по умолчанию"),
-            Triple(1, "Любое из слов", "Шире. Когда не уверен в формулировке")
-        ), if (searchAny) 1 else 0) {
-            searchAny = it == 1; repaint(); runSearch(q.text.toString(), holder, status)
-        })
-
-        panel.addView(searchGroup("Где искать", listOf(
-            Triple(VaultQuery.IN_ALL, "Везде", "Названия, теги и текст страниц"),
-            Triple(VaultQuery.IN_TITLE, "Названия", "Быстро: страницы не читаются"),
-            Triple(VaultQuery.IN_TAGS, "Теги", "Быстро: страницы не читаются")
-        ), searchWhere) { searchWhere = it; repaint(); runSearch(q.text.toString(), holder, status) })
-
-        panel.addView(TextView(this).apply {
-            text = "Кавычки ищут точное сочетание: \"красная машина\" найдёт " +
-                "только эти слова подряд.\n\nРегистр и ё/е не важны никогда. " +
-                "Латинские буквы, похожие на русские, считаются одинаковыми."
-            textSize = 12f
-            setTextColor(0xFF8A8A98.toInt())
-            setPadding(0, dp(10), 0, 0)
         })
 
         repaint()
@@ -1047,12 +1013,103 @@ class VaultActivity : AppCompatActivity() {
     }
 
     /**
-     * Группа взаимоисключающих положений в шторке поиска.
+     * Настройки поиска ОТДЕЛЬНЫМ ОКНОМ.
      *
-     * Выбранное отличается ЦВЕТОМ И РАМКОЙ, а не точкой сбоку: точка
-     * читается как украшение. Под каждым положением стоит пример, а не
-     * определение - «машин найдёт машина» понятнее, чем «префиксное
-     * совпадение».
+     * ПОЧЕМУ НЕ ШТОРКОЙ НА ЭКРАНЕ
+     * ---------------------------
+     * Главный экран - жёсткий каркас без внешней прокрутки, и список
+     * результатов берёт высоту остатком. Шторка в том же столбце заняла
+     * почти всё: списку доставался ноль точек, результаты были и их
+     * нельзя было увидеть.
+     *
+     * Ограничить высоту шторки означало бы подпорку - ту же самую, что
+     * когда-то задавала точную высоту корням внутри прокрутки. Окно не
+     * делит место со списком вовсе, и вопрос закрыт, а не отложен.
+     *
+     * @param onChange вызывается ПОСЛЕ закрытия окна: перерисовывать
+     *        список на каждое нажатие внутри окна значило бы гонять поиск
+     *        по всем страницам три раза подряд.
+     */
+    private fun showSearchOptions(onChange: () -> Unit) {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(12), dp(20), dp(8))
+        }
+        // Своя прокрутка: у окна её нет, а содержимое выше маленького экрана.
+        val pane = ScrollView(this).apply { addView(box) }
+
+        var word = searchWord
+        var any = searchAny
+        var where = searchWhere
+
+        lateinit var rebuild: () -> Unit
+        rebuild = {
+            box.removeAllViews()
+            box.addView(searchGroup("Как искать слова", listOf(
+                Triple(VaultQuery.WORD_PREFIX, "По началу слова",
+                    "«машин» найдёт «машина», «машины», «машинам». Обычный поиск"),
+                Triple(VaultQuery.WORD_EXACT, "Слово целиком",
+                    "«машин» найдёт только «машин». Когда находится слишком много"),
+                Triple(VaultQuery.WORD_INSIDE, "Внутри слов",
+                    "«асть» найдёт «часть» и «счастье». Когда помнишь середину")
+            ), word) { word = it; rebuild() })
+
+            box.addView(searchGroup("Сколько слов должно совпасть", listOf(
+                Triple(0, "Все слова",
+                    "Страница подходит, только если есть каждое слово запроса"),
+                Triple(1, "Хотя бы одно",
+                    "Шире: хватит любого слова. Когда не уверен в формулировке")
+            ), if (any) 1 else 0) { any = it == 1; rebuild() })
+
+            box.addView(searchGroup("Где искать", listOf(
+                Triple(VaultQuery.IN_ALL, "Везде",
+                    "Названия, теги и текст всех страниц"),
+                Triple(VaultQuery.IN_TITLE, "Только названия",
+                    "Быстро: страницы не читаются вовсе"),
+                Triple(VaultQuery.IN_TAGS, "Только теги",
+                    "Быстро: страницы не читаются вовсе")
+            ), where) { where = it; rebuild() })
+
+            box.addView(TextView(this).apply {
+                text = "Кавычки ищут точное сочетание:\n" +
+                    "\"красная машина\" — только эти слова подряд.\n\n" +
+                    "Регистр и ё/е не важны никогда, настраивать это не нужно."
+                textSize = 12f
+                setTextColor(0xFF8A8A98.toInt())
+                setPadding(dp(2), dp(6), 0, dp(4))
+            })
+        }
+        rebuild()
+
+        val d = AlertDialog.Builder(this)
+            .setTitle("Как искать")
+            .setView(pane)
+            .setPositiveButton("Готово") { _, _ ->
+                searchWord = word
+                searchAny = any
+                searchWhere = where
+                onChange()
+            }
+            .setNeutralButton("Обычный поиск") { _, _ ->
+                searchWord = VaultQuery.WORD_PREFIX
+                searchAny = false
+                searchWhere = VaultQuery.IN_ALL
+                onChange()
+            }
+            .setNegativeButton("Отмена", null)
+            .create()
+        d.show()
+    }
+
+    /**
+     * Группа взаимоисключающих положений.
+     *
+     * Выбранное отличается ЗАЛИВКОЙ, РАМКОЙ И ЗНАЧКОМ сразу: одного
+     * признака мало - на трёх группах подряд человек не понимал, что из
+     * подсвеченного выбрано им, а что подсвечено само.
+     *
+     * Под каждым положением стоит пример, а не определение: «машин найдёт
+     * машина» понятнее, чем «префиксное совпадение».
      */
     private fun searchGroup(caption: String, opts: List<Triple<Int, String, String>>,
                             current: Int, onPick: (Int) -> Unit): View {
@@ -1070,7 +1127,10 @@ class VaultActivity : AppCompatActivity() {
             val on = value == current
             val tint = if (on) getColor(R.color.accent_violet_bright) else 0xFF9A94A8.toInt()
             box.addView(TextView(this).apply {
-                text = label + "\n" + example
+                // Кружок слева говорит «выбрано» без цвета вовсе: цвет
+                // читается быстрее, но одного цвета мало.
+                text = (if (on) "◉  " else "○  ") + label + "\n" +
+                    (if (on) "        " else "        ") + example
                 textSize = 13f
                 setTextColor(if (on) 0xFFEEEEEE.toInt() else 0xFF83808C.toInt())
                 setPadding(dp(10), dp(8), dp(10), dp(8))
@@ -1116,7 +1176,7 @@ class VaultActivity : AppCompatActivity() {
             holder.removeAllViews()
             status.text = when {
                 hits.isEmpty() -> "Ничего не нашлось"
-                else -> "Найдено: " + hits.size +
+                else -> "Найдено совпадений: " + hits.size +
                     (if (parsed.words.size > 1) " · сверху те, где совпало больше слов" else "")
             }
             if (hits.isEmpty() && searchWord == VaultQuery.WORD_PREFIX) {
