@@ -1,10 +1,12 @@
 package com.vasil.stepcore.vault
 
 import android.content.Context
+import android.content.res.ColorStateList
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
-import android.content.res.ColorStateList
+import android.text.method.PasswordTransformationMethod
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.View
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -18,14 +20,14 @@ import java.security.SecureRandom
  * -------------
  * Свой метод ввода - отдельное приложение в системе, видное в настройках
  * и доступное всем полям на телефоне. Тайник, который заявляет о себе
- * строкой в системных настройках, перестаёт быть тайником. Здесь же это
+ * строкой в системных настройках, перестаёт быть тайником. Здесь это
  * обычная вьюха внутри экрана: снаружи её не существует.
  *
- * ПОРЯДОК ПЕРЕСОБИРАЕТСЯ КАЖДЫЙ РАЗ
- * ---------------------------------
- * Запомненный порядок - это просто вторая раскладка, к которой палец
- * привыкает так же, как к первой. Зерно берётся из SecureRandom при
- * каждом показе.
+ * ПОРЯДОК ПЕРЕСОБИРАЕТСЯ
+ * ----------------------
+ * При каждом показе и после каждого неверного пароля. Второе не мелочь:
+ * если за неудачной попыткой подсмотрели, повтор по той же раскладке
+ * выдал бы пароль целиком. Зерно берётся из SecureRandom.
  *
  * ВОЗВРАТ К СИСТЕМНОЙ - ВСЕГДА
  * ----------------------------
@@ -44,6 +46,7 @@ class VaultKeyboard(
     private var page = VaultKeys.PAGE_LAT
     private var upper = false
     private var seed = 0L
+    private var revealed = false
 
     init {
         orientation = VERTICAL
@@ -59,11 +62,24 @@ class VaultKeyboard(
         layoutMode = mode
         page = VaultKeys.PAGE_LAT
         upper = false
+        revealed = false
+        applyReveal()
         newSeed()
         build()
     }
 
-    /** Новый порядок. Зерно системное: предсказуемый порядок бесполезен. */
+    /**
+     * Новый порядок после неудачной попытки.
+     *
+     * У раскладок без перемешивания порядок и так постоянный - трогать
+     * нечего, а лишняя перерисовка всегда чувствуется.
+     */
+    fun reshuffle() {
+        if (!VaultKeys.isShuffling(layoutMode)) return
+        newSeed()
+        build()
+    }
+
     private fun newSeed() {
         val b = ByteArray(8)
         SecureRandom().nextBytes(b)
@@ -74,6 +90,8 @@ class VaultKeyboard(
 
     private fun build() {
         removeAllViews()
+        addView(pageTabs(), LayoutParams(-1, -2).also { it.bottomMargin = dp(6) })
+
         for (row in VaultKeys.rows(page, layoutMode, upper, seed)) {
             val w = VaultKeys.widths(row, layoutMode, seed)
             val line = LinearLayout(context).apply {
@@ -81,7 +99,7 @@ class VaultKeyboard(
                 gravity = Gravity.CENTER
             }
             for ((i, ch) in row.withIndex()) {
-                line.addView(key(ch.toString(), w[i], KEY_CHAR) { type(ch) })
+                line.addView(key(ch.toString(), w[i], tintOf(ch), KEY_CHAR) { type(ch) })
             }
             addView(line, LayoutParams(-1, -2).also { it.bottomMargin = dp(4) })
         }
@@ -91,32 +109,85 @@ class VaultKeyboard(
             gravity = Gravity.CENTER
         }
         if (VaultKeys.hasCase(page)) {
-            bottom.addView(key(if (upper) "▲" else "△", 1.3f, KEY_MOD) {
-                upper = !upper; build()
+            bottom.addView(key(if (upper) "▲" else "△", 1.3f, MOD_TINT, KEY_MOD) {
+                upper = !upper
+                build()
             })
         }
-        bottom.addView(key(nextPageLabel(), 1.5f, KEY_MOD) {
-            page = (page + 1) % VaultKeys.PAGE_COUNT
-            upper = false
-            build()
-        })
-        // Пробел без надписи: подпись на нём ничего не добавляет, а ширина
-        // и так делает клавишу единственной узнаваемой на ощупь.
-        bottom.addView(key(" ", 3f, KEY_CHAR) { type(' ') })
-        bottom.addView(key("⌫", 1.3f, KEY_MOD) { backspace() })
+        // Пробел без надписи: подпись ничего не добавляет, а ширина и так
+        // делает клавишу единственной узнаваемой на ощупь.
+        bottom.addView(key(" ", 3.4f, CHAR_TINT, KEY_CHAR) { type(' ') })
+        val back = key("⌫", 1.3f, MOD_TINT, KEY_MOD) { backspace() }
+        // Долгое нажатие стирает всё: набрал половину не той раскладкой -
+        // не надо жать двенадцать раз.
+        back.setOnLongClickListener {
+            it.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+            target.text.clear()
+            true
+        }
+        bottom.addView(back)
         addView(bottom, LayoutParams(-1, -2).also { it.bottomMargin = dp(6) })
 
         val tail = LinearLayout(context).apply {
             orientation = HORIZONTAL
             gravity = Gravity.CENTER
         }
-        tail.addView(key("Системная", 2.6f, KEY_SYSTEM) { onSystem() })
-        tail.addView(key("Готово", 1.6f, KEY_DONE) { onDone() })
+        // Показать пароль - решение человека, а не наше. На перемешанной
+        // раскладке промахи часты, и проверить набранное важнее, чем
+        // спрятать его от себя самого.
+        tail.addView(key(if (revealed) "Скрыть" else "Показать", 1.7f, REVEAL_TINT, KEY_MOD) {
+            revealed = !revealed
+            applyReveal()
+            build()
+        })
+        tail.addView(key("Системная", 2.0f, SYSTEM_TINT, KEY_MOD) { onSystem() })
+        tail.addView(key("Готово", 1.7f, DONE_TINT, KEY_MOD) { onDone() })
         addView(tail, LayoutParams(-1, -2))
     }
 
-    private fun nextPageLabel(): String =
-        VaultKeys.pageLabel((page + 1) % VaultKeys.PAGE_COUNT)
+    /**
+     * Вкладки страниц вместо клавиши-карусели.
+     *
+     * Каруселью до знаков надо было жать три раза, и человек не видел,
+     * что вообще есть. Вкладки: одно нажатие до любой страницы и видно,
+     * где находишься.
+     */
+    private fun pageTabs(): View {
+        val line = LinearLayout(context).apply {
+            orientation = HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        for (p in 0 until VaultKeys.PAGE_COUNT) {
+            val active = p == page
+            val tint = if (active) 0xFFB9A6E8.toInt() else 0xFF7A7488.toInt()
+            line.addView(key(VaultKeys.pageLabel(p), 1f, tint,
+                if (active) KEY_TAB_ON else KEY_MOD) {
+                if (p != page) {
+                    page = p
+                    upper = false
+                    build()
+                }
+            })
+        }
+        return line
+    }
+
+    private fun tintOf(c: Char): Int = when (VaultKeys.classOf(c)) {
+        VaultKeys.CLASS_VOWEL -> VOWEL_TINT
+        VaultKeys.CLASS_SIGN -> SIGN_TINT
+        VaultKeys.CLASS_DIGIT -> DIGIT_TINT
+        VaultKeys.CLASS_SYMBOL -> SYMBOL_TINT
+        else -> CHAR_TINT
+    }
+
+    private fun applyReveal() {
+        val at = target.selectionEnd.coerceAtLeast(0)
+        target.transformationMethod =
+            if (revealed) null else PasswordTransformationMethod.getInstance()
+        // Подмена способа показа сбрасывает курсор в начало, и следующая
+        // буква уехала бы в начало пароля.
+        target.setSelection(at.coerceAtMost(target.text.length))
+    }
 
     private fun type(c: Char) {
         target.text.insert(target.selectionEnd.coerceAtLeast(0), c.toString())
@@ -128,18 +199,18 @@ class VaultKeyboard(
         if (at > 0) e.delete(at - 1, at)
     }
 
-    private fun key(label: String, weight: Float, kind: Int, action: () -> Unit): View {
-        val tint = when (kind) {
-            KEY_MOD -> 0xFF9A94A8.toInt()
-            KEY_SYSTEM -> 0xFFE0C08A.toInt()
-            KEY_DONE -> 0xFFB9A6E8.toInt()
-            else -> 0xFFEEEEEE.toInt()
-        }
+    private fun key(label: String, weight: Float, tint: Int, kind: Int,
+                    action: () -> Unit): View {
         val bg = GradientDrawable().apply {
             cornerRadius = dp(7).toFloat()
-            setColor(if (kind == KEY_CHAR) 0xFF1E1E26.toInt() else 0xFF17171C.toInt())
-            setStroke(dp(1), if (kind == KEY_CHAR) 0xFF2E2A3A.toInt()
-                else (tint and 0xFFFFFF) or 0x66000000.toInt())
+            setColor(when (kind) {
+                KEY_CHAR -> 0xFF1E1E26.toInt()
+                KEY_TAB_ON -> 0xFF241E33.toInt()
+                else -> 0xFF17171C.toInt()
+            })
+            // Рамка тем же тоном, что и буква, но приглушённая: группа
+            // читается и по надписи, и по очертанию клавиши.
+            setStroke(dp(1), (tint and 0xFFFFFF) or 0x55000000.toInt())
         }
         val t = TextView(context).apply {
             text = label
@@ -147,13 +218,15 @@ class VaultKeyboard(
             gravity = Gravity.CENTER
             isSingleLine = true
             setTextColor(tint)
-            // Палец, а не курсор: клавиша ниже 44 точек промахивается.
-            minHeight = dp(44)
-            background = RippleDrawable(
-                ColorStateList.valueOf(0x33FFFFFF), bg, null
-            )
+            minHeight = dp(44)   // палец, а не курсор
+            background = RippleDrawable(ColorStateList.valueOf(0x33FFFFFF), bg, null)
             isClickable = true
-            setOnClickListener { action() }
+            setOnClickListener {
+                // Отдача на касание: когда клавиши переставлены, без неё
+                // непонятно, попал ли палец вообще.
+                it.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                action()
+            }
         }
         t.layoutParams = LayoutParams(0, dp(44), weight).also {
             it.marginStart = dp(2); it.marginEnd = dp(2)
@@ -166,7 +239,17 @@ class VaultKeyboard(
     companion object {
         private const val KEY_CHAR = 0
         private const val KEY_MOD = 1
-        private const val KEY_SYSTEM = 2
-        private const val KEY_DONE = 3
+        private const val KEY_TAB_ON = 2
+
+        // Тона из семейства модуля: приглушённые, ни одного яркого.
+        private const val CHAR_TINT = 0xFFCFCFDA.toInt()      // согласные
+        private const val VOWEL_TINT = 0xFFE0C08A.toInt()     // гласные
+        private const val SIGN_TINT = 0xFF8FC4D8.toInt()      // ъ и ь
+        private const val DIGIT_TINT = 0xFF9FD9A8.toInt()     // цифры
+        private const val SYMBOL_TINT = 0xFFC8A6D8.toInt()    // знаки
+        private const val MOD_TINT = 0xFF9A94A8.toInt()
+        private const val SYSTEM_TINT = 0xFFE0C08A.toInt()
+        private const val DONE_TINT = 0xFFB9A6E8.toInt()
+        private const val REVEAL_TINT = 0xFF8FC4D8.toInt()
     }
 }

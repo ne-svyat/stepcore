@@ -54,6 +54,48 @@ object VaultKeys {
         else -> LAT
     }
 
+    // ------------------------------------------------------- классы клавиш
+    //
+    // ЗАЧЕМ ЦВЕТ
+    // ----------
+    // В перемешанной раскладке глаз ищет одну букву среди тридцати трёх
+    // одинаковых. Цвет сокращает поиск втрое: сначала находится группа,
+    // потом буква внутри группы. По алфавиту искать и так легко, но
+    // деление работает и там - хуже не делает.
+    //
+    // ЧЕГО ЦВЕТ НЕ ВЫДАЁТ
+    // -------------------
+    // Ничего. Буквы и так написаны на клавишах: тот, кто видит экран,
+    // видит их прямо. Клавиатура защищает от чтения ДВИЖЕНИЯ пальца, а не
+    // от чтения экрана, и цвет этого не меняет.
+
+    const val CLASS_VOWEL = 0
+    const val CLASS_CONSONANT = 1
+    const val CLASS_SIGN = 2
+    const val CLASS_DIGIT = 3
+    const val CLASS_SYMBOL = 4
+
+    private const val VOWELS = "aeiouyаеёиоуыэюя"
+
+    /** Ъ и Ь - не гласные и не согласные, и на вид это честнее. */
+    private const val SIGNS = "ъь"
+
+    /** Класс не зависит от регистра: заглавная А та же гласная. */
+    fun classOf(c: Char): Int {
+        val l = c.lowercaseChar()
+        return when {
+            l in '0'..'9' -> CLASS_DIGIT
+            SIGNS.indexOf(l) >= 0 -> CLASS_SIGN
+            VOWELS.indexOf(l) >= 0 -> CLASS_VOWEL
+            l.isLetter() -> CLASS_CONSONANT
+            else -> CLASS_SYMBOL
+        }
+    }
+
+    /** Меняется ли порядок при пересборке. */
+    fun isShuffling(layout: Int): Boolean =
+        layout == LAYOUT_SHUFFLED || layout == LAYOUT_CHAOS
+
     /** Подпись на клавише смены страницы. */
     fun pageLabel(page: Int): String = when (page) {
         PAGE_CYR -> "АБВ"
