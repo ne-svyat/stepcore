@@ -676,6 +676,10 @@ class VaultActivity : AppCompatActivity() {
 
         val q = EditText(this).apply {
             hint = "Например: красная машина"
+            // Кнопка на самой клавиатуре: палец уже там, и тянуться к
+            // лупе - лишнее движение при каждом поиске.
+            imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
+            inputType = android.text.InputType.TYPE_CLASS_TEXT
             setText(query)
             textSize = 15f
             isSingleLine = true
@@ -703,13 +707,20 @@ class VaultActivity : AppCompatActivity() {
 
         searchRow.addView(iconButton(VaultIcon.Kind.SEARCH, "Найти",
             VaultIcon.tintFor(VaultIcon.Kind.SEARCH)) {
-            if (!busy) {
-                // Прячем клавиатуру ПЕРЕД поиском: иначе она закрывает
-                // собой ровно ту половину экрана, где появятся результаты.
-                hideKeyboard(q)
-                runSearch(q.text.toString(), holder, status)
-            }
+            if (!busy) startSearch(q, holder, status)
         })
+
+        // Тот же путь, что и у лупы: два обработчика поиска однажды
+        // разошлись бы, и с клавиатуры искалось бы иначе, чем с кнопки.
+        q.setOnEditorActionListener { _, actionId, event ->
+            val fromKey = event != null &&
+                event.keyCode == android.view.KeyEvent.KEYCODE_ENTER &&
+                event.action == android.view.KeyEvent.ACTION_DOWN
+            if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH || fromKey) {
+                if (!busy) startSearch(q, holder, status)
+                true
+            } else false
+        }
 
         // Объяснение и шторка. Строка объяснения стоит ВСЕГДА, шторка
         // раскрывается по ней: человек сначала видит, как его поняли, и
@@ -1072,6 +1083,16 @@ class VaultActivity : AppCompatActivity() {
         return a + b + c
     }
 
+    /**
+     * Единственный вход в поиск с экрана: и лупа, и кнопка на клавиатуре.
+     * Клавиатура убирается ДО поиска - она закрывает собой ровно ту
+     * половину экрана, где появятся результаты.
+     */
+    private fun startSearch(q: EditText, holder: LinearLayout, status: TextView) {
+        hideKeyboard(q)
+        runSearch(q.text.toString(), holder, status)
+    }
+
     /** Убрать системную клавиатуру: она закрывает собой результаты. */
     private fun hideKeyboard(v: View) {
         val imm = getSystemService(android.view.inputmethod.InputMethodManager::class.java)
@@ -1294,6 +1315,32 @@ class VaultActivity : AppCompatActivity() {
                 else -> "Найдено совпадений: " + hits.size +
                     (if (parsed.words.size > 1) " · сверху те, где совпало больше слов" else "")
             }
+            // Что означают тона - словами, иначе цвет остаётся загадкой.
+            // Показываем ТОЛЬКО те виды, что реально встретились: полная
+            // таблица там, где всё совпало точно, - шум.
+            if (hits.isNotEmpty()) {
+                val kinds = LinkedHashSet<Int>()
+                for (h in hits.take(40)) {
+                    for (sp in VaultQuery.spans(h.snippet, parsed, opts)) kinds.add(sp[2])
+                }
+                if (kinds.size > 1) {
+                    val legend = android.text.SpannableStringBuilder()
+                    for (k in kinds.sorted()) {
+                        val from = legend.length
+                        legend.append("● ").append(VaultMark.nameOf(k))
+                        legend.setSpan(
+                            android.text.style.ForegroundColorSpan(VaultMark.colorOf(k)),
+                            from, legend.length,
+                            android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        legend.append("   ")
+                    }
+                    holder.addView(TextView(this@VaultActivity).apply {
+                        text = legend
+                        textSize = 11f
+                        setPadding(dp(2), 0, 0, dp(8))
+                    }, LinearLayout.LayoutParams(-1, -2))
+                }
+            }
             if (hits.isEmpty() && !searchAuto) {
                 // Подсказка вместо пустоты: пустой экран не говорит, что
                 // делать дальше, а тут вариантов ровно два и оба рядом.
@@ -1312,15 +1359,13 @@ class VaultActivity : AppCompatActivity() {
                     // Подсветка совпадений: глаз находит слово в отрывке
                     // мгновенно, а без неё отрывок приходится вычитывать.
                     val full = android.text.SpannableStringBuilder(head + h.snippet)
-                    for (sp in VaultQuery.spans(h.snippet, parsed, opts)) {
-                        full.setSpan(
-                            android.text.style.BackgroundColorSpan(0x55B9A6E8),
-                            head.length + sp[0], head.length + sp[1],
-                            android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-                    }
+                    val dens = resources.displayMetrics.density
+                    VaultMark.apply(full, h.snippet, head.length, parsed, opts, dens)
+                    // В названии только цвет буквами: рамка в заголовке
+                    // спорит с рамкой самой строки результата.
                     for (sp in VaultQuery.spans(h.noteTitle, parsed, opts)) {
                         full.setSpan(
-                            android.text.style.ForegroundColorSpan(0xFFB9A6E8.toInt()),
+                            android.text.style.ForegroundColorSpan(VaultMark.colorOf(sp[2])),
                             sp[0], sp[1], android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                     }
                     this.text = full
@@ -1374,11 +1419,8 @@ class VaultActivity : AppCompatActivity() {
             val body = android.text.SpannableStringBuilder(
                 (if (from > 0) "…" else "") + piece + (if (to < page.length) "…" else ""))
             val shift = if (from > 0) 1 else 0
-            for (sp in VaultQuery.spans(piece, parsed, opts)) {
-                body.setSpan(android.text.style.BackgroundColorSpan(0x55B9A6E8),
-                    shift + sp[0], shift + sp[1],
-                    android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-            }
+            VaultMark.apply(body, piece, shift, parsed, opts,
+                resources.displayMetrics.density)
 
             val text = TextView(this@VaultActivity).apply {
                 this.text = body

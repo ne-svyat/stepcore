@@ -181,18 +181,32 @@ object VaultQuery {
         return best
     }
 
+    /** Чем именно совпало: от точного к самому широкому. */
+    const val MARK_PHRASE = 0
+    const val MARK_EXACT = 1
+    const val MARK_PREFIX = 2
+    const val MARK_INSIDE = 3
+
     /**
-     * Отрезки для подсветки.
+     * Отрезки для подсветки: начало, конец и ЧЕМ совпало.
      *
-     * Возвращаются по порядку и без наложений: два наложенных отрезка
-     * красились бы дважды, и цвет получался бы разный на глаз.
+     * Вид совпадения возвращается вместе с отрезком, потому что на экране
+     * они красятся по-разному: человек должен видеть, точное это попадание
+     * или притянутое расширением поиска. Без этого самоподбор выглядит
+     * так, будто нашлось ровно то, что просили.
+     *
+     * Отрезки идут по порядку и без наложений: наложенные красились бы
+     * дважды, и тон получался бы разный на глаз.
      */
     fun spans(text: String, q: Parsed, o: Options): List<IntArray> {
         val norm = normalize(text)
         val raw = ArrayList<IntArray>()
         for (ph in q.phrases) {
             var at = norm.indexOf(ph)
-            while (at >= 0) { raw.add(intArrayOf(at, at + ph.length)); at = norm.indexOf(ph, at + 1) }
+            while (at >= 0) {
+                raw.add(intArrayOf(at, at + ph.length, MARK_PHRASE))
+                at = norm.indexOf(ph, at + 1)
+            }
         }
         var i = 0
         while (i < norm.length) {
@@ -204,7 +218,12 @@ object VaultQuery {
                 if (!wordHits(w, need, o.word)) continue
                 val start = if (o.word == WORD_INSIDE) i + w.indexOf(need) else i
                 val end = if (o.word == WORD_EXACT) j else minOf(j, start + need.length)
-                raw.add(intArrayOf(start, maxOf(end, start + 1)))
+                val kind = when {
+                    w == need -> MARK_EXACT
+                    w.startsWith(need) -> MARK_PREFIX
+                    else -> MARK_INSIDE
+                }
+                raw.add(intArrayOf(start, maxOf(end, start + 1), kind))
             }
             i = j
         }
@@ -213,8 +232,12 @@ object VaultQuery {
         val out = ArrayList<IntArray>()
         for (r in raw) {
             val last = out.lastOrNull()
-            if (last != null && r[0] <= last[1]) last[1] = maxOf(last[1], r[1])
-            else out.add(intArrayOf(r[0], r[1]))
+            if (last != null && r[0] <= last[1]) {
+                last[1] = maxOf(last[1], r[1])
+                // При слиянии остаётся САМОЕ точное: иначе наложенные
+                // отрезки красились бы по последнему, а не по лучшему.
+                last[2] = minOf(last[2], r[2])
+            } else out.add(intArrayOf(r[0], r[1], r[2]))
         }
         return out
     }
