@@ -754,13 +754,6 @@ class VaultActivity : AppCompatActivity() {
         searchRow.addView(clearBtn, LinearLayout.LayoutParams(dp(44), dp(44)).also {
             it.marginStart = dp(6)
         })
-        clearBtn.setOnClickListener {
-            if (busy) return@setOnClickListener
-            q.setText("")
-            hideKeyboard(q)
-            runSearch("", holder, status)
-        }
-
         val holder = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val status = TextView(this).apply {
             textSize = 12f
@@ -772,6 +765,16 @@ class VaultActivity : AppCompatActivity() {
             VaultIcon.tintFor(VaultIcon.Kind.SEARCH)) {
             if (!busy) startSearch(q, holder, status)
         })
+
+        // Обработчик стоит ЗДЕСЬ, а не там, где кнопка добавляется в
+        // строку: holder и status объявляются ниже, и выше их не
+        // существует. Обе кнопки поиска теперь в одном месте.
+        clearBtn.setOnClickListener {
+            if (busy) return@setOnClickListener
+            q.setText("")
+            hideKeyboard(q)
+            runSearch("", holder, status)
+        }
 
         // Тот же путь, что и у лупы: два обработчика поиска однажды
         // разошлись бы, и с клавиатуры искалось бы иначе, чем с кнопки.
