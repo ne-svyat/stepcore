@@ -270,7 +270,14 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
                 * ровно на этом месте, а не искать его заново: второй
                 * поиск по той же странице мог бы найти ДРУГОЕ вхождение.
                 */
-               val at: Int = 0)
+               val at: Int = 0,
+               /**
+                * Тон класса заметки. Считается там же, где собирается
+                * попадание: на экране его взять неоткуда - у попадания
+                * есть только имя заметки, а классы лежат в самой заметке.
+                * -1, если классов нет.
+                */
+               val hue: Float = -1f)
 
     /**
      * Список заметок ЭТОГО тайника.
@@ -377,6 +384,7 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
         for ((i, h) in heads.withIndex()) {
             if (cancelled() || out.size >= limit) break
             onProgress(i, heads.size)
+            val hue = if (h.tags.isEmpty()) -1f else VaultHues.baseHue(h.tags.first())
 
             val titleHit = VaultQuery.matches(h.title, q, opts)
             val tagsHit = h.tags.isNotEmpty() &&
@@ -384,10 +392,10 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
 
             if (titleHit) {
                 out.add(Hit(h.id, h.title, 0, "в названии",
-                    VaultQuery.score(h.title, q, opts) + 1, true))
+                    VaultQuery.score(h.title, q, opts) + 1, true, 0, hue))
             } else if (tagsHit && opts.where != VaultQuery.IN_TITLE) {
                 out.add(Hit(h.id, h.title, 0, "в тегах: " + h.tags.joinToString(", "),
-                    VaultQuery.score(h.tags.joinToString(" "), q, opts), true))
+                    VaultQuery.score(h.tags.joinToString(" "), q, opts), true, 0, hue))
             }
 
             // По названиям и тегам искали - в текст не лезем: расшифровка
@@ -405,13 +413,30 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
                     val pos = VaultQuery.firstHit(text, q, opts)
                     out.add(Hit(h.id, h.title, p.idx,
                         VaultText.snippet(text, if (pos < 0) 0 else pos),
-                        VaultQuery.score(text, q, opts), false, if (pos < 0) 0 else pos))
+                        VaultQuery.score(text, q, opts), false,
+                        if (pos < 0) 0 else pos, hue))
                     if (out.size >= limit) break
                 }
                 from += PAGE_CHUNK
             }
         }
-        out.sortWith(compareByDescending<Hit> { it.score }.thenByDescending { it.inHead })
+        // Сначала лучшая заметка целиком, потом следующая. Вперемешку
+        // совпадения одной заметки расползались по всему списку, и понять,
+        // где густо, а где единично, было нельзя.
+        val best = HashMap<Long, Int>()
+        for (hh in out) {
+            val cur = best[hh.noteId] ?: 0
+            if (hh.score > cur) best[hh.noteId] = hh.score
+        }
+        val order = out.map { it.noteId }.distinct()
+        val rank = HashMap<Long, Int>()
+        for ((i, id) in order.withIndex()) rank[id] = i
+        out.sortWith(
+            compareByDescending<Hit> { best[it.noteId] ?: 0 }
+                .thenBy { rank[it.noteId] ?: 0 }
+                .thenByDescending { it.inHead }
+                .thenBy { it.page }
+        )
         return out
     }
 

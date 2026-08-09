@@ -1182,7 +1182,12 @@ class VaultActivity : AppCompatActivity() {
     private fun hideKeyboard(v: View) {
         // 1. Фокус - на приёмник. Пока он в поле, система вправе показать
         //    клавиатуру снова, что бы мы ей ни говорили.
-        val sink = focusSink ?: View(this).apply {
+        // Приёмник обязан быть В ДЕРЕВЕ. Экран пересобирается через
+        // root.removeAllViews(), и прежний приёмник оттуда выбрасывается:
+        // ссылка живёт, вьюхи в окне нет, requestFocus() на оторванной
+        // вьюхе молча не срабатывает. Первый раз работало, дальше нет.
+        val sinkAttached = focusSink?.parent === root
+        val sink = if (sinkAttached) focusSink!! else View(this).apply {
             isFocusable = true
             isFocusableInTouchMode = true
             layoutParams = LinearLayout.LayoutParams(0, 0)
@@ -1455,8 +1460,46 @@ class VaultActivity : AppCompatActivity() {
                     setPadding(dp(12), dp(10), dp(12), dp(10))
                 }, LinearLayout.LayoutParams(-1, -2))
             }
+            // Заголовок группы перед первым совпадением каждой заметки.
+            // Дуги между результатами отвергнуты: граф связей красив на
+            // скриншоте и бесполезен после сотни узлов, это уже решено.
+            // Тон и общая жила слева говорят то же самое и не мешают.
+            var lastNote = -1L
             for (h in hits) {
-                holder.addView(TextView(this@VaultActivity).apply {
+                if (h.noteId != lastNote) {
+                    lastNote = h.noteId
+                    val mine = hits.filter { it.noteId == h.noteId }
+                    val pages = mine.filter { !it.inHead }.map { it.page }.distinct().size
+                    val tint = if (h.hue < 0f) 0xFF9A94A8.toInt()
+                        else VaultHues.color(h.hue, 3)
+                    holder.addView(TextView(this@VaultActivity).apply {
+                        this.text = h.noteTitle + "  ·  " + mine.size +
+                            (if (pages > 1) " совпадения на " + pages + " стр." else " совпадения")
+                        textSize = 12f
+                        setTextColor(tint)
+                        setPadding(dp(10), dp(10), 0, dp(4))
+                    }, LinearLayout.LayoutParams(-1, -2))
+                }
+                // Жила слева ОТДЕЛЬНОЙ вьюхой, а не слоем под карточкой:
+                // слой пришлось бы вставлять по ширине, которая на этот
+                // момент ещё неизвестна, и жила выходила бы нулевой.
+                val rowTint = if (h.hue < 0f) 0xFF9A94A8.toInt()
+                    else VaultHues.color(h.hue, 3)
+                val row = LinearLayout(this@VaultActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                }
+                row.addView(View(this@VaultActivity).apply {
+                    background = GradientDrawable().apply {
+                        cornerRadius = dp(2).toFloat()
+                        setColor(rowTint)
+                    }
+                }, LinearLayout.LayoutParams(dp(3), -1))
+                holder.addView(row, LinearLayout.LayoutParams(-1, -2).also {
+                    // Внутри группы отступ мелкий, между группами крупный:
+                    // где кончается одна заметка, видно без разделителей.
+                    it.bottomMargin = dp(3)
+                })
+                row.addView(TextView(this@VaultActivity).apply {
                     val head = h.noteTitle +
                         (if (h.inHead) "" else "  ·  стр. " + (h.page + 1)) + "\n"
                     // Подсветка совпадений: глаз находит слово в отрывке
@@ -1478,13 +1521,18 @@ class VaultActivity : AppCompatActivity() {
                         cornerRadius = dp(8).toFloat()
                         setColor(SURFACE_RAISED)
                         // Найденное в названии обведено: это не такой же
-                        // результат, как совпадение где-то на сотой странице.
+                        // результат, как совпадение на сотой странице.
                         setStroke(dp(1), if (h.inHead) 0x66B9A6E8 else LINE_EDGE)
                     }
                     setPadding(dp(14), dp(10), dp(14), dp(10))
                     isClickable = true
                     setOnClickListener { previewHit(h, text, parsed, opts) }
-                }, LinearLayout.LayoutParams(-1, -2).also { it.bottomMargin = dp(8) })
+                }, LinearLayout.LayoutParams(0, -2, 1f).also {
+                    // Внутри группы отступ мелкий, между группами крупный:
+                    // так видно, где кончается одна заметка и начинается
+                    // другая, без всяких разделителей.
+                    it.marginStart = dp(6)
+                })
             }
         }
     }
