@@ -85,7 +85,7 @@ class VaultActivity : AppCompatActivity() {
      * плодить записи в списке задач, которых у скрытого модуля быть не
      * должно.
      */
-    private enum class Screen { ENTRANCE, CREATE, NOTES, PAGE, PREVIEW, HISTORY, IMAGE, TRAILS, ROOTS, ARCHIVE, GUARD }
+    private enum class Screen { ENTRANCE, CREATE, NOTES, PAGE, PREVIEW, HISTORY, IMAGE, TRAILS, ROOTS, ARCHIVE, GUARD, SHARES, SHARE_IN }
     private var screen = Screen.ENTRANCE
     private var histNoteId = 0L
     private var histIdx = 0
@@ -442,6 +442,9 @@ class VaultActivity : AppCompatActivity() {
         entranceWarn = warn
 
         // Создание — вторым и тише: вход нужен каждый день, создание редко.
+        val byParts = flatButton("Войти по частям секрета")
+        byParts.setOnClickListener { if (!busy) showShareEntry() }
+
         val make = flatButton("Создать новый тайник")
 
         go.setOnClickListener { tryUnlockFromKeyboard() }
@@ -461,13 +464,30 @@ class VaultActivity : AppCompatActivity() {
         val s = field.chars()
         if (s.isEmpty()) return
         warn.visibility = View.GONE
-        unlock(s, field, go, warn)
-    }
-
-    private fun unlock(secret: CharArray, field: EditText, go: Button, warn: TextView) {
-        busy = true
         go.isEnabled = false
         go.text = "Открываю…"
+        unlock(s) {
+            go.isEnabled = true
+            go.text = "Открыть"
+            field.setText("")
+            // Раскладка пересобирается ПОСЛЕ каждой неудачи: если за
+            // неверной попыткой подсмотрели, повтор по той же раскладке
+            // выдал бы пароль целиком.
+            keyboardView?.reshuffle()
+            // Одно сообщение на все случаи: пароль не тот, файла нет, файл
+            // испорчен. Разные ответы выдали бы состояние тайника.
+            warn.text = "Не подходит"
+            warn.visibility = View.VISIBLE
+        }
+    }
+
+    /**
+     * Единственное место, где вообще пробуется секрет: и пароль с экрана
+     * входа, и секрет, собранный из частей, идут сюда. Второй путь к
+     * открытию тайника однажды разошёлся бы с первым.
+     */
+    private fun unlock(secret: CharArray, onFail: () -> Unit) {
+        busy = true
         lifecycleScope.launch {
             val key = withContext(Dispatchers.Default) {
                 try {
@@ -484,19 +504,7 @@ class VaultActivity : AppCompatActivity() {
             if (key != null) {
                 openSession(key)
                 showNotes()
-            } else {
-                go.isEnabled = true
-                go.text = "Открыть"
-                field.setText("")
-                // Раскладка пересобирается ПОСЛЕ каждой неудачи: если за
-                // неверной попыткой подсмотрели, повтор по той же
-                // раскладке выдал бы пароль целиком.
-                keyboardView?.reshuffle()
-                // Одно сообщение на все случаи: пароль не тот, файла нет,
-                // файл испорчен. Разные ответы выдали бы состояние тайника.
-                warn.text = "Не подходит"
-                warn.visibility = View.VISIBLE
-            }
+            } else onFail()
         }
     }
 
@@ -1621,6 +1629,13 @@ class VaultActivity : AppCompatActivity() {
 
             Screen.GUARD -> showNotes()
 
+            // Из показа частей - только к списку: возврат на экран
+            // разделения предложил бы разделить ещё раз, а прежние части
+            // к этому моменту уже недействительны.
+            Screen.SHARES -> showNotes()
+
+            Screen.SHARE_IN -> showEntrance()
+
             Screen.ROOTS -> showNotes()
 
             Screen.TRAILS -> openNote(histNoteId, histIdx)
@@ -2304,17 +2319,22 @@ class VaultActivity : AppCompatActivity() {
             VaultIcon.tintFor(VaultIcon.Kind.SHIELD))
         graceSection(grace)
 
-        // --- блок третий: снимки экрана.
+        // --- блок третий: секрет восстановления.
+        val rec = guardCard("Секрет восстановления", VaultIcon.Kind.TRAIL,
+            VaultIcon.tintFor(VaultIcon.Kind.TRAIL))
+        recoverySection(rec)
+
+        // --- блок четвёртый: снимки экрана.
         val shots = guardCard("Снимки экрана", VaultIcon.Kind.EYE,
             VaultIcon.tintFor(VaultIcon.Kind.EYE))
         shotsSection(shots)
 
-        // --- блок четвёртый: клавиатура.
+        // --- блок пятый: клавиатура.
         val kbd = guardCard("Клавиатура пароля", VaultIcon.Kind.HEADING,
             VaultIcon.tintFor(VaultIcon.Kind.SEARCH))
         keyboardSection(kbd)
 
-        // --- блок пятый: необратимое. Предупреждение и кнопка ВНУТРИ
+        // --- блок шестой: необратимое. Предупреждение и кнопка ВНУТРИ
         // одной рамки: раньше их связывал только отступ, и связь читалась
         // не с первого взгляда.
         val danger = guardCard("Необратимое", VaultIcon.Kind.TRASH,
@@ -2328,6 +2348,252 @@ class VaultActivity : AppCompatActivity() {
         }
 
         secondaryButton("←  К списку заметок").setOnClickListener { goBack() }
+    }
+
+    private fun recoverySection(into: LinearLayout) {
+        dim("Секрет восстановления можно разделить на части и раздать их " +
+            "разным людям или разложить по разным местам. Любые K частей " +
+            "из N открывают тайник, любые K−1 не дают ничего — это " +
+            "свойство математики, а не обещание.", into)
+
+        into.addView(optionButton("Разделить на части",
+            "Понадобится пароль. Старая фраза восстановления перестанет " +
+                "работать: вместо неё появится новый секрет, и он будет " +
+                "существовать только в виде частей.",
+            VaultIcon.Kind.TRAIL, VaultIcon.tintFor(VaultIcon.Kind.TRAIL)) {
+            if (!busy) askSplitShape()
+        }, LinearLayout.LayoutParams(-1, -2).also { it.bottomMargin = dp(8) })
+    }
+
+    /**
+     * Сколько частей и сколько нужно для сборки.
+     *
+     * Готовые сочетания, а не два счётчика. Счётчики позволяют выбрать
+     * «1 из 5» - то есть отдать доступ каждому держателю по отдельности,
+     * не заметив этого. Здесь такого варианта просто нет.
+     */
+    private fun askSplitShape() {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), dp(8))
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Сколько частей?")
+            .setView(box)
+            .setCancelable(false)
+            .setNegativeButton("Отмена", null)
+            .create()
+
+        for ((k, n, why) in listOf(
+            Triple(2, 3, "Одну потерять не страшно. Двое сговорившихся войдут."),
+            Triple(3, 5, "Запас на две утраты. Обычный выбор."),
+            Triple(4, 7, "Для большого круга держателей. Собирать долго.")
+        )) {
+            box.addView(optionButton("$k из $n",
+                why + " Частей будет $n, для входа нужно любые $k.",
+                VaultIcon.Kind.TRAIL, VaultIcon.tintFor(VaultIcon.Kind.TRAIL)) {
+                dialog.dismiss()
+                askSplitPassword(k, n)
+            })
+        }
+        dialog.show()
+    }
+
+    /**
+     * Пароль как разрешение. Ключ уже в памяти, технически он не нужен -
+     * но замена секрета восстановления необратима, и она не должна быть
+     * возможна для того, кто взял телефон в льготные минуты.
+     */
+    private fun askSplitPassword(k: Int, n: Int) {
+        val session = VaultSession.key() ?: return
+        val field = EditText(this).apply {
+            hint = "Пароль этого тайника"
+            textSize = 16f
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
+        val holder = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), dp(8))
+            addView(field)
+            addView(TextView(this@VaultActivity).apply {
+                text = "После этого прежняя фраза восстановления " +
+                    "перестанет открывать тайник. Пароль продолжит работать."
+                textSize = 13f
+                setTextColor(0xFFE0C08A.toInt())
+                setPadding(0, dp(10), 0, 0)
+            })
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Разделить: $k из $n")
+            .setView(holder)
+            .setCancelable(false)
+            .setNegativeButton("Отмена", null)
+            .setPositiveButton("Разделить") { _, _ -> doSplit(field.chars(), session, k, n) }
+            .show()
+    }
+
+    private fun doSplit(secret: CharArray, session: ByteArray, k: Int, n: Int) {
+        if (busy || secret.isEmpty()) { secret.fill('\u0000'); return }
+        busy = true
+        lifecycleScope.launch {
+            val parts = withContext(Dispatchers.Default) {
+                try {
+                    val box = store.read() ?: return@withContext null
+                    val opened = VaultFile.openAt(box, secret) ?: return@withContext null
+                    val mine = opened.key.contentEquals(session)
+                    opened.key.fill(0)
+                    if (!mine) return@withContext null
+
+                    val rng = java.security.SecureRandom()
+                    val fresh = ByteArray(16).also { rng.nextBytes(it) }
+                    val phrase = VaultShamir.secretToText(fresh).toCharArray()
+
+                    // Сначала новый секрет становится рабочим, и только
+                    // потом раздаются части. Обратный порядок раздал бы
+                    // части от секрета, который не записался.
+                    store.write(VaultFile.replaceRecovery(box, opened.slot, phrase, session))
+
+                    val setId = rng.nextInt(65536)
+                    val texts = VaultShamir.split(fresh, n, k) { len ->
+                        ByteArray(len).also { rng.nextBytes(it) }
+                    }.mapIndexed { i, d -> VaultShamir.encodeShare(i + 1, k, setId, d) }
+                    fresh.fill(0)
+                    phrase.fill('\u0000')
+                    texts
+                } catch (e: Exception) {
+                    null
+                } finally {
+                    secret.fill('\u0000')
+                }
+            }
+            busy = false
+            if (parts == null) toast("Не подходит") else showShares(parts, k)
+        }
+    }
+
+    /**
+     * Показ частей.
+     *
+     * По одной на карточку, каждую отдельно копировать. Список целиком в
+     * буфере - это весь секрет в одном месте, то есть ровно то, от чего
+     * разделение и защищает.
+     */
+    private fun showShares(parts: List<String>, k: Int) {
+        dropKeyboard()
+        mount(scrollable = true)
+        screen = Screen.SHARES
+        root.removeAllViews()
+        root.setPadding(dp(20), dp(24), dp(20), dp(32))
+        editor = null
+        title("Части секрета", "Любые " + k + " из " + parts.size + " откроют тайник")
+
+        dim("Показаны ОДИН раз. Закроешь экран — восстановить их будет " +
+            "нечем: в приложении они не хранятся. Разложи по разным " +
+            "местам; две части рядом — это не две части, а одна.")
+
+        for ((i, text) in parts.withIndex()) {
+            val card = guardCard("Часть " + (i + 1) + " из " + parts.size,
+                VaultIcon.Kind.TRAIL, VaultIcon.tintFor(VaultIcon.Kind.TRAIL))
+            card.addView(TextView(this).apply {
+                this.text = text
+                textSize = 15f
+                setTextColor(0xFFEEEEEE.toInt())
+                typeface = android.graphics.Typeface.MONOSPACE
+                setTextIsSelectable(true)
+                setPadding(0, 0, 0, dp(8))
+            })
+            secondaryButton("Скопировать часть " + (i + 1), card).setOnClickListener {
+                val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                cm.setPrimaryClip(ClipData.newPlainText("", text))
+                toast("Часть " + (i + 1) + " скопирована")
+            }
+        }
+
+        button("Записал, закрыть").setOnClickListener { showNotes() }
+    }
+
+    /** Собранные части: живут только на этом экране. */
+    private val gathered = LinkedHashMap<Int, VaultShamir.Share>()
+
+    private fun showShareEntry() {
+        dropKeyboard()
+        mount(scrollable = true)
+        screen = Screen.SHARE_IN
+        root.removeAllViews()
+        root.setPadding(dp(20), dp(24), dp(20), dp(32))
+        gathered.clear()
+        title("Вход по частям")
+
+        val field = EditText(this).apply {
+            hint = "Впиши одну часть"
+            textSize = 15f
+            typeface = android.graphics.Typeface.MONOSPACE
+            setTextColor(0xFFEEEEEE.toInt())
+            setHintTextColor(0xFF6A6A75.toInt())
+            setBackgroundColor(SURFACE_RAISED)
+            setPadding(dp(14), dp(14), dp(14), dp(14))
+        }
+        root.addView(field, LinearLayout.LayoutParams(-1, -2).also { it.bottomMargin = dp(10) })
+
+        val status = TextView(this).apply {
+            textSize = 14f
+            setTextColor(0xFF9A9AA5.toInt())
+            setPadding(0, dp(4), 0, dp(10))
+            text = "Части можно вводить в любом порядке."
+        }
+        root.addView(status)
+
+        button("Добавить часть").setOnClickListener {
+            val raw = field.text.toString().trim()
+            if (raw.isEmpty()) return@setOnClickListener
+            val sh = VaultShamir.decodeShare(raw)
+            if (sh == null) {
+                // Опечатка ловится ЗДЕСЬ, а не после сборки: иначе человек
+                // видел бы «не подходит» и не знал, какая из частей врёт.
+                status.text = "Эта часть не читается. Проверь знаки: " +
+                    "в частях не бывает нуля, единицы, I, L, O и U."
+                return@setOnClickListener
+            }
+            val other = gathered.values.firstOrNull()
+            if (other != null && other.setId != sh.setId) {
+                status.text = "Эта часть от другого разделения. Части " +
+                    "разных наборов вместе не работают."
+                return@setOnClickListener
+            }
+            if (gathered.containsKey(sh.idx)) {
+                status.text = "Эта часть уже введена. Нужны РАЗНЫЕ части."
+                return@setOnClickListener
+            }
+            gathered[sh.idx] = sh
+            field.setText("")
+            val need = sh.k - gathered.size
+            if (need > 0) {
+                status.text = "Принято частей: " + gathered.size +
+                    ". Нужно ещё " + need + "."
+            } else {
+                status.text = "Собираю…"
+                tryShares()
+            }
+        }
+
+        secondaryButton("←  Назад").setOnClickListener { goBack() }
+    }
+
+    private fun tryShares() {
+        val secret = VaultShamir.combine(gathered.values.map { it.idx to it.data })
+        if (secret == null) {
+            toast("Части не сходятся")
+            return
+        }
+        val phrase = VaultShamir.secretToText(secret).toCharArray()
+        secret.fill(0)
+        gathered.clear()
+        // Дальше обычный путь входа: собранный секрет ничем не отличается
+        // от набранного руками.
+        unlock(phrase) {
+            toast("Части не открыли тайник")
+            showShareEntry()
+        }
     }
 
     /**
@@ -3292,6 +3558,10 @@ class VaultActivity : AppCompatActivity() {
     private fun secondaryButton(label: String): Button = styledButton(label, LEVEL_SECONDARY, root)
 
     private fun dangerButton(label: String): Button = styledButton(label, LEVEL_DANGER, root)
+
+    /** Обычная кнопка внутри блока. */
+    private fun secondaryButton(label: String, into: LinearLayout): Button =
+        styledButton(label, LEVEL_SECONDARY, into)
 
     /** Опасная кнопка внутри своей рамки, а не в общем столбце. */
     private fun dangerButton(label: String, into: LinearLayout): Button =

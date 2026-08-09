@@ -353,6 +353,24 @@ object VaultFile {
         return Box(box.n, box.salt, box.slots, box.grace, layout, scope, box.shots)
     }
 
+    /**
+     * Заменить секрет восстановления у одного тайника.
+     *
+     * Меняется ТОЛЬКО нечётный слот пары: пароль остаётся прежним, ключ
+     * данных прежний, заметки не трогаются вовсе. Старая фраза
+     * восстановления после этого не открывает ничего - это и есть цена
+     * разделения на части, и она названа вслух на экране.
+     *
+     * @param slot любой слот нужной пары (обычно тот, что открылся паролем)
+     */
+    fun replaceRecovery(box: Box, slot: Int, phrase: CharArray, dataKey: ByteArray): Box {
+        require(slot in box.slots.indices) { "bad slot" }
+        val first = slot and 1.inv()
+        val slots = ArrayList(box.slots)
+        slots[first + 1] = seal(box.salt, box.n, phrase, dataKey)
+        return Box(box.n, box.salt, slots, box.grace, box.kbLayout, box.kbScope, box.shots)
+    }
+
     private fun seal(salt: ByteArray, n: Int, secret: CharArray, dataKey: ByteArray): ByteArray {
         val kek = Scrypt.derive(secret, salt, n, VaultCrypto.R, VaultCrypto.P, VaultCrypto.KEY_LEN)
         try {
