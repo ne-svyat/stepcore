@@ -234,9 +234,11 @@ class VaultActivity : AppCompatActivity() {
         if (android.os.Build.VERSION.SDK_INT >= 33) {
             setRecentsScreenshotEnabled(false)
         } else {
+            // До 33 превью и снимки не разделяются: остаётся полный запрет.
             window.setFlags(WindowManager.LayoutParams.FLAG_SECURE,
                 WindowManager.LayoutParams.FLAG_SECURE)
         }
+        applyShots(store.read()?.shots ?: VaultFile.SHOTS_ALLOW)
 
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -2258,12 +2260,17 @@ class VaultActivity : AppCompatActivity() {
             VaultIcon.tintFor(VaultIcon.Kind.SHIELD))
         graceSection(grace)
 
-        // --- блок третий: клавиатура.
+        // --- блок третий: снимки экрана.
+        val shots = guardCard("Снимки экрана", VaultIcon.Kind.EYE,
+            VaultIcon.tintFor(VaultIcon.Kind.EYE))
+        shotsSection(shots)
+
+        // --- блок четвёртый: клавиатура.
         val kbd = guardCard("Клавиатура пароля", VaultIcon.Kind.HEADING,
             VaultIcon.tintFor(VaultIcon.Kind.SEARCH))
         keyboardSection(kbd)
 
-        // --- блок четвёртый: необратимое. Предупреждение и кнопка ВНУТРИ
+        // --- блок пятый: необратимое. Предупреждение и кнопка ВНУТРИ
         // одной рамки: раньше их связывал только отступ, и связь читалась
         // не с первого взгляда.
         val danger = guardCard("Необратимое", VaultIcon.Kind.TRASH,
@@ -2277,6 +2284,80 @@ class VaultActivity : AppCompatActivity() {
         }
 
         secondaryButton("←  К списку заметок").setOnClickListener { goBack() }
+    }
+
+    /**
+     * Запрет снимков экрана.
+     *
+     * Флаг переключается на лету: пересоздавать экран ради одной настройки
+     * значило бы моргнуть и потерять место в списке.
+     *
+     * На версиях ниже 33 запрет стоит всегда и настройка не показывается:
+     * там превью в списке задач и снимок экрана - один и тот же флаг, а
+     * превью мы не отдаём ни при каких условиях.
+     */
+    private fun applyShots(mode: Int) {
+        if (android.os.Build.VERSION.SDK_INT < 33) return
+        if (mode == VaultFile.SHOTS_BLOCK) {
+            window.setFlags(WindowManager.LayoutParams.FLAG_SECURE,
+                WindowManager.LayoutParams.FLAG_SECURE)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
+    }
+
+    private fun shotsSection(into: LinearLayout) {
+        if (android.os.Build.VERSION.SDK_INT < 33) {
+            dim("Снимки экрана запрещены системой: на этой версии Android " +
+                "снимок и превью в списке задач - один и тот же запрет, а " +
+                "превью тайника не отдаётся никогда.", into)
+            return
+        }
+        val mode = store.read()?.shots ?: VaultFile.SHOTS_ALLOW
+
+        dim("Превью тайника в списке задач не показывается никогда — это " +
+            "утечка без всякого твоего действия. Здесь только про снимок, " +
+            "который делаешь ты сам.", into)
+
+        into.addView(optionButton(
+            if (mode == VaultFile.SHOTS_ALLOW) "Снимки разрешены  ✓" else "Снимки разрешены",
+            "Можно сохранить страницу картинкой. Снимок ложится в галерею " +
+                "незашифрованным — дальше он живёт своей жизнью.",
+            VaultIcon.Kind.IMAGE,
+            if (mode == VaultFile.SHOTS_ALLOW) getColor(R.color.accent_violet_bright)
+                else VaultIcon.tintFor(VaultIcon.Kind.IMAGE)) {
+            if (!busy) setShots(VaultFile.SHOTS_ALLOW)
+        }, LinearLayout.LayoutParams(-1, -2).also { it.bottomMargin = dp(8) })
+
+        into.addView(optionButton(
+            if (mode == VaultFile.SHOTS_BLOCK) "Снимки запрещены  ✓" else "Снимки запрещены",
+            "Система откажет и приложению, и себе самой. Заодно перестанет " +
+                "работать запись экрана поверх тайника.",
+            VaultIcon.Kind.SHIELD,
+            if (mode == VaultFile.SHOTS_BLOCK) getColor(R.color.accent_violet_bright)
+                else VaultIcon.tintFor(VaultIcon.Kind.SHIELD)) {
+            if (!busy) setShots(VaultFile.SHOTS_BLOCK)
+        }, LinearLayout.LayoutParams(-1, -2).also { it.bottomMargin = dp(8) })
+    }
+
+    private fun setShots(mode: Int) {
+        busy = true
+        lifecycleScope.launch {
+            val ok = withContext(Dispatchers.Default) {
+                try {
+                    val box = store.read() ?: return@withContext false
+                    store.write(VaultFile.withShots(box, mode))
+                    true
+                } catch (e: Exception) {
+                    false
+                }
+            }
+            busy = false
+            if (ok) {
+                applyShots(mode)
+                showGuard()
+            } else toast("Не удалось сохранить")
+        }
     }
 
     /**
@@ -2377,6 +2458,10 @@ class VaultActivity : AppCompatActivity() {
     private fun graceSection(into: LinearLayout) {
         val current = VaultSession.graceMode
         dim("Сколько тайник остаётся открытым, если свернуть приложение.", into)
+        dim("Длинная льгота действует, пока система держит тайник в памяти. " +
+            "Тайник живёт отдельно от шагомера, и Android вправе выгрузить " +
+            "его раньше срока — тогда пароль спросят снова. Это цена за то, " +
+            "что поломка в заметках не роняет счёт шагов.", into)
 
         val opts = listOf(
             Triple(VaultFile.GRACE_90S, "Полторы минуты",

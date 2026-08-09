@@ -67,7 +67,8 @@ object VaultFile {
     private const val OPT_GRACE = 0
     private const val OPT_KB_LAYOUT = 1
     private const val OPT_KB_SCOPE = 2
-    private const val OPTS_LEN = 3
+    private const val OPT_SHOTS = 3
+    private const val OPTS_LEN = 4
 
     // ---------------------------------------------------------- клавиатура
     //
@@ -78,6 +79,19 @@ object VaultFile {
 
     /** Только ввод пароля тайника. */
     const val KB_PASSWORD = 1
+
+    // ---------------------------------------------------------- скриншоты
+    //
+    // Превью в списке задач запрещено ВСЕГДА и настройкой не управляется:
+    // всплывающая миниатюра заметки - это утечка без всякого действия
+    // человека. Здесь речь только про снимок экрана, который человек
+    // делает сам.
+
+    /** Снимки экрана разрешены. Так было до появления настройки. */
+    const val SHOTS_ALLOW = 0
+
+    /** Снимки экрана запрещены системой. */
+    const val SHOTS_BLOCK = 1
 
     // ------------------------------------------------------------- льгота
     //
@@ -123,6 +137,8 @@ object VaultFile {
         val kbLayout: Int = VaultKeys.LAYOUT_NORMAL,
         /** Где своя клавиатура применяется. По умолчанию нигде. */
         val kbScope: Int = KB_OFF,
+        /** Запрещать ли снимки экрана. По умолчанию нет - так было. */
+        val shots: Int = SHOTS_ALLOW,
     ) {
         val vaultCount: Int get() = slots.size / 2
         val isFull: Boolean get() = slots.size >= MAX_SLOTS
@@ -139,6 +155,7 @@ object VaultFile {
         require(b.grace in GRACE_90S..GRACE_SCREEN) { "bad grace" }
         require(b.kbLayout in VaultKeys.LAYOUT_NORMAL..VaultKeys.LAYOUT_CHAOS) { "bad layout" }
         require(b.kbScope in KB_OFF..KB_PASSWORD) { "bad scope" }
+        require(b.shots in SHOTS_ALLOW..SHOTS_BLOCK) { "bad shots" }
 
         // Байт льготы дописывается В КОНЕЦ, а не в заголовок: тогда
         // раскладка слотов не сдвигается, и разбор старого файла отличается
@@ -157,6 +174,7 @@ object VaultFile {
         out[o + 1 + OPT_GRACE] = b.grace.toByte()
         out[o + 1 + OPT_KB_LAYOUT] = b.kbLayout.toByte()
         out[o + 1 + OPT_KB_SCOPE] = b.kbScope.toByte()
+        out[o + 1 + OPT_SHOTS] = b.shots.toByte()
         return out
     }
 
@@ -179,6 +197,7 @@ object VaultFile {
         var grace = GRACE_90S
         var kbLayout = VaultKeys.LAYOUT_NORMAL
         var kbScope = KB_OFF
+        var shots = SHOTS_ALLOW
         when {
             v4 -> {
                 if (raw.size < body + 1) return null
@@ -189,6 +208,7 @@ object VaultFile {
                 if (optsLen > OPT_GRACE) grace = raw[body + 1 + OPT_GRACE].toInt() and 0xFF
                 if (optsLen > OPT_KB_LAYOUT) kbLayout = raw[body + 1 + OPT_KB_LAYOUT].toInt() and 0xFF
                 if (optsLen > OPT_KB_SCOPE) kbScope = raw[body + 1 + OPT_KB_SCOPE].toInt() and 0xFF
+                if (optsLen > OPT_SHOTS) shots = raw[body + 1 + OPT_SHOTS].toInt() and 0xFF
             }
             v3 -> {
                 if (raw.size != body + 1) return null
@@ -199,10 +219,11 @@ object VaultFile {
         if (grace < GRACE_90S || grace > GRACE_SCREEN) return null
         if (kbLayout < VaultKeys.LAYOUT_NORMAL || kbLayout > VaultKeys.LAYOUT_CHAOS) return null
         if (kbScope < KB_OFF || kbScope > KB_PASSWORD) return null
+        if (shots < SHOTS_ALLOW || shots > SHOTS_BLOCK) return null
         val slots = ArrayList<ByteArray>(count)
         var o = HEAD
         repeat(count) { slots.add(raw.copyOfRange(o, o + SLOT_LEN)); o += SLOT_LEN }
-        return Box(n, salt, slots, grace, kbLayout, kbScope)
+        return Box(n, salt, slots, grace, kbLayout, kbScope, shots)
     }
 
     // -------------------------------------------------------------------- вход
@@ -255,7 +276,7 @@ object VaultFile {
             slots.add(seal(box.salt, box.n, password, dataKey))
             slots.add(seal(box.salt, box.n, phrase, dataKey))
             return Added(AddResult.OK,
-                Box(box.n, box.salt, slots, box.grace, box.kbLayout, box.kbScope))
+                Box(box.n, box.salt, slots, box.grace, box.kbLayout, box.kbScope, box.shots))
         } finally {
             dataKey.fill(0)
         }
@@ -307,7 +328,7 @@ object VaultFile {
             if (i != first && i != first + 1) rest.add(box.slots[i])
         }
         if (rest.isEmpty()) return null
-        return Box(box.n, box.salt, rest, box.grace, box.kbLayout, box.kbScope)
+        return Box(box.n, box.salt, rest, box.grace, box.kbLayout, box.kbScope, box.shots)
     }
 
     /**
@@ -316,14 +337,20 @@ object VaultFile {
      */
     fun withGrace(box: Box, mode: Int): Box {
         require(mode in GRACE_90S..GRACE_SCREEN) { "bad grace" }
-        return Box(box.n, box.salt, box.slots, mode, box.kbLayout, box.kbScope)
+        return Box(box.n, box.salt, box.slots, mode, box.kbLayout, box.kbScope, box.shots)
+    }
+
+    /** Сменить запрет снимков экрана. */
+    fun withShots(box: Box, shots: Int): Box {
+        require(shots in SHOTS_ALLOW..SHOTS_BLOCK) { "bad shots" }
+        return Box(box.n, box.salt, box.slots, box.grace, box.kbLayout, box.kbScope, shots)
     }
 
     /** Сменить раскладку клавиатуры. Слоты и соль не трогаются. */
     fun withKeyboard(box: Box, layout: Int, scope: Int): Box {
         require(layout in VaultKeys.LAYOUT_NORMAL..VaultKeys.LAYOUT_CHAOS) { "bad layout" }
         require(scope in KB_OFF..KB_PASSWORD) { "bad scope" }
-        return Box(box.n, box.salt, box.slots, box.grace, layout, scope)
+        return Box(box.n, box.salt, box.slots, box.grace, layout, scope, box.shots)
     }
 
     private fun seal(salt: ByteArray, n: Int, secret: CharArray, dataKey: ByteArray): ByteArray {
