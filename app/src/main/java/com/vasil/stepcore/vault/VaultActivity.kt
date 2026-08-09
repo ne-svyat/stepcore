@@ -57,6 +57,13 @@ class VaultActivity : AppCompatActivity() {
     private lateinit var root: LinearLayout
     private var busy = false
 
+    // Настройки поиска живут до закрытия тайника: человек, включивший
+    // «слово целиком», ищет так подряд несколько раз.
+    private var searchWord = VaultQuery.WORD_PREFIX
+    private var searchAny = false
+    private var searchWhere = VaultQuery.IN_ALL
+    private var searchOpen = false
+
     /** Своя клавиатура текущего экрана, если она развёрнута. */
     private var keyboardView: VaultKeyboard? = null
     private var entranceField: EditText? = null
@@ -651,7 +658,7 @@ class VaultActivity : AppCompatActivity() {
         title("Тайник")
 
         val q = EditText(this).apply {
-            hint = "Поиск по тексту, или #класс"
+            hint = "Слова через пробел, или #класс"
             setText(query)
             textSize = 15f
             isSingleLine = true
@@ -681,6 +688,85 @@ class VaultActivity : AppCompatActivity() {
             VaultIcon.tintFor(VaultIcon.Kind.SEARCH)) {
             if (!busy) runSearch(q.text.toString(), holder, status)
         })
+
+        // Объяснение и шторка. Строка объяснения стоит ВСЕГДА, шторка
+        // раскрывается по ней: человек сначала видит, как его поняли, и
+        // только потом лезет крутить.
+        val explain = TextView(this).apply {
+            textSize = 13f
+            setTextColor(0xFF8FC4D8.toInt())
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(8).toFloat()
+                setColor(SURFACE_SUNKEN)
+                setStroke(dp(1), 0x338FC4D8)
+            }
+            isClickable = true
+        }
+        root.addView(explain, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(8) })
+
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = if (searchOpen) View.VISIBLE else View.GONE
+            setPadding(dp(12), dp(10), dp(12), dp(12))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(10).toFloat()
+                setColor(SURFACE_SUNKEN)
+                setStroke(dp(1), LINE_EDGE)
+            }
+        }
+        root.addView(panel, LinearLayout.LayoutParams(-1, -2).also { it.topMargin = dp(6) })
+
+        lateinit var repaint: () -> Unit
+        repaint = {
+            val parsed = VaultQuery.parse(q.text.toString())
+            val opts = VaultQuery.Options(searchWord, searchAny, searchWhere)
+            explain.text = (if (searchOpen) "▾  " else "▸  ") + VaultQuery.explain(parsed, opts)
+            panel.visibility = if (searchOpen) View.VISIBLE else View.GONE
+        }
+
+        explain.setOnClickListener {
+            searchOpen = !searchOpen
+            repaint()
+        }
+        q.addTextChangedListener(object : android.text.TextWatcher {
+            override fun afterTextChanged(e: android.text.Editable?) = repaint()
+            override fun beforeTextChanged(c: CharSequence?, a: Int, b: Int, d: Int) = Unit
+            override fun onTextChanged(c: CharSequence?, a: Int, b: Int, d: Int) = Unit
+        })
+
+        panel.addView(searchGroup("Как искать слова", listOf(
+            Triple(VaultQuery.WORD_PREFIX, "По началу",
+                "«машин» найдёт «машина», «машины», «машинам»"),
+            Triple(VaultQuery.WORD_EXACT, "Целиком",
+                "«машин» найдёт только «машин». Когда находится слишком много"),
+            Triple(VaultQuery.WORD_INSIDE, "Внутри слов",
+                "«асть» найдёт «часть», «счастье». Когда помнишь середину")
+        ), searchWord) { searchWord = it; repaint(); runSearch(q.text.toString(), holder, status) })
+
+        panel.addView(searchGroup("Сколько слов должно совпасть", listOf(
+            Triple(0, "Все слова", "Строже. Так по умолчанию"),
+            Triple(1, "Любое из слов", "Шире. Когда не уверен в формулировке")
+        ), if (searchAny) 1 else 0) {
+            searchAny = it == 1; repaint(); runSearch(q.text.toString(), holder, status)
+        })
+
+        panel.addView(searchGroup("Где искать", listOf(
+            Triple(VaultQuery.IN_ALL, "Везде", "Названия, теги и текст страниц"),
+            Triple(VaultQuery.IN_TITLE, "Названия", "Быстро: страницы не читаются"),
+            Triple(VaultQuery.IN_TAGS, "Теги", "Быстро: страницы не читаются")
+        ), searchWhere) { searchWhere = it; repaint(); runSearch(q.text.toString(), holder, status) })
+
+        panel.addView(TextView(this).apply {
+            text = "Кавычки ищут точное сочетание: \"красная машина\" найдёт " +
+                "только эти слова подряд.\n\nРегистр и ё/е не важны никогда. " +
+                "Латинские буквы, похожие на русские, считаются одинаковыми."
+            textSize = 12f
+            setTextColor(0xFF8A8A98.toInt())
+            setPadding(0, dp(10), 0, 0)
+        })
+
+        repaint()
 
         // Порядок: четыре положения, «Живые» по умолчанию.
         val sortRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -961,6 +1047,46 @@ class VaultActivity : AppCompatActivity() {
     }
 
     /**
+     * Группа взаимоисключающих положений в шторке поиска.
+     *
+     * Выбранное отличается ЦВЕТОМ И РАМКОЙ, а не точкой сбоку: точка
+     * читается как украшение. Под каждым положением стоит пример, а не
+     * определение - «машин найдёт машина» понятнее, чем «префиксное
+     * совпадение».
+     */
+    private fun searchGroup(caption: String, opts: List<Triple<Int, String, String>>,
+                            current: Int, onPick: (Int) -> Unit): View {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, 0, 0, dp(10))
+        }
+        box.addView(TextView(this).apply {
+            text = caption
+            textSize = 12f
+            setTextColor(0xFF7A7488.toInt())
+            setPadding(0, 0, 0, dp(6))
+        })
+        for ((value, label, example) in opts) {
+            val on = value == current
+            val tint = if (on) getColor(R.color.accent_violet_bright) else 0xFF9A94A8.toInt()
+            box.addView(TextView(this).apply {
+                text = label + "\n" + example
+                textSize = 13f
+                setTextColor(if (on) 0xFFEEEEEE.toInt() else 0xFF83808C.toInt())
+                setPadding(dp(10), dp(8), dp(10), dp(8))
+                background = GradientDrawable().apply {
+                    cornerRadius = dp(8).toFloat()
+                    setColor(if (on) 0xFF241E33.toInt() else SURFACE_RAISED)
+                    setStroke(dp(if (on) 2 else 1), if (on) tint else LINE_EDGE)
+                }
+                isClickable = true
+                setOnClickListener { if (!busy && !on) onPick(value) }
+            }, LinearLayout.LayoutParams(-1, -2).also { it.bottomMargin = dp(6) })
+        }
+        return box
+    }
+
+    /**
      * Поиск. Пустой запрос возвращает список заметок целиком, запрос с
      * решётки фильтрует по тегу (это дёшево — теги уже расшифрованы),
      * остальное идёт в полнотекстовый обход с расшифровкой на лету.
@@ -983,16 +1109,55 @@ class VaultActivity : AppCompatActivity() {
                 busy = false
                 return@launch
             }
-            val hits = withContext(Dispatchers.Default) { r.search(text) }
+            val opts = VaultQuery.Options(searchWord, searchAny, searchWhere)
+            val parsed = VaultQuery.parse(text)
+            val hits = withContext(Dispatchers.Default) { r.search(text, opts) }
             busy = false
             holder.removeAllViews()
-            status.text = if (hits.isEmpty()) "Ничего не нашлось" else "Найдено: " + hits.size
+            status.text = when {
+                hits.isEmpty() -> "Ничего не нашлось"
+                else -> "Найдено: " + hits.size +
+                    (if (parsed.words.size > 1) " · сверху те, где совпало больше слов" else "")
+            }
+            if (hits.isEmpty() && searchWord == VaultQuery.WORD_PREFIX) {
+                // Подсказка вместо пустоты: пустой экран не говорит, что
+                // делать дальше, а тут вариантов ровно два и оба рядом.
+                holder.addView(TextView(this@VaultActivity).apply {
+                    this.text = "Попробуй «Внутри слов» или «Любое из слов» — " +
+                        "нажми на строку с объяснением сверху."
+                    textSize = 13f
+                    setTextColor(0xFFE0C08A.toInt())
+                    setPadding(dp(12), dp(10), dp(12), dp(10))
+                }, LinearLayout.LayoutParams(-1, -2))
+            }
             for (h in hits) {
                 holder.addView(TextView(this@VaultActivity).apply {
-                    this.text = h.noteTitle + "  ·  стр. " + (h.page + 1) + "\n" + h.snippet
+                    val head = h.noteTitle +
+                        (if (h.inHead) "" else "  ·  стр. " + (h.page + 1)) + "\n"
+                    // Подсветка совпадений: глаз находит слово в отрывке
+                    // мгновенно, а без неё отрывок приходится вычитывать.
+                    val full = android.text.SpannableStringBuilder(head + h.snippet)
+                    for (sp in VaultQuery.spans(h.snippet, parsed, opts)) {
+                        full.setSpan(
+                            android.text.style.BackgroundColorSpan(0x55B9A6E8),
+                            head.length + sp[0], head.length + sp[1],
+                            android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    }
+                    for (sp in VaultQuery.spans(h.noteTitle, parsed, opts)) {
+                        full.setSpan(
+                            android.text.style.ForegroundColorSpan(0xFFB9A6E8.toInt()),
+                            sp[0], sp[1], android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    }
+                    this.text = full
                     textSize = 15f
                     setTextColor(0xFFDDDDE5.toInt())
-                    setBackgroundColor(SURFACE_RAISED)
+                    background = GradientDrawable().apply {
+                        cornerRadius = dp(8).toFloat()
+                        setColor(SURFACE_RAISED)
+                        // Найденное в названии обведено: это не такой же
+                        // результат, как совпадение где-то на сотой странице.
+                        setStroke(dp(1), if (h.inHead) 0x66B9A6E8 else LINE_EDGE)
+                    }
                     setPadding(dp(14), dp(10), dp(14), dp(10))
                     isClickable = true
                     setOnClickListener { pendingFind = text; openForRead(h.noteId, h.page) }

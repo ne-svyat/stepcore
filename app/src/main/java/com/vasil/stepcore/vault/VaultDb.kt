@@ -260,7 +260,11 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
                    val pin: Int = 0)
 
     /** Находка поиска: где именно и что видно вокруг. */
-    class Hit(val noteId: Long, val noteTitle: String, val page: Int, val snippet: String)
+    class Hit(val noteId: Long, val noteTitle: String, val page: Int, val snippet: String,
+               /** Сколько слов запроса нашлось. Считается, а не выдумано. */
+               val score: Int = 1,
+               /** Нашлось в названии или тегах, а не в тексте страницы. */
+               val inHead: Boolean = false)
 
     /**
      * Список заметок ЭТОГО тайника.
@@ -337,18 +341,53 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
      * @param onProgress вызывается по мере обхода заметок.
      * @param cancelled даёт прервать долгий поиск, не дожидаясь конца.
      */
+    /**
+     * Поиск.
+     *
+     * ПОЧЕМУ НАЗВАНИЕ И ТЕГИ ПРОВЕРЯЮТСЯ ПЕРВЫМИ
+     * ------------------------------------------
+     * Они уже расшифрованы вместе со списком, а страницы надо доставать с
+     * диска и расшифровывать по одной. Совпадение в названии к тому же
+     * ценнее: человек помнит, КАК назвал заметку.
+     *
+     * ПОРЯДОК ВЫДАЧИ
+     * --------------
+     * По числу совпавших слов, при равенстве - совпадение в названии
+     * выше. Это СЧИТАЕТСЯ, в отличие от «релевантности», которую пришлось
+     * бы выдумать.
+     */
     suspend fun search(
         query: String,
+        opts: VaultQuery.Options = VaultQuery.Options(),
         limit: Int = 200,
         onProgress: (Int, Int) -> Unit = { _, _ -> },
         cancelled: () -> Boolean = { false },
     ): List<Hit> {
-        if (query.isBlank()) return emptyList()
+        val q = VaultQuery.parse(query)
+        if (q.isEmpty) return emptyList()
         val out = ArrayList<Hit>()
         val heads = notes()
+
         for ((i, h) in heads.withIndex()) {
             if (cancelled() || out.size >= limit) break
             onProgress(i, heads.size)
+
+            val titleHit = VaultQuery.matches(h.title, q, opts)
+            val tagsHit = h.tags.isNotEmpty() &&
+                VaultQuery.matches(h.tags.joinToString(" "), q, opts)
+
+            if (titleHit) {
+                out.add(Hit(h.id, h.title, 0, "в названии",
+                    VaultQuery.score(h.title, q, opts) + 1, true))
+            } else if (tagsHit && opts.where != VaultQuery.IN_TITLE) {
+                out.add(Hit(h.id, h.title, 0, "в тегах: " + h.tags.joinToString(", "),
+                    VaultQuery.score(h.tags.joinToString(" "), q, opts), true))
+            }
+
+            // По названиям и тегам искали - в текст не лезем: расшифровка
+            // тысячи страниц ради отброшенного результата это секунды.
+            if (opts.where != VaultQuery.IN_ALL) continue
+
             var from = 0
             while (from < h.pageCount) {
                 if (cancelled() || out.size >= limit) break
@@ -356,13 +395,17 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
                 for (p in chunk) {
                     val text = VaultCrypto.decrypt(dataKey, p.body)?.toString(Charsets.UTF_8)
                         ?: continue
-                    val pos = VaultText.find(text, query)
-                    if (pos >= 0) out.add(Hit(h.id, h.title, p.idx, VaultText.snippet(text, pos)))
+                    if (!VaultQuery.matches(text, q, opts)) continue
+                    val pos = VaultQuery.firstHit(text, q, opts)
+                    out.add(Hit(h.id, h.title, p.idx,
+                        VaultText.snippet(text, if (pos < 0) 0 else pos),
+                        VaultQuery.score(text, q, opts), false))
                     if (out.size >= limit) break
                 }
                 from += PAGE_CHUNK
             }
         }
+        out.sortWith(compareByDescending<Hit> { it.score }.thenByDescending { it.inHead })
         return out
     }
 
