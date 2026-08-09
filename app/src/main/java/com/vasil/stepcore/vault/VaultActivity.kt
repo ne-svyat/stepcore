@@ -76,6 +76,13 @@ class VaultActivity : AppCompatActivity() {
 
     /** Своя клавиатура текущего экрана, если она развёрнута. */
     private var keyboardView: VaultKeyboard? = null
+
+    /**
+     * Идущая вспышка. Уход с экрана обязан её оборвать: она держит ссылку
+     * на текст чужой вьюхи и красит его по таймеру - после смены экрана
+     * это работа вхолостую, а при возврате на ту же страницу ещё и следы.
+     */
+    private var flashAnim: android.animation.ValueAnimator? = null
     private var entranceField: EditText? = null
     private var entranceGo: Button? = null
     private var entranceWarn: TextView? = null
@@ -383,6 +390,8 @@ class VaultActivity : AppCompatActivity() {
     }
 
     private fun mount(scrollable: Boolean) {
+        flashAnim?.cancel()
+        flashAnim = null
         if (this.scrollable == scrollable && root.parent != null) return
         this.scrollable = scrollable
         // Без ведущей скобки на новой строке: Kotlin прочитал бы её как
@@ -676,10 +685,11 @@ class VaultActivity : AppCompatActivity() {
 
         val q = EditText(this).apply {
             hint = "Например: красная машина"
-            // Кнопка на самой клавиатуре: палец уже там, и тянуться к
-            // лупе - лишнее движение при каждом поиске.
-            imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
+            // ПОРЯДОК ВАЖЕН: setInputType СБРАСЫВАЕТ imeOptions. Когда
+            // они стояли выше, кнопки «Поиск» на клавиатуре не появлялось
+            // вовсе - приходил чужой код действия, и обработчик молчал.
             inputType = android.text.InputType.TYPE_CLASS_TEXT
+            imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
             setText(query)
             textSize = 15f
             isSingleLine = true
@@ -712,14 +722,14 @@ class VaultActivity : AppCompatActivity() {
 
         // Тот же путь, что и у лупы: два обработчика поиска однажды
         // разошлись бы, и с клавиатуры искалось бы иначе, чем с кнопки.
-        q.setOnEditorActionListener { _, actionId, event ->
-            val fromKey = event != null &&
-                event.keyCode == android.view.KeyEvent.KEYCODE_ENTER &&
-                event.action == android.view.KeyEvent.ACTION_DOWN
-            if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH || fromKey) {
-                if (!busy) startSearch(q, holder, status)
-                true
-            } else false
+        // Принимаем ЛЮБОЕ действие клавиатуры, а не только «Поиск».
+        // Поле однострочное, других действий у него не бывает, а прошивки
+        // присылают то «Готово», то «Ввод», то свой код. Перечислять их
+        // по одному значит собирать список, который однажды не сойдётся.
+        q.setOnEditorActionListener { _, _, event ->
+            val upStroke = event != null && event.action != android.view.KeyEvent.ACTION_DOWN
+            if (!upStroke && !busy) startSearch(q, holder, status)
+            true
         }
 
         // Объяснение и шторка. Строка объяснения стоит ВСЕГДА, шторка
@@ -1118,8 +1128,10 @@ class VaultActivity : AppCompatActivity() {
         v.windowInsetsController?.hide(android.view.WindowInsets.Type.ime())
         // Запасной: на части прошивок первый способ молча ничего не делает.
         val imm = getSystemService(android.view.inputmethod.InputMethodManager::class.java)
-        imm?.hideSoftInputFromWindow(v.windowToken,
-            android.view.inputmethod.InputMethodManager.HIDE_NOT_ALWAYS)
+        // Без флагов. HIDE_NOT_ALWAYS означает «не прятать, если человек
+        // открыл её сам» - а он именно сам и открыл, нажав на поле. Флаг
+        // сломал даже тот путь, что работал.
+        imm?.hideSoftInputFromWindow(v.windowToken, 0)
     }
 
     /**
@@ -2238,44 +2250,77 @@ class VaultActivity : AppCompatActivity() {
         val dens = resources.displayMetrics.density
 
         var target: TextView? = null
+        var targetAt = -1
         for (i in 0 until body.childCount) {
             val v = body.getChildAt(i) as? TextView ?: continue
             val src = v.text.toString()
-            if (VaultQuery.spans(src, parsed, opts).isEmpty()) continue
+            val marks = VaultQuery.spans(src, parsed, opts)
+            if (marks.isEmpty()) continue
             val sb = android.text.SpannableStringBuilder(src)
             VaultMark.apply(sb, src, 0, parsed, opts, dens)
             v.text = sb
-            if (target == null) target = v
+            if (target == null) { target = v; targetAt = marks[0][0] }
         }
         val hit = target ?: return
+        val at = targetAt
 
-        // Прокрутка после раскладки: до неё координаты вьюхи ещё нулевые.
-        pane.post {
-            // Отступ сверху: строка ровно под краем читается как «ничего
-            // не нашли», потому что глаз её не замечает.
-            pane.smoothScrollTo(0, maxOf(0, hit.top - dp(60)))
-        }
+        // Раскладка нужна ЦЕЛИКОМ: до неё нет ни строк, ни координат.
+        hit.post {
+            val layout = hit.layout ?: return@post
+            val line = layout.getLineForOffset(at.coerceIn(0, hit.text.length))
+            // Строка ЭКРАННАЯ, а не абзац. Экран чтения делает по вьюхе на
+            // абзац, и в заметке без заголовков абзац один: подсветка вьюхи
+            // красила всю заметку целиком.
+            val lineFrom = layout.getLineStart(line)
+            val lineTo = layout.getLineEnd(line)
 
-        val base = 0xFFCF5C4A.toInt()
-        val anim = android.animation.ValueAnimator.ofFloat(1f, 0f)
-        anim.duration = 2200L
-        anim.startDelay = 300L
-        anim.addUpdateListener { a ->
-            val k = a.animatedValue as Float
-            val alpha = (k * 90).toInt().coerceIn(0, 255)
-            hit.setBackgroundColor((alpha shl 24) or (base and 0xFFFFFF))
+            pane.smoothScrollTo(0,
+                maxOf(0, hit.top + layout.getLineTop(line) - dp(80)))
+
+            val text = hit.text as? android.text.Spannable ?: return@post
+            val hitEnd = VaultQuery.spans(hit.text.toString(), parsed, opts)
+                .firstOrNull { it[0] == at }?.get(1) ?: (at + 1)
+
+            val lineSpan = android.text.style.BackgroundColorSpan(0)
+            val glowSpan = android.text.style.BackgroundColorSpan(0)
+
+            // Пять секунд с биением: ровный цвет глаз перестаёт замечать
+            // через секунду, а мигание держит внимание до конца.
+            val anim = android.animation.ValueAnimator.ofFloat(0f, 1f)
+            anim.duration = 500L
+            anim.repeatCount = 9
+            anim.repeatMode = android.animation.ValueAnimator.REVERSE
+            anim.addUpdateListener { a ->
+                val k = a.animatedValue as Float
+                text.setSpan(lineSpan, lineFrom, lineTo,
+                    android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                text.setSpan(glowSpan, at, minOf(hitEnd, text.length),
+                    android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                setBg(text, lineSpan, lineFrom, lineTo, ((0x22 + k * 0x22).toInt() shl 24) or 0xCF5C4A)
+                setBg(text, glowSpan, at, minOf(hitEnd, text.length),
+                    ((0x66 + k * 0x99).toInt() shl 24) or 0xFF7A5C)
+            }
+            anim.addListener(object : android.animation.AnimatorListenerAdapter() {
+                override fun onAnimationEnd(a: android.animation.Animator) {
+                    text.removeSpan(lineSpan); text.removeSpan(glowSpan)
+                }
+                override fun onAnimationCancel(a: android.animation.Animator) {
+                    text.removeSpan(lineSpan); text.removeSpan(glowSpan)
+                }
+            })
+            flashAnim?.cancel()
+            flashAnim = anim
+            anim.start()
         }
-        anim.addListener(object : android.animation.AnimatorListenerAdapter() {
-            override fun onAnimationEnd(a: android.animation.Animator) {
-                // Снимаем начисто: вьюха чужая, и свой фон на ней остаться
-                // не должен ни при каком исходе.
-                hit.setBackgroundColor(0x00000000)
-            }
-            override fun onAnimationCancel(a: android.animation.Animator) {
-                hit.setBackgroundColor(0x00000000)
-            }
-        })
-        anim.start()
+    }
+
+    /** Перекрасить отрезок: цвет у отрезка не меняется, его ставят заново. */
+    private fun setBg(text: android.text.Spannable,
+                      old: android.text.style.BackgroundColorSpan,
+                      from: Int, to: Int, color: Int) {
+        text.removeSpan(old)
+        text.setSpan(android.text.style.BackgroundColorSpan(color), from, to,
+            android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
     }
 
     /**
