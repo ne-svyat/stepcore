@@ -36,6 +36,20 @@ class StepService : Service(), SensorEventListener {
     private val detector = StepDetector()
     private val features = FeatureCollector()
     private val shakeHold = ShakeHold()
+
+    // --- v391: приборы походки. Ничего не решают, только пишут. ---
+    private val gait = GaitFeatures()
+    private var gaitWindowStart = 0L
+    /** Кольцо сырых отсчётов для окна вокруг события. */
+    private val rawMag = FloatArray(RAW_RING)
+    private val rawT = LongArray(RAW_RING)
+    private var rawIdx = 0
+    private var rawFilled = 0
+    /** Бюджет окон сырья: RAW_PER_WINDOW штук на RAW_BUDGET_MS. */
+    private var rawSpent = 0
+    private var rawBudgetStart = 0L
+    /** Предыдущий приход дельты чипа — для журнала решений. */
+    private var lastChipDeltaElapsed = 0L
     private var lastSampleChip = -1L
     private var l1Logged = false
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -390,6 +404,9 @@ class StepService : Service(), SensorEventListener {
         StepsState.hapticEnabled.value = prefs.getBoolean("haptic", false)
         StepsState.bgAccel.value = prefs.getBoolean("bg_accel", false)
         StepsState.detailLog.value = prefs.getBoolean("detail_log", false)
+        StepsState.decisionLog.value = prefs.getBoolean("decision_log", false)
+        StepsState.gaitLog.value = prefs.getBoolean("gait_log", false)
+        StepsState.rawLog.value = prefs.getBoolean("raw_log", false)
         loadProfile()
         StepsState.steps.value = walkSteps + runSteps
 
@@ -560,6 +577,21 @@ class StepService : Service(), SensorEventListener {
                     "гиро%.2f фон%.1f инт${d.lastIntervalMs.toInt()}мс%s грязь${d.rejectedNoisy} кад${d.cadenceLockedSteps}"
                         .format(d.gyroRms, d.recentMean, reason)
                 )
+            }
+        }
+
+        // v391: признаки походки. В отличие от подробного журнала работает
+        // и при погашенном экране — но там акселерометр живёт окнами
+        // (inBgWindow), и это честно помечается в строке.
+        scope.launch {
+            while (true) {
+                delay(GAIT_WINDOW_MS)
+                if (!StepsState.gaitLog.value) { gait.reset(); continue }
+                val snap = gait.snapshot()
+                gait.reset()
+                if (snap == null) continue
+                val tag = if (screenOff) " (фон, окнами)" else ""
+                logEvent(snap.toLogLine(tag))
             }
         }
 
@@ -870,6 +902,11 @@ class StepService : Service(), SensorEventListener {
         scope.launch { ProfileHistory.record(this@StepService) }
         CalibrationRegistry.markDone(this, CalibrationRegistry.Kind.RUN_TEMPO)
         Voice.say(this, "cal_run_done")
+        // v391. Отброшенные интервалы решают, можно ли верить разбросу:
+        // он считается по ОБРЕЗАННОЙ выборке (окно 180-600 мс), и без
+        // числа отброшенных занижен систематически.
+        logEvent("[диаг] изм.бег отброшено: быстрых " + runMeter.rejectedFast +
+            ", медленных " + runMeter.rejectedSlow)
         logEvent("Калибровка бега: " + "%.2f".format(1000f / med) + " Гц (" +
             med + " мс), шагов " + steps + ", разброс " + spread + "%")
         StepsState.calibrationState.value =
@@ -1356,10 +1393,27 @@ class StepService : Service(), SensorEventListener {
                             logEvent("Тряска: ходьба уже подтверждена детектором, счёт открыт сразу")
                         }
                     }
+                    val gapMs = if (lastChipDeltaElapsed > 0L)
+                        nowElapsed - lastChipDeltaElapsed else -1L
+                    lastChipDeltaElapsed = nowElapsed
                     val v = shakeHold.onShakenDelta(nowElapsed, delta)
+                    if (StepsState.decisionLog.value) {
+                        // Главное подозрение v391: дельты чипа на беге
+                        // приходят пачками, и разброс ломается ВЫДАЧЕЙ,
+                        // а не человеком. Пауза между приходами — прямая
+                        // проверка этой гипотезы.
+                        logEvent("[реш] чип +" + delta + "ш · пауза " +
+                            (if (gapMs >= 0L) gapMs.toString() + "мс" else "первая") +
+                            " · в карантине " + shakeHold.heldSteps +
+                            " · " + (if (shakeHold.isConfirmed) "счёт открыт" else "карантин"))
+                        if (shakeHold.lastReport.isNotEmpty()) {
+                            logEvent("[реш] страж: " + shakeHold.lastReport)
+                        }
+                    }
                     v.reason?.let { logEvent("Тряска: " + it) }
                     if (v.discarded > 0) {
                         logEvent("Тряска: отброшено ${v.discarded} шагов чипа")
+                        dumpRaw("вето стража")
                     }
                     if (v.release <= 0) return
                     delta = v.release
@@ -1491,11 +1545,17 @@ class StepService : Service(), SensorEventListener {
                             event.values[0], event.values[1], event.values[2], timeMs
                         )
                     }
+                    if (StepsState.gaitLog.value && inBgWindow()) {
+                        gait.onGyro(event.values[0], event.values[1], event.values[2])
+                    }
                     return
                 }
                 if (calibrating == null) {
                     detector.onGyro(event.values[0], event.values[1], event.values[2], timeMs)
                     features.onGyro(event.values[0], event.values[1], event.values[2], timeMs)
+                }
+                if (StepsState.gaitLog.value) {
+                    gait.onGyro(event.values[0], event.values[1], event.values[2])
                 }
                 return
             }
@@ -1509,6 +1569,8 @@ class StepService : Service(), SensorEventListener {
                         features.onAccel(
                             event.values[0], event.values[1], event.values[2], timeMs
                         )
+                        feedProbes(event.values[0], event.values[1],
+                            event.values[2], timeMs)
                         // v316. Измеритель пиков от детектора не зависит и
                         // его заморозки не нарушает: он читает сырой канал.
                         // Поэтому в фоне он работать МОЖЕТ и должен - иначе
@@ -1563,6 +1625,8 @@ class StepService : Service(), SensorEventListener {
                         }
                     }
                 }
+                feedProbes(event.values[0], event.values[1],
+                    event.values[2], timeMs)
                 val added = detector.onAccel(
                     event.values[0], event.values[1], event.values[2], timeMs
                 )
@@ -1724,6 +1788,51 @@ class StepService : Service(), SensorEventListener {
                 EventRecord(timeMs = now, date = date, text = text)
             )
         }
+    }
+
+    // ================= v391: приборы. Ничего не решают. =================
+
+    /**
+     * Кормит измеритель признаков и кольцо сырья. Вызывается из обоих
+     * путей акселерометра (экран включён и фоновое окно), поэтому
+     * гарантия стоит в воронке, а не в обработчиках.
+     */
+    private fun feedProbes(x: Float, y: Float, z: Float, timeMs: Long) {
+        if (StepsState.gaitLog.value) gait.onAccel(x, y, z, timeMs)
+        if (StepsState.rawLog.value) {
+            val m = kotlin.math.sqrt(x * x + y * y + z * z)
+            rawMag[rawIdx] = m
+            rawT[rawIdx] = timeMs
+            rawIdx = (rawIdx + 1) % RAW_RING
+            if (rawFilled < RAW_RING) rawFilled++
+        }
+    }
+
+    /**
+     * Выгрузка окна сырья вокруг события.
+     *
+     * Бюджет обязателен: на пробежке вето стража срабатывает десятками, и
+     * без ограничения первые две минуты съели бы весь журнал, а до отрезков
+     * с карманом и рюкзаком прибор бы не дожил. RAW_PER_WINDOW окон на
+     * каждые RAW_BUDGET_MS дают равномерное покрытие всей пробежки.
+     */
+    private fun dumpRaw(why: String) {
+        if (!StepsState.rawLog.value || rawFilled < 20) return
+        val now = SystemClock.elapsedRealtime()
+        if (rawBudgetStart == 0L || now - rawBudgetStart > RAW_BUDGET_MS) {
+            rawBudgetStart = now
+            rawSpent = 0
+        }
+        if (rawSpent >= RAW_PER_WINDOW) return
+        rawSpent++
+        val sb = StringBuilder()
+        sb.append("[сыр] ").append(why).append(" · ").append(rawFilled).append(" отсч: ")
+        val start = if (rawFilled < RAW_RING) 0 else rawIdx
+        for (k in 0 until rawFilled) {
+            if (k > 0) sb.append(",")
+            sb.append("%.1f".format(rawMag[(start + k) % RAW_RING]))
+        }
+        logEvent(sb.toString())
     }
 
     private fun rolloverDayIfNeeded() {
@@ -2477,6 +2586,15 @@ class StepService : Service(), SensorEventListener {
         const val SLOPE_IDLE_MS = 15 * 60 * 1000L
         const val EXTRA_METRES = "metres"
         const val EXTRA_IS_RUN = "is_run"
+        /** v391. Окно признаков походки. Десять секунд — компромисс:
+         *  меньше даёт слабую автокорреляцию, больше смазывает смену
+         *  режима на границе отрезков теста. */
+        const val GAIT_WINDOW_MS = 10_000L
+        /** Кольцо сырья: 2 с при 50 Гц. */
+        const val RAW_RING = 100
+        /** Бюджет окон сырья: RAW_PER_WINDOW штук на RAW_BUDGET_MS. */
+        const val RAW_PER_WINDOW = 4
+        const val RAW_BUDGET_MS = 300_000L
         const val ACTION_DIAG_START = "diag_start"
         const val ACTION_DIAG_STOP = "diag_stop"
         /** v188: печать сверки с чипом по требованию, без остановки счёта. */

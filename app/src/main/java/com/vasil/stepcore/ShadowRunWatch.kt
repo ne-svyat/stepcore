@@ -73,7 +73,13 @@ class ShadowRunWatch(
     private fun buildReport(): String {
         val med = medianInterval()
         val hz = if (med > 0L) 1000f / med else 0f
+        // v391. Сырое число пиков несравнимо между окнами: 27 пиков при
+        // покрытии 20% и 200 при 100% — ОДИН И ТОТ ЖЕ темп. За три вечера
+        // почти все окна оказались с покрытием 20%, и весь массив читался
+        // неверно. Приведённое число делает строки сопоставимыми.
+        val norm = if (coveragePct in 1..99) peaks * 100 / coveragePct else peaks
         return "[тень] бег: пиков " + peaks +
+            (if (coveragePct in 1..99) " (≈" + norm + " на полное окно)" else "") +
             (if (coveragePct < 90) " · видно только " + coveragePct + "% времени" else "") +
             (if (med > 0L) " · темп " + "%.2f".format(hz) + " Гц (" + med + " мс)" else "") +
             " · чип за окно " + chipSteps +

@@ -10,6 +10,19 @@ object StepsState {
     val calibrationState = MutableStateFlow("")
     val diag = MutableStateFlow("")
     val detailLog = MutableStateFlow(false)
+
+    /** v391. Журнал решений: события в МОМЕНТ принятия, а не снимок по
+     *  таймеру. Работает при погашенном экране — этим и отличается от
+     *  detailLog, который при screenOff молчит намеренно. */
+    val decisionLog = MutableStateFlow(false)
+
+    /** v391. Признаки походки раз в 10 с: автокорреляция, фаза полёта,
+     *  время контакта. Только измерение, на счёт не влияет. */
+    val gaitLog = MutableStateFlow(false)
+
+    /** v391. Сырьё вокруг события: окно отсчётов рядом с решением.
+     *  Бюджет ограничен (см. RAW_PER_WINDOW), иначе съест журнал. */
+    val rawLog = MutableStateFlow(false)
     /** v188: идёт ли замер детектора. Раньше жило в переменной
      *  экрана и врало после сворачивания приложения. */
     val diagRecording = MutableStateFlow(false)

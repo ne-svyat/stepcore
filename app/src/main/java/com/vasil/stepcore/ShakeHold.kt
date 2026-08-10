@@ -44,6 +44,20 @@ class ShakeHold {
     // покрытие, роняя подтверждение на каждом цикле.
     private val timesMs = ArrayList<Long>()
     private val deltas = ArrayList<Int>()
+
+    /**
+     * v391. Отчёт последнего применения правила: темп по каждому окну и
+     * посчитанный разброс. ТОЛЬКО для журнала, на решение не влияет.
+     *
+     * Зачем. Журналы 07-09.08 показали чередование «ровный темп» и «ритм
+     * сломался» каждые 10-30 с на НЕПРЕРЫВНОМ ровном беге, и за три вечера
+     * так потеряно 2253 шага чипа. Причину видно только в самих окнах:
+     * подозрение, что дельты чипа на беге приходят пачками (0/30/57/85/
+     * 114/144 по строкам тени), и разброс улетает не из-за человека, а
+     * из-за неровной ВЫДАЧИ. Пока это гипотеза — сначала прибор.
+     */
+    var lastReport: String = ""
+        private set
     // Всё до этого индекса уже засчитано и повторно выдано не будет.
     private var settledIdx = 0
     private var confirmed = false
@@ -186,19 +200,51 @@ class ShakeHold {
         }
 
         val secPerWindow = WINDOW_MS / 1000f
-        for (c in counts) {
-            val rate = c / secPerWindow
-            if (rate < RATE_MIN || rate > RATE_MAX) return false
+        var rateBad = -1
+        for (i in counts.indices) {
+            val rate = counts[i] / secPerWindow
+            if (rate < RATE_MIN || rate > RATE_MAX) { rateBad = i; break }
+        }
+        if (rateBad >= 0) {
+            // Диапазон провален. Отчёт всё равно собираем: без него
+            // непонятно, КАКОЕ окно и насколько промахнулось.
+            var s0 = 0.0
+            for (c in counts) s0 += c
+            val m0 = s0 / windows
+            var v0 = 0.0
+            for (c in counts) { val d = c - m0; v0 += d * d }
+            val cv0 = if (m0 > 0.0) sqrt(v0 / windows) / m0 else 0.0
+            buildReport(counts, secPerWindow, cv0, rateBad)
+            return false
         }
 
         var s = 0.0
         for (c in counts) s += c
         val mean = s / windows
-        if (mean <= 0.0) return false
+        if (mean <= 0.0) { lastReport = "окна пусты"; return false }
         var v = 0.0
         for (c in counts) { val d = c - mean; v += d * d }
         val cv = sqrt(v / windows) / mean
+        buildReport(counts, secPerWindow, cv, rateBad)
         return cv < CV_MAX
+    }
+
+    /** Строка окон для журнала. Считается только когда её попросят. */
+    private fun buildReport(counts: IntArray, secPerWindow: Float,
+                            cv: Double, rateBad: Int) {
+        val sb = StringBuilder()
+        sb.append("окна(новое→старое) ш/с: ")
+        for (i in counts.indices) {
+            if (i > 0) sb.append(" ")
+            sb.append("%.2f".format(counts[i] / secPerWindow))
+        }
+        sb.append(" · разброс ").append("%.0f".format(cv * 100)).append("%")
+        sb.append(" (порог ").append((CV_MAX * 100).toInt()).append("%)")
+        if (rateBad >= 0) {
+            sb.append(" · окно ").append(rateBad)
+            sb.append(" вне диапазона ").append(RATE_MIN).append("-").append(RATE_MAX)
+        }
+        lastReport = sb.toString()
     }
 
     companion object {

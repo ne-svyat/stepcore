@@ -715,6 +715,24 @@
                     android:layout_marginTop="2dp"
                     android:layout_marginBottom="14dp" />
 
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="ЖУРНАЛЫ ОТЛАДКИ"
+                    android:textColor="@color/axis_dim"
+                    android:textSize="12sp"
+                    android:letterSpacing="0.15"
+                    android:fontFamily="monospace"
+                    android:layout_marginBottom="2dp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Ни один из них не меняет счёт шагов — только записывает."
+                    android:textColor="@color/text_dim"
+                    android:textSize="13sp"
+                    android:layout_marginBottom="10dp" />
+
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -740,12 +758,116 @@
                         <TextView
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:text="Строка в журнал каждые 5 секунд, корпус пишется вдвое плотнее. Непрерывный режим — на обычной ходьбе держи выключенным."
+                            android:text="Снимок детектора каждые 5 секунд. РАБОТАЕТ ТОЛЬКО ПРИ ВКЛЮЧЁННОМ ЭКРАНЕ: при погашенном детектор не считает, и строка была бы копией протухшего снимка. Отвечает на «что сейчас», не на «что произошло»."
                             android:textColor="@color/text_dim"
                             android:textSize="13sp"
                             android:layout_marginTop="2dp" />
                     </LinearLayout>
                 </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="12dp">
+                    <View
+                        android:layout_width="3dp"
+                        android:layout_height="match_parent"
+                        android:background="@color/accent_green" />
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:paddingStart="10dp">
+                        <androidx.appcompat.widget.SwitchCompat
+                            android:id="@+id/decisionLogSwitch"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="Журнал решений"
+                            android:textColor="@color/accent_green"
+                            android:textSize="17sp" />
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="Пишет в МОМЕНТ решения, а не по таймеру: приход каждой дельты чипа и пауза до неё, окна стража тряски с темпом и разбросом, причина вето. РАБОТАЕТ ПРИ ПОГАШЕННОМ ЭКРАНЕ — этим и отличается от подробного."
+                            android:textColor="@color/text_dim"
+                            android:textSize="13sp"
+                            android:layout_marginTop="2dp" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="12dp">
+                    <View
+                        android:layout_width="3dp"
+                        android:layout_height="match_parent"
+                        android:background="@color/accent_amber" />
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:paddingStart="10dp">
+                        <androidx.appcompat.widget.SwitchCompat
+                            android:id="@+id/gaitLogSwitch"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="Признаки походки"
+                            android:textColor="@color/accent_amber"
+                            android:textSize="17sp" />
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="Раз в 10 секунд: провал модуля к нулю (фаза полёта — есть только у бега), период и сила автокорреляции (ритмичность без порогов), время опоры и её доля, частота отсчётов. Помечено «гип» — гипотезы, ни на что не влияют."
+                            android:textColor="@color/text_dim"
+                            android:textSize="13sp"
+                            android:layout_marginTop="2dp" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="12dp">
+                    <View
+                        android:layout_width="3dp"
+                        android:layout_height="match_parent"
+                        android:background="@color/accent_red_bright" />
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:paddingStart="10dp">
+                        <androidx.appcompat.widget.SwitchCompat
+                            android:id="@+id/rawLogSwitch"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="Сырьё вокруг события"
+                            android:textColor="@color/accent_red_bright"
+                            android:textSize="17sp" />
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="Две секунды сырых отсчётов рядом с решением — форма шага: удар, откат, толчок. Бюджет 4 окна на 5 минут, иначе первые две минуты съели бы весь журнал."
+                            android:textColor="@color/text_dim"
+                            android:textSize="13sp"
+                            android:layout_marginTop="2dp" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="РАЗОВЫЕ ЗАМЕРЫ"
+                    android:textColor="@color/axis_dim"
+                    android:textSize="12sp"
+                    android:letterSpacing="0.15"
+                    android:fontFamily="monospace"
+                    android:layout_marginTop="6dp"
+                    android:layout_marginBottom="10dp" />
 
                 
 

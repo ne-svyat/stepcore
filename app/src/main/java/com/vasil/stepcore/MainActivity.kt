@@ -235,6 +235,9 @@ class MainActivity : AppCompatActivity() {
         val historyBtn = findViewById<View>(R.id.historyButton)
         val hapticSwitch = findViewById<SwitchCompat>(R.id.hapticSwitch)
         val detailLogSwitch = findViewById<SwitchCompat>(R.id.detailLogSwitch)
+        val decisionLogSwitch = findViewById<SwitchCompat>(R.id.decisionLogSwitch)
+        val gaitLogSwitch = findViewById<SwitchCompat>(R.id.gaitLogSwitch)
+        val rawLogSwitch = findViewById<SwitchCompat>(R.id.rawLogSwitch)
         val toolsToggle = findViewById<TextView>(R.id.toolsToggle)
         val toolsContainer = findViewById<View>(R.id.toolsContainer)
 
@@ -361,6 +364,27 @@ class MainActivity : AppCompatActivity() {
         detailLogSwitch.setOnCheckedChangeListener { _, checked ->
             StepsState.detailLog.value = checked
             prefs.edit().putBoolean("detail_log", checked).apply()
+        }
+
+        decisionLogSwitch.isChecked = prefs.getBoolean("decision_log", false)
+        StepsState.decisionLog.value = decisionLogSwitch.isChecked
+        decisionLogSwitch.setOnCheckedChangeListener { _, checked ->
+            StepsState.decisionLog.value = checked
+            prefs.edit().putBoolean("decision_log", checked).apply()
+        }
+
+        gaitLogSwitch.isChecked = prefs.getBoolean("gait_log", false)
+        StepsState.gaitLog.value = gaitLogSwitch.isChecked
+        gaitLogSwitch.setOnCheckedChangeListener { _, checked ->
+            StepsState.gaitLog.value = checked
+            prefs.edit().putBoolean("gait_log", checked).apply()
+        }
+
+        rawLogSwitch.isChecked = prefs.getBoolean("raw_log", false)
+        StepsState.rawLog.value = rawLogSwitch.isChecked
+        rawLogSwitch.setOnCheckedChangeListener { _, checked ->
+            StepsState.rawLog.value = checked
+            prefs.edit().putBoolean("raw_log", checked).apply()
         }
 
         diagBtn.setOnClickListener {
