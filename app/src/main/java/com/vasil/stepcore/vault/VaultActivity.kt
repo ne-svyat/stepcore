@@ -89,6 +89,16 @@ class VaultActivity : AppCompatActivity() {
      */
     private var focusSink: View? = null
 
+    /**
+     * Поле поиска текущего экрана.
+     *
+     * Нужно, чтобы гасить клавиатуру ИЗНУТРИ поиска, а не из обработчика
+     * нажатия. Журнал показал: при нажатии кнопки на клавиатуре поиск
+     * идёт, а гашение не вызывается вовсе - значит обработчик до него не
+     * доходит, и полагаться на обработчики больше нельзя.
+     */
+    private var searchField: EditText? = null
+
     /** Принял ли приёмник фокус в прошлый раз. Нужно только для отладки. */
     private var lastFocusGrant = false
 
@@ -456,6 +466,9 @@ class VaultActivity : AppCompatActivity() {
         flashAnim?.cancel()
         flashAnim = null
         focusReport = null
+        // Поле принадлежит экрану: после пересборки прежнее выброшено из
+        // дерева, и гасить через него было бы обращением в пустоту.
+        searchField = null
         // Наблюдатель держит ссылку на дерево, которого сейчас не станет.
         focusWatcher?.let {
             root.viewTreeObserver.removeOnGlobalFocusChangeListener(it)
@@ -804,6 +817,7 @@ class VaultActivity : AppCompatActivity() {
         // рука ехала через весь экран туда и обратно.
         val searchRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         root.addView(searchRow, LinearLayout.LayoutParams(-1, -2))
+        searchField = q
         searchRow.addView(q, LinearLayout.LayoutParams(0, -2, 1f))
         searchRow.addView(clearBtn, LinearLayout.LayoutParams(dp(44), dp(44)).also {
             it.marginStart = dp(6)
@@ -826,7 +840,6 @@ class VaultActivity : AppCompatActivity() {
         clearBtn.setOnClickListener {
             if (busy) return@setOnClickListener
             q.setText("")
-            hideKeyboard(q)
             runSearch("", holder, status)
         }
 
@@ -836,6 +849,17 @@ class VaultActivity : AppCompatActivity() {
         // Поле однострочное, других действий у него не бывает, а прошивки
         // присылают то «Готово», то «Ввод», то свой код. Перечислять их
         // по одному значит собирать список, который однажды не сойдётся.
+        // Отдельно ловим саму клавишу: журнал показал, что действие
+        // редактора по этому пути не приходит. Оба пути ведут в одну
+        // функцию, а гасит всё равно runSearch.
+        q.setOnKeyListener { _, keyCode, event ->
+            if (keyCode == android.view.KeyEvent.KEYCODE_ENTER &&
+                event.action == android.view.KeyEvent.ACTION_UP) {
+                if (!busy) startSearch(q, holder, status)
+                true
+            } else false
+        }
+
         q.setOnEditorActionListener { _, _, event ->
             val upStroke = event != null && event.action != android.view.KeyEvent.ACTION_DOWN
             if (!upStroke && !busy) startSearch(q, holder, status)
@@ -1363,7 +1387,9 @@ class VaultActivity : AppCompatActivity() {
      * половину экрана, где появятся результаты.
      */
     private fun startSearch(q: EditText, holder: LinearLayout, status: TextView) {
-        hideKeyboard(q)
+        // Гашение больше НЕ здесь: оно внутри runSearch, куда приходят все
+        // пути. Дублировать его тут значило бы иметь два места, которые
+        // однажды разойдутся.
         runSearch(q.text.toString(), holder, status)
     }
 
@@ -1595,6 +1621,15 @@ class VaultActivity : AppCompatActivity() {
      */
     private fun runSearch(query: String, holder: LinearLayout, status: TextView) {
         val r = repo ?: return
+
+        // ЕДИНСТВЕННАЯ ТОЧКА ГАШЕНИЯ.
+        //
+        // Через runSearch проходят все пути: лупа, крестик, кнопка на
+        // клавиатуре и любой будущий. Гашение стояло в обработчике
+        // нажатия, и по одному из путей туда просто не заходили - поиск
+        // шёл, клавиатура оставалась. Здесь мимо не пройти.
+        searchField?.let { hideKeyboard(it) }
+
         val text = query.trim()
         lastQuery = text
         busy = true
