@@ -178,6 +178,9 @@ interface VaultDao {
     @Query("DELETE FROM v_pages WHERE noteId = :noteId")
     suspend fun dropPages(noteId: Long)
 
+    @Query("DELETE FROM v_pages WHERE noteId = :noteId AND idx = :idx")
+    suspend fun dropPage(noteId: Long, idx: Int)
+
     @Query("DELETE FROM v_notes WHERE id = :noteId")
     suspend fun dropNote(noteId: Long)
 }
@@ -277,7 +280,9 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
                 * есть только имя заметки, а классы лежат в самой заметке.
                 * -1, если классов нет.
                 */
-               val hue: Float = -1f)
+               val hue: Float = -1f,
+               /** Где именно нашлось: см. WHERE_*. */
+               val where: Int = Where.TEXT)
 
     /**
      * Список заметок ЭТОГО тайника.
@@ -392,10 +397,10 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
 
             if (titleHit) {
                 out.add(Hit(h.id, h.title, 0, "в названии",
-                    VaultQuery.score(h.title, q, opts) + 1, true, 0, hue))
+                    VaultQuery.score(h.title, q, opts) + 1, true, 0, hue, Where.TITLE))
             } else if (tagsHit && opts.where != VaultQuery.IN_TITLE) {
                 out.add(Hit(h.id, h.title, 0, "в классах: " + h.tags.joinToString(", "),
-                    VaultQuery.score(h.tags.joinToString(" "), q, opts), true, 0, hue))
+                    VaultQuery.score(h.tags.joinToString(" "), q, opts), true, 0, hue, Where.CLASS))
             }
 
             // По названиям и тегам искали - в текст не лезем: расшифровка
@@ -411,10 +416,17 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
                         ?: continue
                     if (!VaultQuery.matches(text, q, opts)) continue
                     val pos = VaultQuery.firstHit(text, q, opts)
+                    // Заголовок внутри страницы - это своя вещь, и человек
+                    // ищет его иначе, чем строку в теле. Смотрим начало
+                    // строки, в которой стоит совпадение.
+                    val at = if (pos < 0) 0 else pos
+                    var ls = at
+                    while (ls > 0 && text[ls - 1] != '\n') ls--
+                    val isHead = text.startsWith("#", ls)
                     out.add(Hit(h.id, h.title, p.idx,
-                        VaultText.snippet(text, if (pos < 0) 0 else pos),
-                        VaultQuery.score(text, q, opts), false,
-                        if (pos < 0) 0 else pos, hue))
+                        VaultText.snippet(text, at),
+                        VaultQuery.score(text, q, opts), false, at, hue,
+                        if (isHead) Where.HEADING else Where.TEXT))
                     if (out.size >= limit) break
                 }
                 from += PAGE_CHUNK
@@ -623,6 +635,20 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
      * Отдельный объект, а не companion: companion у VaultRepo уже занят
      * пределами страниц, а второго в классе быть не может.
      */
+    /**
+     * Где нашлось совпадение.
+     *
+     * Раньше место можно было только угадать по виду отрывка: «в
+     * названии» писалось словами, а заголовок внутри страницы вообще
+     * ничем не отличался от обычного текста.
+     */
+    object Where {
+        const val TITLE = 0
+        const val CLASS = 1
+        const val HEADING = 2
+        const val TEXT = 3
+    }
+
     object Match {
         /** Такой заметки здесь нет. */
         const val FRESH = 0
@@ -848,6 +874,54 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
     }
 
     /** @return номер новой страницы, либо -1 если упёрлись в предел. */
+    /**
+     * Убрать страницу и сдвинуть последующие.
+     *
+     * ПОЧЕМУ СДВИГ, А НЕ ДЫРА
+     * -----------------------
+     * Номера страниц - это их порядок, а не имена. Дыра в нумерации
+     * превратила бы «стр. 3 из 5» в загадку и сломала бы листание.
+     *
+     * ПОЧЕМУ СНИМОК ПЕРЕД УДАЛЕНИЕМ
+     * -----------------------------
+     * Текст уходит насовсем, а история - единственный способ его вернуть.
+     * Снимок делается ДО удаления: после него читать уже нечего.
+     *
+     * Последнюю страницу удалить нельзя: заметка без страниц - это
+     * состояние, которого в остальном коде не существует.
+     *
+     * @return true, если удалили
+     */
+    suspend fun deletePage(noteId: Long, idx: Int): Boolean {
+        val n = dao.note(noteId) ?: return false
+        if (n.pageCount <= 1) return false
+        if (idx < 0 || idx >= n.pageCount) return false
+
+        val old = readPage(noteId, idx)
+        if (!old.isNullOrEmpty()) keep(noteId, idx, KIND_SNAP, old, MAX_HISTORY)
+
+        // Сдвигаем текст последующих страниц на одну вверх, затем убираем
+        // ставший лишним хвост. Так история страницы остаётся привязанной
+        // к её номеру, а не уезжает вместе с текстом.
+        for (i in idx until n.pageCount - 1) {
+            val next = readPage(noteId, i + 1) ?: ""
+            writePageQuiet(noteId, i, next)
+        }
+        dao.dropPage(noteId, n.pageCount - 1)
+        dao.setPageCount(noteId, n.pageCount - 1, System.currentTimeMillis())
+        return true
+    }
+
+    /** Запись без снимка: при сдвиге снимки были бы шумом. */
+    private suspend fun writePageQuiet(noteId: Long, idx: Int, text: String) {
+        val top = VaultText.formatTags(VaultText.topWords(text)).replace(", ", " ")
+        dao.putPage(VPage(
+            noteId, idx, System.currentTimeMillis(),
+            VaultCrypto.encrypt(dataKey, text.toByteArray()),
+            VaultCrypto.encrypt(dataKey, top.toByteArray())
+        ))
+    }
+
     suspend fun addPage(noteId: Long): Int {
         val n = dao.note(noteId) ?: return -1
         if (n.pageCount >= MAX_PAGES) return -1

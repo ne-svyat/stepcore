@@ -1763,11 +1763,30 @@ class VaultActivity : AppCompatActivity() {
                     it.bottomMargin = dp(3)
                 })
                 row.addView(TextView(this@VaultActivity).apply {
-                    val head = h.noteTitle +
+                    val place = when (h.where) {
+                        VaultRepo.Where.TITLE -> "НАЗВАНИЕ"
+                        VaultRepo.Where.CLASS -> "КЛАСС"
+                        VaultRepo.Where.HEADING -> "ЗАГОЛОВОК"
+                        else -> "ТЕКСТ"
+                    }
+                    val head = place + "   " + h.noteTitle +
                         (if (h.inHead) "" else "  ·  стр. " + (h.page + 1)) + "\n"
                     // Подсветка совпадений: глаз находит слово в отрывке
                     // мгновенно, а без неё отрывок приходится вычитывать.
                     val full = android.text.SpannableStringBuilder(head + h.snippet)
+                    // Метка места своим тоном: цвет опознаётся раньше, чем
+                    // прочитано слово, а слово нужно, потому что цветов
+                    // на экране и так много.
+                    val placeTint = when (h.where) {
+                        VaultRepo.Where.TITLE -> 0xFF9FD9A8.toInt()
+                        VaultRepo.Where.CLASS -> 0xFFE0C08A.toInt()
+                        VaultRepo.Where.HEADING -> 0xFF8FC4D8.toInt()
+                        else -> 0xFF9A94A8.toInt()
+                    }
+                    full.setSpan(android.text.style.ForegroundColorSpan(placeTint),
+                        0, place.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    full.setSpan(android.text.style.RelativeSizeSpan(0.72f),
+                        0, place.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                     val dens = resources.displayMetrics.density
                     VaultMark.apply(full, h.snippet, head.length, parsed, opts, dens)
                     // В названии только цвет буквами: рамка в заголовке
@@ -1864,6 +1883,50 @@ class VaultActivity : AppCompatActivity() {
                 .setNegativeButton("Не то", null)
                 .show()
         }
+    }
+
+    /**
+     * Убрать страницу.
+     *
+     * Спрашиваем всегда: текст уходит насовсем, а страницу легко перепутать
+     * при листании. Но спрашиваем ОДИН раз - три предупреждения подряд
+     * прокликивают не читая.
+     *
+     * Последнюю страницу убрать нельзя: заметка без страниц - состояние,
+     * которого в остальном коде не существует. Кнопка в этом случае честно
+     * говорит почему, а не молчит.
+     */
+    private fun askDeletePage() {
+        if (busy) return
+        val r = repo ?: return
+        val id = openNoteId
+        if (id == 0L) return
+        if (openPages <= 1) {
+            toast("Это единственная страница. Удали заметку целиком.")
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Убрать страницу " + (openIdx + 1) + " из " + openPages + "?")
+            .setMessage("Текст этой страницы исчезнет. Следующие страницы " +
+                "сдвинутся на одну вверх.\n\nВернуть можно из истории правок.")
+            .setNegativeButton("Отмена", null)
+            .setPositiveButton("Убрать") { _, _ ->
+                busy = true
+                val idx = openIdx
+                lifecycleScope.launch {
+                    val ok = r.deletePage(id, idx)
+                    busy = false
+                    if (!ok) {
+                        toast("Не удалось убрать")
+                    } else {
+                        toast("Страница убрана")
+                        // Открываем ту же по номеру: на её месте теперь
+                        // следующая. Если убрали последнюю - предыдущую.
+                        openNote(id, minOf(idx, maxOf(0, openPages - 2)))
+                    }
+                }
+            }
+            .show()
     }
 
     /** Открыть заметку на чтение. Правка - по вкладке. */
@@ -2013,6 +2076,10 @@ class VaultActivity : AppCompatActivity() {
         })
         nav.addView(tabButton("Вперёд", VaultIcon.Kind.NEXT, VaultIcon.tintFor(VaultIcon.Kind.NEXT)) {
             if (openIdx + 1 < openPages) leavePage { openNote(noteId, openIdx + 1) }
+        })
+        nav.addView(tabButton("Убрать", VaultIcon.Kind.TRASH,
+            VaultIcon.tintFor(VaultIcon.Kind.TRASH)) {
+            askDeletePage()
         })
         nav.addView(tabButton("Стр.", VaultIcon.Kind.PAGE_PLUS,
             VaultIcon.tintFor(VaultIcon.Kind.PAGE_PLUS)) {
@@ -2347,7 +2414,10 @@ class VaultActivity : AppCompatActivity() {
             pendingFind = null
             if (pendingFindHead) {
                 pendingFindHead = false
-                flashHead(q)
+                // ПОСЛЕ раскладки: вспышка подменяет текст чужих вьюх, а
+                // экран в этот момент ещё строится - подмена посреди
+                // построения и есть подозреваемый в пустой заметке.
+                root.post { flashHead(q) }
             } else {
                 flashFoundInRead(pane, body, q)
             }
