@@ -592,6 +592,18 @@ class StepService : Service(), SensorEventListener {
                 if (snap == null) continue
                 val tag = if (screenOff) " (фон, окнами)" else ""
                 logEvent(snap.toLogLine(tag))
+                // v392. Место телефона — предположение, на счёт не влияет.
+                // Все пороги проекта мерились в одном положении и в другом
+                // врут; пока место неизвестно, любой порог — лотерея.
+                val where = PlacementGuess.of(snap.dipG, snap.peakG, snap.strength)
+                if (where != PlacementGuess.Where.UNKNOWN) {
+                    val conf = PlacementGuess.confidence(snap.dipG, snap.peakG, where)
+                    logEvent("[гип] телефон: " + PlacementGuess.ru(where) +
+                        " (уверенность " + "%.0f".format(conf * 100) + "%)")
+                } else {
+                    logEvent("[гип] телефон: не знаю (ритм " +
+                        "%.2f".format(snap.strength) + ")")
+                }
             }
         }
 

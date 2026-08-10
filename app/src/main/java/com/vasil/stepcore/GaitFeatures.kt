@@ -71,11 +71,19 @@ class GaitFeatures {
         val dutyFactor: Float,
         val accelRms: Float,
         val gyroRms: Float,
+        /** true — период есть ЦИКЛ ИЗ ДВУХ ШАГОВ, шаг вдвое короче.
+         *  Журнал 10.08: карман 1046 мс, рука 523 мс. В кармане левый и
+         *  правый шаг несимметричны, и находится цикл, а не шаг. Без этой
+         *  пометки числа несравнимы между положениями телефона. */
+        val periodIsStride: Boolean,
     ) {
         /** Строка для журнала. Помечена как гипотеза: на счёт не влияет. */
         fun toLogLine(tag: String): String {
             val d = if (periodMs > 0) "%.2f".format(dutyFactor) else "—"
-            val p = if (periodMs > 0) periodMs.toString() else "—"
+            val p = if (periodMs > 0)
+                periodMs.toString() +
+                    (if (periodIsStride) "(цикл, шаг≈" + periodMs / 2 + ")" else "")
+            else "—"
             return "[гип] походка" + tag + ": провал " + "%.2f".format(dipG) +
                 "g пик " + "%.2f".format(peakG) + "g · период " + p +
                 "мс сила " + "%.2f".format(strength) +
@@ -91,6 +99,7 @@ class GaitFeatures {
     private var n = 0
     private var gyroSq = 0.0
     private var gyroN = 0
+    private var halfHit = false
 
     /** Модуль ускорения. Гравитацию НЕ вычитаем: провал к нулю есть
      *  свойство полного вектора, и вычитание его бы уничтожило. */
@@ -139,7 +148,7 @@ class GaitFeatures {
         val gRms = if (gyroN > 0) sqrt(gyroSq / gyroN).toFloat() else 0f
 
         return Snapshot(n, hz, mn / G, mx / G, periodMs, strength,
-            contactMs, duty, rms, gRms)
+            contactMs, duty, rms, gRms, halfHit)
     }
 
     /**
@@ -178,6 +187,21 @@ class GaitFeatures {
             prev = norm
         }
         if (bestLag <= 0) return Pair(0, 0f)
+        halfHit = false
+        val half = bestLag / 2
+        if (half >= 2) {
+            var rh = 0.0
+            for (i in 0 until n - half) {
+                rh += (mag[i] - mean).toDouble() * (mag[i + half] - mean).toDouble()
+            }
+            // Цикл из двух шагов опознаётся ЗАМЕТНЫМ откликом на половине
+            // периода: левый и правый шаг похожи, но не одинаковы. У чистого
+            // одношагового сигнала отклик на половине близок к нулю или
+            // отрицателен. Первая редакция условия была перевёрнута и
+            // помечала циклом любой ровный сигнал.
+            val hn = rh / r0
+            if (hn > HALF_RATIO * bestVal && hn > MIN_STRENGTH) halfHit = true
+        }
         val periodMs = (bestLag * 1000f / hz).toInt()
         var s = bestVal.toFloat()
         if (s < 0f) s = 0f
@@ -192,18 +216,20 @@ class GaitFeatures {
      */
     private fun contactTime(hz: Float): Int {
         if (hz <= 0f || n <= 0) return 0
-        var above = 0
-        var crossings = 0
-        var wasAbove = mag[0] > G
+        // МЕДИАНА длин отрезков «выше веса», а не сумма делить на число.
+        // Прежняя редакция (v391) считала total/crossings и на журнале
+        // 10.08 выдала 3255 мс при доле опоры 3.15 — величину физически
+        // невозможную: когда пересечений мало, деление взрывается.
+        val runs = ArrayList<Int>()
+        var cur = 0
         for (i in 0 until n) {
-            val a = mag[i] > G
-            if (a) above++
-            if (a && !wasAbove) crossings++
-            wasAbove = a
+            if (mag[i] > G) cur++
+            else { if (cur > 0) runs.add(cur); cur = 0 }
         }
-        if (crossings == 0) return 0
-        val totalMs = above * 1000f / hz
-        return (totalMs / crossings).toInt()
+        if (cur > 0) runs.add(cur)
+        if (runs.size < MIN_CONTACTS) return 0
+        runs.sort()
+        return (runs[runs.size / 2] * 1000f / hz).toInt()
     }
 
     companion object {
@@ -216,5 +242,10 @@ class GaitFeatures {
         const val MAX_PERIOD_MS = 1500f
         /** Ниже этого отклик считаем шумом, а не периодом. */
         const val MIN_STRENGTH = 0.30
+        /** Меньше трёх опор в окне — медиана не медиана. Честный отказ. */
+        const val MIN_CONTACTS = 3
+        /** Половинный отклик ВЫШЕ этой доли основного = найден цикл из
+         *  двух шагов, а не один шаг. */
+        const val HALF_RATIO = 0.55
     }
 }

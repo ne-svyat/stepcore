@@ -177,71 +177,85 @@ class ShakeHold {
      * покрытие: буфер обязан начинаться не позже начала самого раннего
      * окна, иначе неполное окно дало бы заниженный темп.
      */
-    /** Сколько полных окон покрыто буфером, не больше MIN_WINDOWS. */
+    /** Сколько приходов уже можно судить, не больше MIN_WINDOWS. */
     private fun windowsAvailable(nowMs: Long): Int {
-        if (timesMs.isEmpty()) return 0
+        if (timesMs.size < 2) return 0
         val spanMs = nowMs - timesMs[0]
         if (spanMs < WINDOW_MS) return 0
-        val n = (spanMs / WINDOW_MS).toInt()
+        val n = timesMs.size - 1
         return if (n > MIN_WINDOWS) MIN_WINDOWS else n
     }
 
+    /**
+     * Правило локомоции по ФАКТИЧЕСКИМ промежуткам между приходами чипа.
+     *
+     * ПОЧЕМУ НЕ КОРЗИНЫ (измерено 10.08). Прежняя редакция раскладывала
+     * дельты по корзинам шириной ровно WINDOW_MS. Журнал показал, что чип
+     * отдаёт дельты каждые 10003 мс — период выдачи почти точно равен
+     * ширине корзины. Каждая дельта сидела на границе и сваливалась то в
+     * одну корзину, то в соседнюю; иногда две попадали в одну, и выходило
+     *
+     *     ш/с: 4,80  0,00  2,60  2,30 · разброс 70%
+     *
+     * при совершенно ровной ходьбе 2,3 ш/с. Пустое окно встретилось в 41%
+     * отчётов (50 из 123), разброс превышал порог в 51 случае из 123, и за
+     * один вечер ходьбы было потеряно 1342 шага.
+     *
+     * Разброс создавала арифметика раскладки, а не человек и не чип.
+     *
+     * КАК ТЕПЕРЬ. Темп каждого прихода = дельта / пауза до предыдущего
+     * прихода. Величина не зависит ни от ширины окна, ни от фазы: 23 шага
+     * за 10003 мс дают 2,30 ш/с всегда. Пороги RATE_MIN/RATE_MAX/CV_MAX
+     * НЕ менялись — менялся только способ получить темп.
+     */
     private fun locomotionRuleHolds(nowMs: Long, windows: Int): Boolean {
-        if (timesMs.isEmpty() || windows <= 0) return false
-        val spanStart = nowMs - windows * WINDOW_MS
-        if (timesMs[0] > spanStart) return false
+        if (timesMs.size < 2 || windows <= 0) return false
+        // Берём последние `windows` промежутков, считая назад.
+        val last = timesMs.size - 1
+        val first = last - windows + 1
+        if (first < 1) return false
+        if (nowMs - timesMs[first - 1] < windows * WINDOW_MS - SPAN_SLACK_MS) return false
 
-        val counts = IntArray(windows)
-        for (i in timesMs.indices) {
-            val age = nowMs - timesMs[i]
-            if (age < 0 || age >= windows * WINDOW_MS) continue
-            val w = (age / WINDOW_MS).toInt()
-            counts[w] += deltas[i]
-        }
-
-        val secPerWindow = WINDOW_MS / 1000f
+        val rates = FloatArray(windows)
         var rateBad = -1
-        for (i in counts.indices) {
-            val rate = counts[i] / secPerWindow
-            if (rate < RATE_MIN || rate > RATE_MAX) { rateBad = i; break }
-        }
-        if (rateBad >= 0) {
-            // Диапазон провален. Отчёт всё равно собираем: без него
-            // непонятно, КАКОЕ окно и насколько промахнулось.
-            var s0 = 0.0
-            for (c in counts) s0 += c
-            val m0 = s0 / windows
-            var v0 = 0.0
-            for (c in counts) { val d = c - m0; v0 += d * d }
-            val cv0 = if (m0 > 0.0) sqrt(v0 / windows) / m0 else 0.0
-            buildReport(counts, secPerWindow, cv0, rateBad)
-            return false
+        for (k in 0 until windows) {
+            val idx = first + k
+            val gap = timesMs[idx] - timesMs[idx - 1]
+            if (gap < MIN_GAP_MS) {
+                // Слишком близкие приходы: делить нельзя, темп получится
+                // бесконечным. Такое бывает на границе эпизода.
+                lastReport = "приходы ближе " + MIN_GAP_MS + " мс — судить нечем"
+                return false
+            }
+            rates[k] = deltas[idx] * 1000f / gap
+            if (rateBad < 0 && (rates[k] < RATE_MIN || rates[k] > RATE_MAX)) rateBad = k
         }
 
         var s = 0.0
-        for (c in counts) s += c
+        for (r in rates) s += r.toDouble()
         val mean = s / windows
-        if (mean <= 0.0) { lastReport = "окна пусты"; return false }
+        if (mean <= 0.0) { lastReport = "темп нулевой"; return false }
         var v = 0.0
-        for (c in counts) { val d = c - mean; v += d * d }
+        for (r in rates) { val d = r - mean; v += d * d }
         val cv = sqrt(v / windows) / mean
-        buildReport(counts, secPerWindow, cv, rateBad)
+
+        buildReport(rates, cv, rateBad)
+        if (rateBad >= 0) return false
         return cv < CV_MAX
     }
 
-    /** Строка окон для журнала. Считается только когда её попросят. */
-    private fun buildReport(counts: IntArray, secPerWindow: Float,
-                            cv: Double, rateBad: Int) {
+    /** Строка приходов для журнала. Порядок: старый -> новый. */
+    private fun buildReport(rates: FloatArray, cv: Double, rateBad: Int) {
         val sb = StringBuilder()
-        sb.append("окна(новое→старое) ш/с: ")
-        for (i in counts.indices) {
+        sb.append("приходы(старый→новый) ш/с: ")
+        for (i in rates.indices) {
             if (i > 0) sb.append(" ")
-            sb.append("%.2f".format(counts[i] / secPerWindow))
+            sb.append("%.2f".format(rates[i]))
         }
         sb.append(" · разброс ").append("%.0f".format(cv * 100)).append("%")
         sb.append(" (порог ").append((CV_MAX * 100).toInt()).append("%)")
         if (rateBad >= 0) {
-            sb.append(" · окно ").append(rateBad)
+            sb.append(" · приход ").append(rateBad)
             sb.append(" вне диапазона ").append(RATE_MIN).append("-").append(RATE_MAX)
         }
         lastReport = sb.toString()
@@ -278,6 +292,13 @@ class ShakeHold {
         /** Предел карантина. Дальше держать бессмысленно: эпизод такой
          *  длины уже не отличим от осмысленного движения. */
         const val MAX_HOLD_MS = 600_000L
+
+        /** Приходы ближе этого делить нельзя: темп улетит в бесконечность. */
+        const val MIN_GAP_MS = 1_000L
+
+        /** Допуск на покрытие. Чип отдаёт каждые ~10003 мс, и требование
+         *  ровно windows*WINDOW_MS не выполнялось бы никогда. */
+        const val SPAN_SLACK_MS = 2_000L
     }
 }
 
