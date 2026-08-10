@@ -1895,7 +1895,7 @@ class VaultActivity : AppCompatActivity() {
     }
 
     /**
-     * Убрать страницу.
+     * Удалить страницу.
      *
      * Спрашиваем всегда: текст уходит насовсем, а страницу легко перепутать
      * при листании. Но спрашиваем ОДИН раз - три предупреждения подряд
@@ -1915,11 +1915,11 @@ class VaultActivity : AppCompatActivity() {
             return
         }
         AlertDialog.Builder(this)
-            .setTitle("Убрать страницу " + (openIdx + 1) + " из " + openPages + "?")
+            .setTitle("Удалить страницу " + (openIdx + 1) + " из " + openPages + "?")
             .setMessage("Текст этой страницы исчезнет. Следующие страницы " +
                 "сдвинутся на одну вверх.\n\nВернуть можно из истории правок.")
             .setNegativeButton("Отмена", null)
-            .setPositiveButton("Убрать") { _, _ ->
+            .setPositiveButton("Удалить") { _, _ ->
                 busy = true
                 val idx = openIdx
                 lifecycleScope.launch {
@@ -2086,7 +2086,7 @@ class VaultActivity : AppCompatActivity() {
         nav.addView(tabButton("Вперёд", VaultIcon.Kind.NEXT, VaultIcon.tintFor(VaultIcon.Kind.NEXT)) {
             if (openIdx + 1 < openPages) leavePage { openNote(noteId, openIdx + 1) }
         })
-        nav.addView(tabButton("Убрать", VaultIcon.Kind.TRASH,
+        nav.addView(tabButton("Удалить", VaultIcon.Kind.TRASH,
             VaultIcon.tintFor(VaultIcon.Kind.TRASH)) {
             askDeletePage()
         })
