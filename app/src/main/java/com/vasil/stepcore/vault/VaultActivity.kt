@@ -1769,8 +1769,14 @@ class VaultActivity : AppCompatActivity() {
                         VaultRepo.Where.HEADING -> "ЗАГОЛОВОК"
                         else -> "ТЕКСТ"
                     }
+                    // Где в строке начинается САМО название. Подсветка
+                    // ставится по позициям внутри названия, а строка теперь
+                    // начинается с метки - без сдвига спаны красили метку и
+                    // начало строки вместо найденного слова.
+                    val headStart = place.length + 3
                     val head = place + "   " + h.noteTitle +
-                        (if (h.inHead) "" else "  ·  стр. " + (h.page + 1)) + "\n"
+                        (if (h.inHead) "" else "  ·  стр. " + (h.page + 1)) +
+                        (if (h.snippet.isEmpty()) "" else "\n")
                     // Подсветка совпадений: глаз находит слово в отрывке
                     // мгновенно, а без неё отрывок приходится вычитывать.
                     val full = android.text.SpannableStringBuilder(head + h.snippet)
@@ -1792,9 +1798,12 @@ class VaultActivity : AppCompatActivity() {
                     // В названии только цвет буквами: рамка в заголовке
                     // спорит с рамкой самой строки результата.
                     for (sp in VaultQuery.spans(h.noteTitle, parsed, opts)) {
+                        val from = headStart + sp[0]
+                        val to = headStart + sp[1]
+                        if (to > full.length) continue
                         full.setSpan(
                             android.text.style.ForegroundColorSpan(VaultMark.colorOf(sp[2])),
-                            sp[0], sp[1], android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                            from, to, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                     }
                     this.text = full
                     textSize = 15f
@@ -2430,6 +2439,13 @@ class VaultActivity : AppCompatActivity() {
         })
         tools.addView(tabButton("Вперёд", VaultIcon.Kind.NEXT, VaultIcon.tintFor(VaultIcon.Kind.NEXT)) {
             if (openIdx + 1 < openPages) openNote(noteId, openIdx + 1)
+        })
+        // Удаление доступно и при чтении: лишнюю страницу замечают
+        // именно читая, а не правя, и переход в правку ради этого - лишний
+        // шаг с риском задеть текст.
+        tools.addView(tabButton("Удалить", VaultIcon.Kind.TRASH,
+            VaultIcon.tintFor(VaultIcon.Kind.TRASH)) {
+            askDeletePage()
         })
         tools.addView(tabButton("Правка", VaultIcon.Kind.PENCIL,
             VaultIcon.tintFor(VaultIcon.Kind.PENCIL)) {

@@ -396,10 +396,12 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
                 VaultQuery.matches(h.tags.joinToString(" "), q, opts)
 
             if (titleHit) {
-                out.add(Hit(h.id, h.title, 0, "в названии",
+                // Отрывок пуст: метка «НАЗВАНИЕ» уже сказала всё, а вторая
+                // подпись о том же читается как два разных совпадения.
+                out.add(Hit(h.id, h.title, 0, "",
                     VaultQuery.score(h.title, q, opts) + 1, true, 0, hue, Where.TITLE))
             } else if (tagsHit && opts.where != VaultQuery.IN_TITLE) {
-                out.add(Hit(h.id, h.title, 0, "в классах: " + h.tags.joinToString(", "),
+                out.add(Hit(h.id, h.title, 0, h.tags.joinToString(" · "),
                     VaultQuery.score(h.tags.joinToString(" "), q, opts), true, 0, hue, Where.CLASS))
             }
 
@@ -422,7 +424,26 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
                     val at = if (pos < 0) 0 else pos
                     var ls = at
                     while (ls > 0 && text[ls - 1] != '\n') ls--
-                    val isHead = text.startsWith("#", ls)
+                    // Правило берётся ИЗ РАЗБОРА ТЕКСТА, а не придумывается
+                    // заново: заголовок - это от одной до трёх решёток И
+                    // ПРОБЕЛ после них. Прежняя проверка стояла на голую
+                    // решётку и потому ловила классы «#метка», а настоящие
+                    // заголовки пропускала - синей метки не было ни разу.
+                    var hs = ls
+                    while (hs < text.length && (text[hs] == ' ' || text[hs] == '\t')) hs++
+                    var sharps = 0
+                    while (hs + sharps < text.length && text[hs + sharps] == '#') sharps++
+                    // Строго как в разборе: после решёток обязан быть пробел
+                    // И хоть какой-то текст. Пустой «# » заголовком не
+                    // считается ни там, ни здесь.
+                    var he = hs + sharps + 1
+                    while (he < text.length && text[he] != '
+' &&
+                        (text[he] == ' ' || text[he] == '	')) he++
+                    val isHead = sharps in 1..3 &&
+                        hs + sharps < text.length && text[hs + sharps] == ' ' &&
+                        he < text.length && text[he] != '
+'
                     out.add(Hit(h.id, h.title, p.idx,
                         VaultText.snippet(text, at),
                         VaultQuery.score(text, q, opts), false, at, hue,
