@@ -437,13 +437,11 @@ class VaultRepo(context: Context, private val dataKey: ByteArray) {
                     // И хоть какой-то текст. Пустой «# » заголовком не
                     // считается ни там, ни здесь.
                     var he = hs + sharps + 1
-                    while (he < text.length && text[he] != '
-' &&
-                        (text[he] == ' ' || text[he] == '	')) he++
+                    while (he < text.length && text[he] != '\n' &&
+                        (text[he] == ' ' || text[he] == '\t')) he++
                     val isHead = sharps in 1..3 &&
                         hs + sharps < text.length && text[hs + sharps] == ' ' &&
-                        he < text.length && text[he] != '
-'
+                        he < text.length && text[he] != '\n'
                     out.add(Hit(h.id, h.title, p.idx,
                         VaultText.snippet(text, at),
                         VaultQuery.score(text, q, opts), false, at, hue,
