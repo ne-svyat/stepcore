@@ -876,7 +876,9 @@ class VaultActivity : AppCompatActivity() {
             focusLog.clear()
             focusLogStart = 0L
             if (focusDebug) {
-                logFocus("журнал включён · фокус у: " + viewName(currentFocus))
+                imeWasVisible = imeNow() ?: false
+                logFocus("журнал включён · фокус: " + viewName(currentFocus) +
+                    " · клавиатура: " + imeWord())
                 watchFocus()
             }
             renderFocusLog()
@@ -1259,6 +1261,31 @@ class VaultActivity : AppCompatActivity() {
         return v
     }
 
+    /**
+     * Видна ли клавиатура ПРЯМО СЕЙЧАС.
+     *
+     * Спрашиваем окно каждый раз, а не полагаемся на слушатель вставок:
+     * в журнале не появилось ни одной строки о смене видимости, то есть
+     * слушатель не сработал ни разу. Запомненное значение оказалось не
+     * измерением, а начальным нулём - и врало ровно в том месте, ради
+     * которого журнал и заводили.
+     *
+     * @return null, если система не ответила: это тоже факт, и врать
+     *         «скрыта» вместо него нельзя.
+     */
+    private fun imeNow(): Boolean? = try {
+        window.decorView.rootWindowInsets
+            ?.isVisible(android.view.WindowInsets.Type.ime())
+    } catch (e: Exception) {
+        null
+    }
+
+    private fun imeWord(): String = when (imeNow()) {
+        true -> "ВИДНА"
+        false -> "скрыта"
+        else -> "не отвечает"
+    }
+
     /** Короткое имя вьюхи для журнала. */
     private fun viewName(v: View?): String = when {
         v == null -> "никто"
@@ -1301,10 +1328,10 @@ class VaultActivity : AppCompatActivity() {
         obs.addOnGlobalFocusChangeListener(w)
         focusWatcher = w
 
-        // Клавиатура: следим за тем, как меняется её видимость. Это
-        // единственный способ отличить «не спрятали» от «спрятали и
-        // кто-то показал заново».
-        root.setOnApplyWindowInsetsListener { view, insets ->
+        // Клавиатура: слушатель вешается на КОРЕНЬ ОКНА, а не на нашу
+        // разметку. На разметку он не приходил вовсе - вставки до неё не
+        // доходили, и журнал молчал о клавиатуре всё время.
+        window.decorView.setOnApplyWindowInsetsListener { view, insets ->
             val vis = insets.isVisible(android.view.WindowInsets.Type.ime())
             if (vis != imeWasVisible) {
                 imeWasVisible = vis
@@ -1374,20 +1401,34 @@ class VaultActivity : AppCompatActivity() {
         lastFocusGrant = sink.requestFocus()
         releaseFocusable(v)
 
-        // 2. Гасим. Через окно, а не через вьюху: у вьюхи, только что
-        //    потерявшей фокус, распорядителя может уже не быть.
+        // 2. Гасим - от ТОГО, У КОГО ТЕПЕРЬ ФОКУС.
+        //
+        // Журнал показал: фокус к этому моменту уже у приёмника. Связь с
+        // клавиатурой держит владелец фокуса, а мы просили от окна и от
+        // поля, которое фокус только что отдало. Просьба от чужого имени
+        // на части прошивок просто игнорируется.
+        //
+        // Порядок сохранён: сначала фокус, потом просьба. Иначе поле
+        // успело бы попросить показать её обратно.
+        sink.windowInsetsController?.hide(android.view.WindowInsets.Type.ime())
         window.decorView.windowInsetsController?.hide(android.view.WindowInsets.Type.ime())
         val imm = getSystemService(android.view.inputmethod.InputMethodManager::class.java)
-        imm?.hideSoftInputFromWindow(window.decorView.windowToken, 0)
-        logFocus("попросил спрятать · приёмник взял фокус: " +
-            (if (lastFocusGrant) "да" else "НЕТ"))
+        imm?.hideSoftInputFromWindow(sink.windowToken, 0)
+        logFocus("попросил спрятать (от приёмника) · фокус принят: " +
+            (if (lastFocusGrant) "да" else "НЕТ") + " · клавиатура: " + imeWord())
 
         // Отметка через секунду: если к этому моменту клавиатура ещё
         // видна и никто её не показывал заново - значит система просто не
         // послушалась, и это уже другая болезнь.
+        // Две отметки: сразу и через секунду. Одна показывает, послушалась
+        // ли система вообще, вторая - не показал ли её кто-то заново.
         v.postDelayed({
-            logFocus("через 1с · фокус у: " + viewName(currentFocus) +
-                " · клавиатура: " + (if (imeWasVisible) "видна" else "скрыта"))
+            logFocus("+0.3с · фокус: " + viewName(currentFocus) +
+                " · клавиатура: " + imeWord())
+        }, 300L)
+        v.postDelayed({
+            logFocus("+1с · фокус: " + viewName(currentFocus) +
+                " · клавиатура: " + imeWord())
         }, 1000L)
     }
 
