@@ -587,8 +587,12 @@ class DoodleBorderDrawable(
         const val MAT_MECH = 5       // сегментированный контур (пунктир)
         /** Каждый какой такт обновляется мелкая плита. */
         private const val SLOW_EVERY = 4
-        /** Наливание плиты при появлении, мс. */
-        private const val REVEAL_MS = 420f
+        /**
+         * Зажигание плиты, мс. Было 420 при режущем клипе; со завесой
+         * движение читается быстрее, а ждать нечего - содержимое видно
+         * сразу, поэтому короче и честнее.
+         */
+        private const val REVEAL_MS = 300f
         /** Период пробега огонька по канту, с. */
         private const val SPARK_PERIOD = 6.5f
         /** Какую долю периода огонёк бежит (остальное - покой). */
@@ -710,7 +714,7 @@ class DoodleBorderDrawable(
     private fun needsFullRate(): Boolean {
         if (bigEnough) return true
         if (bornAt == 0L) return true
-        if (android.os.SystemClock.uptimeMillis() - bornAt < REVEAL_MS) return true
+        if (android.os.SystemClock.uptimeMillis() - bornAt < REVEAL_MS + igniteDelay) return true
         if (pathLen <= 0f) return false
         var t = BoilClock.phase / SPARK_PERIOD + sparkOffset
         t -= Math.floor(t.toDouble()).toFloat()
@@ -757,6 +761,14 @@ class DoodleBorderDrawable(
     private var tickSkip = 0
     private var pathLen = 0f
     private var bornAt = 0L
+    /** Задержка зажигания этой плиты, мс: разнобой вместо общего щелчка. */
+    private val igniteDelay = (((seed * 40503L) ushr 27) % 140L)
+    private val veilPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    /** Тон завесы: тень собственного тона плиты, а не чёрная клякса. */
+    private val veilColor = android.graphics.Color.argb(255,
+        (android.graphics.Color.red(fillColor) * 0.25f).toInt(),
+        (android.graphics.Color.green(fillColor) * 0.25f).toInt(),
+        (android.graphics.Color.blue(fillColor) * 0.25f).toInt())
     private val sparkOffset = ((seed * 2654435761L) ushr 33).toFloat() % 1f
 
     override fun onBoundsChange(bounds: Rect) {
@@ -929,13 +941,9 @@ class DoodleBorderDrawable(
         // остановка читалась бы как обрыв кадра.
         val nowMs = android.os.SystemClock.uptimeMillis()
         if (bornAt == 0L) bornAt = nowMs
-        val rk = ((nowMs - bornAt).toFloat() / REVEAL_MS).coerceIn(0f, 1f)
+        val rk = ((nowMs - bornAt - igniteDelay).toFloat() / REVEAL_MS).coerceIn(0f, 1f)
         val grow = 1f - (1f - rk) * (1f - rk)
         val filling = rk < 1f
-        if (filling) {
-            canvas.save()
-            canvas.clipRect(0f, phh * (1f - grow) - 1f, pw, phh + 1f)
-        }
         val off = 1.7f * d
         // тёмная грань снизу-справа (глубина), затем светлый кант сверху-слева
         canvas.save(); canvas.translate(off, off); canvas.drawPath(p, shPaint); canvas.restore()
@@ -1003,6 +1011,13 @@ class DoodleBorderDrawable(
         }
 
         if (filling) {
+            // Завеса: та часть, куда свет ещё не дошёл, притенена, но
+            // ЧИТАЕМА. Тень уходит вместе с фронтом и целиком исчезает.
+            veilPaint.color = veilColor
+            veilPaint.alpha = (150f * (1f - rk)).toInt().coerceIn(0, 255)
+            canvas.save()
+            canvas.clipPath(bodyPath)
+            canvas.drawRect(0f, 0f, pw, phh * (1f - grow), veilPaint)
             canvas.restore()
             // Светящийся фронт заливки: широкое гало и тонкое ядро.
             val fy = phh * (1f - grow)
@@ -1488,6 +1503,25 @@ class DoodleSceneView @JvmOverloads constructor(
     private val scPathA = Path()
     private val scPathB = Path()
     private val scPathC = Path()
+    /**
+     * Пул путей для сцен. Кино на экранах Статистики, Timeline и Истории
+     * создавало десятки Path в КАЖДОМ кадре - там объектов в кадре было
+     * больше, чем на главном экране. Внутри одной сцены номера пула не
+     * повторяются там, где два пути живут одновременно; между сценами
+     * пересечений нет - в кадре рисуется ровно одна сцена.
+     */
+    private val scPool = Array(8) { Path() }
+    private fun sp(i: Int): Path {
+        val p = scPool[i]
+        p.reset()
+        return p
+    }
+    // Постоянные наборы, которые пересоздавались в каждом кадре.
+    private val mtPX = FloatArray(3)
+    private val mtPY = FloatArray(3)
+    private val stackHeights = intArrayOf(2, 1, 3, 1)
+    private val surfTops = FloatArray(5)
+    private val surfCxs = FloatArray(5)
 
     private fun stroke(c: Int, wpx: Float, a: Int = DECOR_ALPHA): Paint {
         scStroke.color = c
@@ -1568,8 +1602,10 @@ class DoodleSceneView @JvmOverloads constructor(
                               w: Wobble, tint: Int) {
         val lit = lightenC(tint, 0.12f)
         val shadow = darkenC(tint, 0.45f)
-        val px = floatArrayOf(x0 + ww * 0.22f, x0 + ww * 0.52f, x0 + ww * 0.80f)
-        val py = floatArrayOf(baseY - h * 0.72f, baseY - h, baseY - h * 0.60f)
+        val px = mtPX
+        px[0] = x0 + ww * 0.22f; px[1] = x0 + ww * 0.52f; px[2] = x0 + ww * 0.80f
+        val py = mtPY
+        py[0] = baseY - h * 0.72f; py[1] = baseY - h; py[2] = baseY - h * 0.60f
         val sil = scPathB
         sil.reset()
         sil.moveTo(x0, baseY)
@@ -1985,7 +2021,7 @@ class DoodleSceneView @JvmOverloads constructor(
     /** Лагерь: живой костёр (пламя дышит), палатка, лес, горы. */
     private fun drawCamp(c: Canvas, w: Float, h: Float, r: Wobble, tint: Int, tintBr: Int) {
         val base = h * 0.90f
-        val tn = Path()
+        val tn = sp(0)
         Doodle.tent(tn, w * 0.62f, base, w * 0.13f, h * 0.42f, r)
         Doodle.ink(c, tn, stroke(violetBr, 2f), 0.8f * d)
         // Пламя живёт: высота гуляет двумя несинхронными волнами, поэтому
@@ -1993,7 +2029,7 @@ class DoodleSceneView @JvmOverloads constructor(
         val ph = BoilClock.phase
         val flick = 1f + 0.30f * sin((ph * 5.1f).toDouble()).toFloat() +
                     0.16f * sin((ph * 8.7f + 1.3f).toDouble()).toFloat()
-        val logs = Path(); val flame = Path()
+        val logs = sp(1); val flame = sp(2)
         Doodle.fire(logs, flame, w * 0.72f, base, h * 0.09f * flick, r)
         Doodle.ink(c, logs, stroke(ember, 2f), 0.8f * d)
         Doodle.ink(c, flame, stroke(amber, 2f, (DECOR_ALPHA * (0.75f + 0.25f * flick)).toInt()), 0.8f * d)
@@ -2010,7 +2046,7 @@ class DoodleSceneView @JvmOverloads constructor(
         firRich(c, w * 0.55f, base, h * 0.30f, r)
         firRich(c, w * 0.97f, base, h * 0.28f, r)
         mountainsRich(c, w * 0.78f, base, w * 0.18f, h * 0.36f, r, tint)
-        val trail = Path()
+        val trail = sp(3)
         Doodle.line(trail, w * 0.66f, base + 3f * d, w * 0.74f, base - 2f * d, 1.2f, 6, r)
         Doodle.line(trail, w * 0.74f, base - 2f * d, w * 0.80f, base + 2f * d, 1.2f, 6, r)
         Doodle.ink(c, trail, stroke(tint, 1f), 0.8f * d)
@@ -2024,8 +2060,16 @@ class DoodleSceneView @JvmOverloads constructor(
      * вниз по петле и подсвечивает то, что пересекает.
      */
     /** Силуэт в фотографии: 3 разных лица (форма головы и плеч). */
-    private fun facePath(px: Float, py: Float, pw: Float, phh: Float, idx: Int): Path {
-        val p = Path()
+    /**
+     * @param slot номер пути в пуле. Слот передаётся ЯВНО, а не выводится
+     * из idx: при переборе личности текущее и предыдущее лицо живут в
+     * кадре одновременно, и вывод из idx однажды дал бы им один путь -
+     * второй вызов затёр бы первый. Такая ошибка проявилась бы ровно на
+     * одном из трёх лиц и только на доле секунды глитча.
+     */
+    private fun facePath(px: Float, py: Float, pw: Float, phh: Float, idx: Int,
+                         slot: Int): Path {
+        val p = sp(slot)
         val fcx = px + pw / 2f
         val hy = py + phh * 0.36f
         val hr = pw * (0.20f + 0.03f * idx)
@@ -2057,7 +2101,7 @@ class DoodleSceneView @JvmOverloads constructor(
         val dw = w * 0.44f
         val dh = h * 0.76f
 
-        val doc = Path(); val photo = Path(); val bars = Path()
+        val doc = sp(0); val photo = sp(1); val bars = sp(2)
         Doodle.passport(doc, photo, bars, cx, cy, dw, dh, r)
         Doodle.ink(c, doc, stroke(violet, 2f), 0.8f * d)
         Doodle.ink(c, photo, stroke(violetBr, 1.4f), 0.8f * d)
@@ -2073,11 +2117,11 @@ class DoodleSceneView @JvmOverloads constructor(
             val idx = tt.toInt().coerceIn(0, 2)
             val frac = tt - idx
             val g = if (frac < 0.14f) 1f - frac / 0.14f else 0f
-            val sil = facePath(px, py, pw, phh, idx)
+            val sil = facePath(px, py, pw, phh, idx, 4)
             c.save()
             c.clipRect(px, py, px + pw, py + phh)
             if (g > 0f) {
-                val prev = facePath(px, py, pw, phh, (idx + 2) % 3)
+                val prev = facePath(px, py, pw, phh, (idx + 2) % 3, 5)
                 c.drawPath(prev, fill(red, (95f * g).toInt().coerceIn(0, 255)))
             }
             val slices = 5
@@ -2095,7 +2139,7 @@ class DoodleSceneView @JvmOverloads constructor(
             c.restore()
         }
 
-        val corners = Path()
+        val corners = sp(3)
         Doodle.scanCorners(corners, cx, cy, dw, dh, 10f * d)
         Doodle.ink(c, corners, stroke(red, 2f, 190), 0.8f * d)
 
@@ -2124,14 +2168,15 @@ class DoodleSceneView @JvmOverloads constructor(
     /** Кубик-день: передняя грань, светлый верх, тёмный бок - объём. */
     private fun cubeIso(c: Canvas, cx: Float, byY: Float, sz: Float, tint: Int) {
         val hf = sz / 2f; val dp2 = sz * 0.30f
-        val front = Path()
+        val front = sp(6)
         front.addRect(cx - hf, byY - sz, cx + hf, byY, Path.Direction.CW)
         skyFill.color = tint; skyFill.alpha = 225; c.drawPath(front, skyFill)
-        val top = Path()
+        val top = sp(7)
         top.moveTo(cx - hf, byY - sz); top.lineTo(cx - hf + dp2, byY - sz - dp2)
         top.lineTo(cx + hf + dp2, byY - sz - dp2); top.lineTo(cx + hf, byY - sz); top.close()
         skyFill.color = lightenC(tint, 0.35f); skyFill.alpha = 235; c.drawPath(top, skyFill)
-        val side = Path()
+        val side = scPathC
+        side.reset()
         side.moveTo(cx + hf, byY - sz); side.lineTo(cx + hf + dp2, byY - sz - dp2)
         side.lineTo(cx + hf + dp2, byY - dp2); side.lineTo(cx + hf, byY); side.close()
         skyFill.color = darkenC(tint, 0.40f); skyFill.alpha = 235; c.drawPath(side, skyFill)
@@ -2143,7 +2188,7 @@ class DoodleSceneView @JvmOverloads constructor(
     private fun drawStats(c: Canvas, w: Float, h: Float, r: Wobble) {
         val base = h * 0.92f
         mountainsRich(c, w * 0.46f, base, w * 0.46f, h * 0.72f, r, blue)
-        val rv = Path()
+        val rv = sp(0)
         Doodle.river(rv, w * 0.05f, h * 0.72f, w * 0.60f, base, r)
         Doodle.ink(c, rv, stroke(blueBr, 2f), 0.8f * d)
         firRich(c, w * 0.14f, base, h * 0.36f, r)
@@ -2158,7 +2203,7 @@ class DoodleSceneView @JvmOverloads constructor(
         run {
             val ph3 = BoilClock.phase
             val sz = h * 0.15f
-            val stacks = intArrayOf(2, 1, 3, 1)
+            val stacks = stackHeights
             val x0 = w * 0.10f; val step = w * 0.115f
             val dropX = x0 + 3 * step
             val t = loop(9.5f, 0f)
@@ -2297,7 +2342,7 @@ class DoodleSceneView @JvmOverloads constructor(
             if (visible) {
                 c.save(); c.translate(fx, fy); if (rot != 0f) c.rotate(rot)
                 val stepPh = sin((ph3 * (if (pose == 2) 10f else 7f)).toDouble()).toFloat()
-                val fig = Path()
+                val fig = sp(1)
                 when (pose) {
                     1 -> {
                         fig.moveTo(0f, -sz * 1.30f); fig.lineTo(0f, -sz * 0.60f)
@@ -2339,9 +2384,9 @@ class DoodleSceneView @JvmOverloads constructor(
         sunRich(c, w * 0.60f, h * 0.26f, h * 0.13f * k, r, amber)
         drifting(c, w, h, r, violet, listOf(
             Triple(0.20f, 0.12f, 22f), Triple(0.34f, 0.09f, 31f)))
-        val sp = Path()
-        Doodle.signpost(sp, w * 0.86f, base, h * 0.50f, r)
-        Doodle.ink(c, sp, stroke(amberBr, 2f), 0.8f * d)
+        val post = sp(0)
+        Doodle.signpost(post, w * 0.86f, base, h * 0.50f, r)
+        Doodle.ink(c, post, stroke(amberBr, 2f), 0.8f * d)
         firRich(c, w * 0.10f, base, h * 0.48f, r)
         firRich(c, w * 0.20f, base, h * 0.36f, r)
 
@@ -2353,7 +2398,7 @@ class DoodleSceneView @JvmOverloads constructor(
             val ph2 = BoilClock.phase
             val n = 5
             val bx0 = w * 0.05f; val bw = w * 0.055f; val gap = w * 0.017f
-            val tops = FloatArray(n); val cxs = FloatArray(n)
+            val tops = surfTops; val cxs = surfCxs
             for (i in 0 until n) {
                 val bh = h * (0.13f + 0.095f * i)
                 val x0 = bx0 + i * (bw + gap)
@@ -2361,7 +2406,7 @@ class DoodleSceneView @JvmOverloads constructor(
                 c.drawRect(x0, tops[i], x0 + bw, base, fill(blue, 105))
                 c.save()
                 c.clipRect(x0, tops[i] - 3f * d, x0 + bw, base)
-                val wave = Path()
+                val wave = sp(1)
                 val amp = 1.8f * d
                 wave.moveTo(x0, tops[i] + amp)
                 var xx = x0
@@ -2382,7 +2427,7 @@ class DoodleSceneView @JvmOverloads constructor(
                         fill(blueBr, (150f * (1f - g)).toInt().coerceIn(0, 255)))
                 }
                 c.restore()
-                val bp = Path()
+                val bp = sp(2)
                 Doodle.roundRect(bp, x0, tops[i], bw, bh, 2f * d, 1f * d, r)
                 Doodle.ink(c, bp, stroke(blueBr, 1.6f, 175), 0.7f * d)
             }
@@ -2408,7 +2453,7 @@ class DoodleSceneView @JvmOverloads constructor(
                 val fx0 = fireX - bw / 2f
                 c.drawRect(fx0, base - fh, fx0 + bw, base, fill(red, 125))
                 val fl = 0.7f + 0.3f * sin((ph2 * 8f).toDouble()).toFloat()
-                val tongue = Path()
+                val tongue = sp(3)
                 tongue.moveTo(fx0, base - fh)
                 tongue.quadTo(fx0 + bw * 0.25f, base - fh - 10f * d * fl,
                     fx0 + bw * 0.5f, base - fh - 3f * d)
@@ -2416,7 +2461,7 @@ class DoodleSceneView @JvmOverloads constructor(
                     fx0 + bw, base - fh)
                 tongue.close()
                 c.drawPath(tongue, fill(amberBr, 215))
-                val fp = Path()
+                val fp = sp(4)
                 Doodle.roundRect(fp, fx0, base - fh, bw, fh, 2f * d, 1f * d, r)
                 Doodle.ink(c, fp, stroke(red, 1.8f, 200), 0.7f * d)
                 for (k in 0 until 5) {
@@ -2504,7 +2549,7 @@ class DoodleSceneView @JvmOverloads constructor(
                 c.save()
                 c.translate(fx, fy); c.rotate(lean * 0.35f)
                 val stride = 3f * d * sin((ph2 * 9f).toDouble()).toFloat()
-                val fig = Path()
+                val fig = sp(5)
                 fig.moveTo(0f, -5.5f * d); fig.lineTo(0f, -1.5f * d)
                 if (t >= 0.66f) {                  // выброс: ноги поджаты, руки вверх
                     fig.moveTo(0f, -1.5f * d); fig.lineTo(-3.4f * d, 1.4f * d)
@@ -2535,7 +2580,7 @@ class DoodleSceneView @JvmOverloads constructor(
     /** Литая шестерня: тело с заливкой, ступица, спицы, слабое свечение. */
     private fun gearRich(c: Canvas, cx: Float, cy: Float, rad: Float, teeth: Int,
                          rotDeg: Float, w: Wobble, tint: Int) {
-        val body = Path()
+        val body = sp(0)
         Doodle.gear(body, cx, cy, rad, teeth, rotDeg, w)
         skyFill.color = darkenC(tint, 0.55f); skyFill.alpha = 210
         c.drawPath(body, skyFill)
@@ -2570,7 +2615,7 @@ class DoodleSceneView @JvmOverloads constructor(
         c.drawCircle(cx, cy, rad * 1.5f, skyFill)
         skyFill.color = darkenC(tint, 0.60f); skyFill.alpha = 225
         c.drawCircle(cx, cy, rad, skyFill)
-        val ring = Path(); ring.addCircle(cx, cy, rad, Path.Direction.CW)
+        val ring = sp(1); ring.addCircle(cx, cy, rad, Path.Direction.CW)
         skyOutline.color = lightenC(tint, 0.30f); Doodle.ink(c, ring, skyOutline, 0.6f * d)
         // Румбы.
         rayPaint.color = lightenC(tint, 0.20f); rayPaint.alpha = 185
@@ -2594,10 +2639,10 @@ class DoodleSceneView @JvmOverloads constructor(
         val sy = cy - rad * 0.62f * kotlin.math.sin(ar).toFloat()
         val px = -kotlin.math.sin(ar).toFloat() * rad * 0.16f
         val py = kotlin.math.cos(ar).toFloat() * rad * 0.16f
-        val nd = Path()
+        val nd = sp(2)
         nd.moveTo(bx, by); nd.lineTo(cx + px, cy + py); nd.lineTo(cx - px, cy - py); nd.close()
         skyFill.color = 0xFFE23636.toInt(); skyFill.alpha = 240; c.drawPath(nd, skyFill)
-        val sd = Path()
+        val sd = sp(3)
         sd.moveTo(sx, sy); sd.lineTo(cx + px, cy + py); sd.lineTo(cx - px, cy - py); sd.close()
         skyFill.color = 0xFFDCE4F2.toInt(); skyFill.alpha = 225; c.drawPath(sd, skyFill)
         skyFill.color = lightenC(tint, 0.55f); skyFill.alpha = 240
@@ -2630,7 +2675,7 @@ class DoodleSceneView @JvmOverloads constructor(
         val top = cy - hh / 2f; val bot = cy + hh / 2f
         val hw = ww / 2f; val neck = ww * 0.07f; val half = hh / 2f
 
-        val glass = Path()
+        val glass = sp(4)
         glass.moveTo(cx - hw, top); glass.lineTo(cx + hw, top)
         glass.lineTo(cx + neck, cy); glass.lineTo(cx + hw, bot)
         glass.lineTo(cx - hw, bot); glass.lineTo(cx - neck, cy)
@@ -2643,17 +2688,17 @@ class DoodleSceneView @JvmOverloads constructor(
             val fh = half * fillTop
             val yTop = cy - fh
             val wTop = neck + (hw - neck) * fillTop
-            val sp = Path()
-            sp.moveTo(cx - wTop, yTop); sp.lineTo(cx + wTop, yTop)
-            sp.lineTo(cx + neck, cy); sp.lineTo(cx - neck, cy); sp.close()
-            skyFill.color = tint; skyFill.alpha = 215; c.drawPath(sp, skyFill)
+            val sand = sp(5)
+            sand.moveTo(cx - wTop, yTop); sand.lineTo(cx + wTop, yTop)
+            sand.lineTo(cx + neck, cy); sand.lineTo(cx - neck, cy); sand.close()
+            skyFill.color = tint; skyFill.alpha = 215; c.drawPath(sand, skyFill)
             skyFill.color = lightenC(tint, 0.45f); skyFill.alpha = 120
             c.drawRect(cx - wTop, yTop, cx + wTop, yTop + 1.6f * d, skyFill)
         }
         val moundH = half * 0.80f * botFrac
         if (botFrac > 0.02f) {
             val mw = hw * (0.45f + 0.55f * botFrac)
-            val mp = Path()
+            val mp = sp(6)
             mp.moveTo(cx - mw, bot); mp.lineTo(cx + mw, bot)
             mp.lineTo(cx + mw * 0.34f, bot - moundH)
             mp.lineTo(cx, bot - moundH * 1.18f)
@@ -2788,7 +2833,7 @@ class DoodleSceneView @JvmOverloads constructor(
             for (k in 0 until 9) {
                 val a2 = Math.toRadians((k * 40f + age * 60f).toDouble())
                 val fl = rad * (0.52f + 0.30f * kotlin.math.sin((ph * 9f + k).toDouble()).toFloat())
-                val tongue = Path()
+                val tongue = sp(0)
                 val tx = bx + fl * kotlin.math.cos(a2).toFloat()
                 val ty = by + fl * kotlin.math.sin(a2).toFloat()
                 tongue.moveTo(bx, by)
@@ -2912,7 +2957,7 @@ class DoodleSceneView @JvmOverloads constructor(
         if (visible) {
             c.save(); c.translate(hx, hy); if (rot != 0f) c.rotate(rot)
             val stride = 3.4f * d * sin((ph * 13f).toDouble()).toFloat()
-            val fig = Path()
+            val fig = sp(1)
             when (pose) {
                 1 -> {
                     fig.moveTo(0f, -6f * d); fig.lineTo(0f, -2f * d)
@@ -3024,7 +3069,7 @@ class DoodleSceneView @JvmOverloads constructor(
             savePaint.strokeJoin = Paint.Join.ROUND
             val gx = cxp - pwd * 0.52f; val gy = cyp
             val gs = phd * 0.42f
-            val chk = Path()
+            val chk = sp(2)
             chk.moveTo(gx - gs * 0.75f, gy)
             chk.lineTo(gx - gs * 0.15f, gy + gs * 0.62f)
             chk.lineTo(gx + gs * 0.85f, gy - gs * 0.70f)
@@ -3047,7 +3092,7 @@ class DoodleSceneView @JvmOverloads constructor(
     }
 
     private fun drawHistory(c: Canvas, w: Float, h: Float, r: Wobble) {
-        val nb = Path()
+        val nb = sp(3)
         Doodle.notebook(nb, w * 0.09f, h * 0.54f, w * 0.10f, h * 0.44f, r)
         Doodle.ink(c, nb, stroke(gray, 2f), 0.8f * d)
         scrollAct(c, w, h, r)
