@@ -874,15 +874,101 @@ class CrystalRingView @JvmOverloads constructor(
      * поэтому не мозолит глаз и не жрёт кадры.
      * Бьёт в узел тропы - в то место, куда человек уже дошёл.
      */
-    private fun drawStrike(c: Canvas, tms: Long, maxed: Boolean, wake: Float) {
+    /**
+     * СЛЕДЫ ТИРАННОЗАВРА.
+     *
+     * Идея. Гора - не декорация и не пустая шкала: по ней кто-то уже
+     * поднимался, и чем выше забрался человек, тем яснее проступает чужой
+     * след. Отпечаток трёхпалый, с когтями - тероподный, а не звериная
+     * лапа: три пальца вперёд, средний длиннее, когти отдельными клиньями.
+     *
+     * Почему помеха. След не рисуется ровно: он МИГАЕТ и расслаивается по
+     * цвету, как испорченный сигнал. Это честнее непрерывной картинки -
+     * след не существует по-настоящему, он проступает. Мигание задано
+     * хешем от номера окна, а не случайностью в кадре: в пределах одного
+     * окна отпечаток стабилен и не дрожит.
+     *
+     * Сила ровно по ярости: на первой цели следа почти нет, к пятой он
+     * тяжёлый и красный.
+     */
+    private fun drawRaptorTracks(c: Canvas, tms: Long, rage: Float) {
+        val slot = tms / 620L
+        val steps = 6
+        for (i in 0 until steps) {
+            // Хеш окна и номера следа: стабильно в пределах окна.
+            val hsh = ((slot + i * 7919L) * 6364136223846793005L) ushr 33
+            val vis = (hsh % 100L).toFloat() / 100f
+            if (vis > 0.30f + 0.55f * rage) continue
+
+            // След идёт по тропе снизу вверх, чуть в сторону от неё.
+            val u = (i + 0.5f) / steps
+            val node = (u * 4f)
+            val n0 = node.toInt().coerceIn(0, 4)
+            val f = node - n0
+            val px = trailX[n0] + (trailX[n0 + 1] - trailX[n0]) * f
+            val py = trailY[n0] + (trailY[n0 + 1] - trailY[n0]) * f
+            val side = if (i % 2 == 0) 1f else -1f
+            val sz = (7f + 5f * rage) * d * (1f - 0.25f * u)
+            val a = (((hsh shr 8) % 40L).toFloat() - 20f) + side * 12f
+
+            val al = (110f + 145f * rage) * (1f - vis / (0.30f + 0.55f * rage))
+            // Расслоение по цвету: два смещённых дубля под основным.
+            for (g in 0 until 3) {
+                val off = when (g) {
+                    0 -> -2.2f * d * rage
+                    1 -> 2.2f * d * rage
+                    else -> 0f
+                }
+                bloodPaint.color = when (g) {
+                    0 -> magenta
+                    1 -> glitchCyan
+                    else -> blend(bloodHi, bloodLo, 0.35f)
+                }
+                bloodPaint.alpha = (al * (if (g == 2) 1f else 0.45f))
+                    .toInt().coerceIn(0, 255)
+                c.save()
+                c.translate(px + side * sz * 1.1f + off, py)
+                c.rotate(a)
+                raptorPrint(c, sz)
+                c.restore()
+            }
+        }
+        bloodPaint.alpha = 255
+    }
+
+    /** Трёхпалый отпечаток в местных координатах (носок вверх). */
+    private fun raptorPrint(c: Canvas, sz: Float) {
+        for (t in 0 until 3) {
+            val ang = Math.toRadians((-90.0 + (t - 1) * 34.0))
+            val len = if (t == 1) sz * 1.45f else sz * 1.05f
+            val tipX2 = (len * Math.cos(ang)).toFloat()
+            val tipY2 = (len * Math.sin(ang)).toFloat()
+            tonguePath.reset()
+            tonguePath.moveTo(0f, 0f)
+            tonguePath.lineTo(tipX2 - sz * 0.20f, tipY2 + sz * 0.10f)
+            // Коготь: отдельный клин на конце пальца.
+            tonguePath.lineTo(tipX2 * 1.22f, tipY2 * 1.22f)
+            tonguePath.lineTo(tipX2 + sz * 0.20f, tipY2 + sz * 0.10f)
+            tonguePath.close()
+            c.drawPath(tonguePath, bloodPaint)
+        }
+        // Пятка: опора, без неё три клина читаются как звезда.
+        c.drawOval(-sz * 0.42f, -sz * 0.10f, sz * 0.42f, sz * 0.72f, bloodPaint)
+    }
+
+    private fun drawStrike(c: Canvas, tms: Long, maxed: Boolean, wake: Float, rage: Float) {
         // Чем ближе цель, тем чаще разряд: 5.6 с на старте пробуждения,
         // 3.2 с у самой цели. Это темп картинки, а не измеренный порог.
-        val period = (5600L - (2400L * wake).toLong()).coerceAtLeast(2600L)
+        // К пятой цели разряд бьёт втрое чаще и держится дольше: гроза
+        // над горой нарастает вместе с пройденным.
+        val period = (5600L - (2400L * wake).toLong() - (1900L * rage).toLong())
+            .coerceAtLeast(1500L)
+        val flash = 260f + 140f * rage
         val phase = (tms % period).toFloat()
-        if (phase > 260f) return
+        if (phase > flash) return
         val slot = tms / period
         val r = (slot * 6364136223846793005L) ushr 24
-        val k = phase / 260f
+        val k = phase / flash
         // Резкий фронт и спад - как у настоящей вспышки, а не ровное свечение.
         var br = if (k < 0.12f) k / 0.12f else (1f - (k - 0.12f) / 0.88f).coerceAtLeast(0f)
         // Слабый разряд в начале пути, полный - у цели.
@@ -902,9 +988,9 @@ class CrystalRingView @JvmOverloads constructor(
             boltPath.lineTo(sx + (tx - sx) * f + jx, ty * f)
         }
 
-        val col = if (maxed) magenta else kantColor
+        val col = blend(kantColor, magenta, rage)
         lightPaint.color = col
-        lightPaint.strokeWidth = 9f * d
+        lightPaint.strokeWidth = (9f + 4f * rage) * d
         lightPaint.alpha = (70f * br).toInt().coerceIn(0, 255)
         c.drawPath(boltPath, lightPaint)
         lightPaint.strokeWidth = 3.5f * d
@@ -915,8 +1001,32 @@ class CrystalRingView @JvmOverloads constructor(
         lightPaint.alpha = (235f * br).toInt().coerceIn(0, 255)
         c.drawPath(boltPath, lightPaint)
 
+        // Ветвление разряда: с яростью у молнии появляются отростки.
+        if (rage > 0.25f) {
+            val branches = 1 + (2f * rage).toInt()
+            for (b in 0 until branches) {
+                val at = 0.35f + 0.18f * b
+                val bxs = sx + (tx - sx) * at
+                val bys = ty * at
+                val dir = if (b % 2 == 0) 1f else -1f
+                boltPath.reset()
+                boltPath.moveTo(bxs, bys)
+                for (i in 1..3) {
+                    val f2 = i / 3f
+                    boltPath.lineTo(
+                        bxs + dir * width * 0.10f * f2 +
+                            (((r shr (i * 3 + b)) % 60L).toFloat() / 60f - 0.5f) * width * 0.06f,
+                        bys + ty * 0.18f * f2)
+                }
+                lightPaint.color = col
+                lightPaint.strokeWidth = 2.4f * d
+                lightPaint.alpha = (150f * br * rage).toInt().coerceIn(0, 255)
+                c.drawPath(boltPath, lightPaint)
+            }
+        }
+
         // Удар: короткие лучи из точки попадания. Кружка нет намеренно.
-        crownPaint.color = if (maxed) hotCore else 0xFFFFFFFF.toInt()
+        crownPaint.color = blend(0xFFFFFFFF.toInt(), hotCore, rage)
         crownPaint.strokeWidth = 2f * d
         crownPaint.alpha = (210f * br).toInt().coerceIn(0, 255)
         for (i in 0 until 6) {
@@ -932,8 +1042,8 @@ class CrystalRingView @JvmOverloads constructor(
         // Гора на мгновение подсвечивается изнутри.
         c.save()
         c.clipPath(mountainPath)
-        fillPaint.color = col
-        fillPaint.alpha = (55f * br).toInt().coerceIn(0, 255)
+        fillPaint.color = blend(col, bloodHi, rage * 0.7f)
+        fillPaint.alpha = ((55f + 45f * rage) * br).toInt().coerceIn(0, 255)
         c.drawRect(0f, 0f, width.toFloat(), height.toFloat(), fillPaint)
         fillPaint.alpha = 255
         c.restore()
@@ -964,6 +1074,14 @@ class CrystalRingView @JvmOverloads constructor(
         // нужнее всего увидеть, что путь уже идёт.
         val wake = ((prog - 0.20f) / 0.80f).coerceIn(0f, 1f)
 
+        // ЯРОСТЬ - одна величина, которой подчинён весь путь от первой
+        // цели к пятой. Раньше эскалации не было вовсе: до ×5 гора
+        // выглядела одинаково, на ×5 разом включался другой мир. Теперь
+        // между ними непрерывный подъём - цвет уходит в кровь, разряды
+        // учащаются, следы проступают, луна багровеет. Порог ×5 остаётся
+        // событием, но приходит не из ниоткуда.
+        val rage = ((prog - 1f) / 4f).coerceIn(0f, 1f)
+
         // Северное сияние за горой: разгорается по мере прогресса - мир
         // отзывается на пройденный путь.
         val auroraK = ((prog - 0.20f) / 4.80f).coerceIn(0f, 1f)
@@ -980,14 +1098,15 @@ class CrystalRingView @JvmOverloads constructor(
                     auroraPath.lineTo(x, y)
                     x += 6f * d
                 }
-                // При ×5 ленты кровавые и плотнее: мир отзывается иначе.
-                auroraPaint.color = if (maxed) {
-                    if (b2 == 1) bloodHi else bloodMid
-                } else {
-                    if (b2 == 1) 0xFF35D6A0.toInt() else 0xFF7B6BFF.toInt()
-                }
-                auroraPaint.strokeWidth = (if (maxed) 8.5f - b2 * 1.6f else 7f - b2 * 1.6f) * d
-                auroraPaint.alpha = ((if (maxed) 165f else 70f) * auroraK *
+                // Ленты сияния краснеют ПОСТЕПЕННО. У верхней ленты
+                // свой сдвиг - она уходит в кровь раньше нижних, поэтому
+                // небо расслаивается по оттенку, а не красится целиком.
+                val bandHeat = (rage * (1.15f - b2 * 0.22f)).coerceIn(0f, 1f)
+                val cold = if (b2 == 1) 0xFF35D6A0.toInt() else 0xFF7B6BFF.toInt()
+                val hot = if (b2 == 1) bloodHi else bloodMid
+                auroraPaint.color = blend(cold, hot, bandHeat)
+                auroraPaint.strokeWidth = (7f + 1.5f * bandHeat - b2 * 1.6f) * d
+                auroraPaint.alpha = ((70f + 95f * bandHeat) * auroraK *
                     (1f - b2 * 0.20f)).toInt().coerceIn(0, 255)
                 canvas.drawPath(auroraPath, auroraPaint)
             }
@@ -1000,9 +1119,12 @@ class CrystalRingView @JvmOverloads constructor(
             // повреждение, а не как взгляд.
             drawMoonEye(canvas, tms, bodyH)
         } else {
-            moonFillPaint.color = 0xFFFFF1CF.toInt()
-            moonStrokePaint.color = 0xFFD9B45F.toInt()
-            moonCraterPaint.color = 0xFFD8C08A.toInt()
+            // Луна наливается кровью ЗАРАНЕЕ: к пятой цели она уже почти
+            // багровая, и превращение в глаз перестаёт быть подменой -
+            // оно становится концом начатого.
+            moonFillPaint.color = blend(0xFFFFF1CF.toInt(), bloodHi, rage * 0.80f)
+            moonStrokePaint.color = blend(0xFFD9B45F.toInt(), bloodLo, rage)
+            moonCraterPaint.color = blend(0xFFD8C08A.toInt(), bloodMid, rage * 0.9f)
             canvas.drawPath(moonPath, moonFillPaint)
             canvas.drawPath(moonCraters, moonCraterPaint)
             canvas.drawPath(moonPath, moonStrokePaint)
@@ -1033,10 +1155,28 @@ class CrystalRingView @JvmOverloads constructor(
                 if (fillFrac <= 0f) continue
                 val tb = bodyBottom - i * tierH
                 val tt = tb - tierH * fillFrac
-                fillPaint.color = energyBlue; fillPaint.alpha = 115
+                // Каждый следующий ярус горячее предыдущего, и вся шкала
+                // разогревается с яростью: нижние лоскуты остаются
+                // холодными, верхние уходят в багрянец. Так по цвету
+                // видно не только СКОЛЬКО пройдено, но и КАК высоко.
+                val tierHeat = (i / 4f * 0.62f + rage * 0.38f).coerceIn(0f, 1f)
+                val al = (115f + 45f * tierHeat).toInt().coerceIn(0, 255)
+                fillPaint.color = blend(energyBlue, 0xFF7E1330.toInt(), tierHeat)
+                fillPaint.alpha = al
                 canvas.drawRect(0f, tt, splitX, tb, fillPaint)
-                fillPaint.color = energyRed; fillPaint.alpha = 115
+                fillPaint.color = blend(energyRed, bloodLo, tierHeat)
+                fillPaint.alpha = al
                 canvas.drawRect(splitX, tt, width.toFloat(), tb, fillPaint)
+                // Гребень яруса: тонкая раскалённая черта на срезе
+                // заливки - волна остановилась именно здесь.
+                if (fillFrac < 1f) {
+                    val crestPulse = 0.55f + 0.45f *
+                        Math.sin(tms * 0.005 + i).toFloat()
+                    fillPaint.color = blend(0xFFFFFFFF.toInt(), bloodHi, tierHeat)
+                    fillPaint.alpha = ((90f + 110f * tierHeat) * crestPulse)
+                        .toInt().coerceIn(0, 255)
+                    canvas.drawRect(0f, tt, width.toFloat(), tt + 1.6f * d, fillPaint)
+                }
             }
             fillPaint.alpha = 255
         }
@@ -1063,10 +1203,13 @@ class CrystalRingView @JvmOverloads constructor(
                 // Молния «светит путь»: слоистое свечение + белое ядро (пульс).
                 val tms = System.currentTimeMillis()
                 val pulse = 0.55f + 0.45f * Math.sin(tms * 0.006).toFloat()
-                lightPaint.color = if (maxed) magenta else 0xFFFFC94D.toInt()
-                lightPaint.strokeWidth = 7f * d; lightPaint.alpha = (55f * pulse).toInt().coerceIn(0, 255)
+                // Тропа разогревается вместе с горой: янтарь -> малина.
+                lightPaint.color = blend(0xFFFFC94D.toInt(), magenta, rage)
+                lightPaint.strokeWidth = (7f + 3f * rage) * d
+                lightPaint.alpha = ((55f + 45f * rage) * pulse).toInt().coerceIn(0, 255)
                 canvas.drawPath(trailPath, lightPaint)
-                lightPaint.strokeWidth = 4f * d; lightPaint.alpha = (100f * pulse).toInt().coerceIn(0, 255)
+                lightPaint.strokeWidth = (4f + 1.5f * rage) * d
+                lightPaint.alpha = ((100f + 55f * rage) * pulse).toInt().coerceIn(0, 255)
                 canvas.drawPath(trailPath, lightPaint)
                 lightPaint.color = if (maxed) hotCore else 0xFFFFFFFF.toInt(); lightPaint.strokeWidth = 1.8f * d
                 lightPaint.alpha = (150f + 90f * (pulse - 0.55f)).toInt().coerceIn(0, 255)
@@ -1084,12 +1227,34 @@ class CrystalRingView @JvmOverloads constructor(
             val next = !lit && prog >= i
             if (lit) {
                 val gl = 0.55f + 0.45f * Math.sin(tms * 0.0035 + i * 1.7).toFloat()
-                gemGlowPaint.color = if (maxed) magenta else 0xFF7FB2FF.toInt()
-                gemGlowPaint.alpha = (60f + 60f * gl).toInt().coerceIn(0, 255)
-                canvas.drawCircle(gemCx[i], gemCy[i], gemSz[i] * (2.1f + 0.35f * gl), gemGlowPaint)
+                // У КАЖДОГО КРИСТАЛЛА СВОЙ ОТТЕНОК. Нижние остаются
+                // холодными и синими, верхние - кровавыми: высота видна
+                // цветом даже боковым зрением. Ярость сдвигает всю шкалу,
+                // поэтому к пятой цели багровеет и нижний ряд.
+                val heat = ((i + 1f) / GEM_COUNT * 0.62f + rage * 0.38f)
+                    .coerceIn(0f, 1f)
+                gemLightPaint.color = blend(0xFF9FC0FF.toInt(), 0xFFFF5A62.toInt(), heat)
+                gemDarkPaint.color = blend(0xFF3D7EFF.toInt(), 0xFF7A0C14.toInt(), heat)
+                gemGlintPaint.color = blend(0xFFFFFFFF.toInt(), 0xFFFFD9DC.toInt(), heat)
+                gemGlowPaint.color = blend(0xFF7FB2FF.toInt(), bloodHi, heat)
+                gemGlowPaint.alpha = ((60f + 60f * gl) * (1f + 0.35f * heat))
+                    .toInt().coerceIn(0, 255)
+                canvas.drawCircle(gemCx[i], gemCy[i],
+                    gemSz[i] * (2.1f + 0.35f * gl + 0.45f * heat), gemGlowPaint)
                 canvas.drawPath(gemBody[i], gemLightPaint)
                 canvas.drawPath(gemDark[i], gemDarkPaint)
                 canvas.drawPath(gemGlint[i], gemGlintPaint)
+                // Кровавые кристаллы капают. Капля живёт своим циклом,
+                // поэтому пять кристаллов не капают строем.
+                if (heat > 0.45f) {
+                    var g = (tms * 0.00035f + i * 0.37f) % 1f
+                    if (g < 0f) g += 1f
+                    bloodPaint.color = blend(0xFFFF5A62.toInt(), bloodLo, 0.35f)
+                    bloodPaint.alpha = ((255f * (1f - g)) * (heat - 0.45f) / 0.55f)
+                        .toInt().coerceIn(0, 255)
+                    canvas.drawCircle(gemCx[i], gemCy[i] + gemSz[i] * (1.1f + 3.2f * g * g),
+                        (2.2f - 1.1f * g) * d, bloodPaint)
+                }
             } else {
                 canvas.drawPath(gemBody[i], gemDeadPaint)
                 if (next) {
@@ -1103,7 +1268,9 @@ class CrystalRingView @JvmOverloads constructor(
             canvas.drawPath(gemBody[i], gemEdgePaint)
         }
         // Снежная шапка.
-        fillPaint.color = if (maxed) 0xFFF0E4FF.toInt() else snowColor
+        // Снег на вершине пропитывается: сначала розовеет, к пятой цели
+        // становится почти сплошь красным.
+        fillPaint.color = blend(snowColor, 0xFFFFC2C6.toInt(), rage)
         canvas.drawPath(snowPath, fillPaint)
 
         // Вчерашний уровень на той же шкале (0..5 целей).
@@ -1117,10 +1284,15 @@ class CrystalRingView @JvmOverloads constructor(
 
         // Жирный двойной контур: тёмная основа + яркий кант.
         canvas.drawPath(mountainPath, contourPaint)
+        // Кант горы разогревается вместе со всем остальным.
+        kantPaint.color = blend(kantColor, bloodHi, rage)
+        kantPaint.strokeWidth = (2.4f + 1.2f * rage) * d
         canvas.drawPath(mountainPath, kantPaint)
+        // Следы того, кто прошёл здесь до тебя.
+        if (rage > 0.12f) drawRaptorTracks(canvas, tms, rage)
         // Разряды приходят уже с 20% цели: редкие и слабые вначале,
         // частые и яркие ближе к цели.
-        if (wake > 0f) drawStrike(canvas, tms, maxed, wake)
+        if (wake > 0f) drawStrike(canvas, tms, maxed, wake, rage)
         if (maxed) drawWind(canvas, tms)
 
         // Искры вспыхивают только у ВЗЯТЫХ целей - награда, а не украшение.

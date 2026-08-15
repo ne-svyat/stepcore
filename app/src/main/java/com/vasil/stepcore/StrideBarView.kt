@@ -52,7 +52,29 @@ class StrideBarView @JvmOverloads constructor(
     fun setData(walkSteps: Int, runSteps: Int, dayGoal: Int) {
         if (walk == walkSteps && run == runSteps && goal == dayGoal) return
         walk = walkSteps; run = runSteps; goal = if (dayGoal > 0) dayGoal else 10000
+        // Полоска живёт в одной палитре с горой: та же ярость, тот же
+        // подъём от холодного к кровавому. Иначе на экране два разных
+        // мира - гора уже багровая, а полоска под ней всё ещё синяя.
+        val rage = (((walk + run).toFloat() / goal - 1f) / 4f).coerceIn(0f, 1f)
+        walkPaint.color = blendTone(
+            androidx.core.content.ContextCompat.getColor(context, R.color.accent_blue),
+            0xFF7E1330.toInt(), rage * 0.75f)
+        runPaint.color = blendTone(
+            androidx.core.content.ContextCompat.getColor(context, R.color.accent_red),
+            0xFF6B1014.toInt(), rage)
         invalidate()
+    }
+
+    /** Смешение двух тонов по доле t. Своя копия: вьюха ни от кого не зависит. */
+    private fun blendTone(a: Int, b: Int, t: Float): Int {
+        val k = t.coerceIn(0f, 1f)
+        return android.graphics.Color.argb(255,
+            (android.graphics.Color.red(a) + (android.graphics.Color.red(b) -
+                android.graphics.Color.red(a)) * k).toInt(),
+            (android.graphics.Color.green(a) + (android.graphics.Color.green(b) -
+                android.graphics.Color.green(a)) * k).toInt(),
+            (android.graphics.Color.blue(a) + (android.graphics.Color.blue(b) -
+                android.graphics.Color.blue(a)) * k).toInt())
     }
 
     override fun onDraw(canvas: Canvas) {
