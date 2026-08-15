@@ -104,6 +104,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var accuracyBadge: TextView
     private lateinit var cargoChip: TextView
     private lateinit var motiveScroll: MotiveScrollView
+    /** Докрутка числа шагов. Хранится, чтобы новый прирост отменял старую. */
+    private var stepsCounter: android.animation.ValueAnimator? = null
     private val quipHandler = android.os.Handler(android.os.Looper.getMainLooper())
     /** Смена реплики через случайные 15-60 с: ритм не должен быть машинным. */
     private val quipTick = object : Runnable {
@@ -417,7 +419,25 @@ class MainActivity : AppCompatActivity() {
                 launch {
                     var prev = -1
                     StepsState.steps.collect { s ->
-                        stepsView.text = s.toString()
+                        // Прирост в один-два шага показывается сразу. Большой
+                        // скачок (вернулись на экран после прогулки) число
+                        // ДОКРУЧИВАЕТ: иначе счётчик просто подменяется, и
+                        // пройденное не читается как пройденное.
+                        stepsCounter?.cancel()
+                        if (prev >= 0 && s - prev > 5) {
+                            val from = prev
+                            val anim = android.animation.ValueAnimator.ofInt(from, s)
+                            anim.duration = (260L + (s - from) * 2L).coerceAtMost(900L)
+                            anim.interpolator =
+                                android.view.animation.DecelerateInterpolator()
+                            anim.addUpdateListener { a ->
+                                stepsView.text = (a.animatedValue as Int).toString()
+                            }
+                            stepsCounter = anim
+                            anim.start()
+                        } else {
+                            stepsView.text = s.toString()
+                        }
                         refreshRing(s)
                         // Число ТОЛКАЕТСЯ на каждом приросте: видно, что счётчик
                         // живой, без единой лишней надписи. Толчок короткий и

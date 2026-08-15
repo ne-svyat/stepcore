@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Уход экрана вглубь: он не исчезает, а отступает за новый. -->
+<set xmlns:android="http://schemas.android.com/apk/res/android"
+    android:interpolator="@android:anim/accelerate_interpolator"
+    android:shareInterpolator="true">
+    <alpha android:fromAlpha="1.0" android:toAlpha="0.0" android:duration="180" />
+    <scale
+        android:fromXScale="1.0" android:toXScale="1.03"
+        android:fromYScale="1.0" android:toYScale="1.03"
+        android:pivotX="50%p" android:pivotY="55%p"
+        android:duration="200" />
+</set>

@@ -18,5 +18,18 @@
              моноширинность несёт смысл (колонки чисел). -->
         <item name="android:fontFamily">@font/rubik</item>
         <item name="fontFamily">@font/rubik</item>
+        <!-- ПЕРЕХОДЫ МЕЖДУ ЭКРАНАМИ ЗАДАНЫ В ТЕМЕ, А НЕ В ЭКРАНАХ.
+             overridePendingTransition пришлось бы звать после каждого
+             startActivity и каждого finish - то есть в двух десятках мест,
+             и новый экран получил бы рывок просто потому, что о вызове
+             забыли. Тема - воронка: её нельзя обойти. -->
+        <item name="android:windowAnimationStyle">@style/Anim.StepCore</item>
+    </style>
+
+    <style name="Anim.StepCore" parent="@android:style/Animation.Activity">
+        <item name="android:activityOpenEnterAnimation">@anim/screen_enter</item>
+        <item name="android:activityOpenExitAnimation">@anim/screen_exit</item>
+        <item name="android:activityCloseEnterAnimation">@anim/screen_pop_enter</item>
+        <item name="android:activityCloseExitAnimation">@anim/screen_pop_exit</item>
     </style>
 </resources>

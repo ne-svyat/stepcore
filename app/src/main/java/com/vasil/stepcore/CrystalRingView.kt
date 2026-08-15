@@ -30,6 +30,11 @@ class CrystalRingView @JvmOverloads constructor(
 
     private var storedLap = 0
     private var storedFrac = 0f
+    // Цель заливки (данные) и показанный уровень (картинка). Показанный
+    // всегда стартует с нуля - гора наливается на глазах при каждом входе.
+    private var targetLevel = 0f
+    private var shownLevel = 0f
+    private var lastFrameMs = 0L
     private var storedWShare = 0f
     private var storedTotal = 0
     private var storedGoal = 10000
@@ -114,6 +119,12 @@ class CrystalRingView @JvmOverloads constructor(
     // Пять алмазов - пять целей (×1..×5). Число вынесено, чтобы шкала
     // достижений и ярусы заливки никогда не разъехались.
     private val GEM_COUNT = 5
+    /**
+     * Постоянная времени догоняния уровня, мс: за неё остаток
+     * сокращается в e раз. 260 мс - заливка успевает прочитаться и не
+     * заставляет ждать.
+     */
+    private val LEVEL_TAU_MS = 260f
     private val sparkX = FloatArray(GEM_COUNT)
     private val sparkY = FloatArray(GEM_COUNT)
     private val gemCx = FloatArray(GEM_COUNT)
@@ -184,17 +195,42 @@ class CrystalRingView @JvmOverloads constructor(
     private val moonStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 1.6f * d; color = 0xFFD9B45F.toInt() }
     private val sparkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = 0xFFFFFFFF.toInt() }
 
+    /**
+     * ДАННЫЕ И ПОКАЗ - РАЗНЫЕ ВЕЛИЧИНЫ.
+     *
+     * Прежде уровень ставился мгновенно, и это врало глазу дважды. При
+     * открытии экрана гора возникала уже заполненной - пройденный день не
+     * читался вовсе. А когда экран открывали после долгой прогулки, уровень
+     * прыгал ступенькой на пол-горы: изменение было, а движения не было.
+     *
+     * Теперь setData задаёт ЦЕЛЬ, а показанный уровень догоняет её в кадре
+     * (см. onDraw). Число целей для бейджа считается по-прежнему точно и
+     * мгновенно: это данные, их сглаживать нельзя.
+     */
     fun setData(walk: Int, run: Int, goal: Int, yesterdayTotal: Int) {
         storedTotal = walk + run
         storedGoal = if (goal > 0) goal else 10000
         storedYesterday = yesterdayTotal
         val p = if (storedTotal <= 0) 0f else storedTotal.toFloat() / storedGoal
         badgeLap = p.toInt()
-        val pCapped = p.coerceAtMost(5f)
-        storedLap = pCapped.toInt().coerceAtMost(4)
-        storedFrac = if (pCapped >= 5f) 1f else pCapped - storedLap
+        targetLevel = p.coerceAtMost(5f)
         storedWShare = if (storedTotal > 0) walk.toFloat() / storedTotal else 0f
         invalidate()
+    }
+
+    /**
+     * Показанный уровень догоняет цель за кадр длиной dtMs.
+     *
+     * Экспоненциальное приближение: скорость пропорциональна остатку,
+     * поэтому большой прирост стартует быстро и мягко тормозит у цели.
+     * Привязка к РЕАЛЬНОМУ времени кадра, а не к числу кадров: при
+     * просадке частоты движение не растянется.
+     */
+    private fun advanceLevel(dtMs: Long) {
+        val gap = targetLevel - shownLevel
+        if (Math.abs(gap) < 0.0005f) { shownLevel = targetLevel; return }
+        val k = 1f - Math.exp(-dtMs / LEVEL_TAU_MS.toDouble()).toFloat()
+        shownLevel += gap * k
     }
 
     /** Сколько целей ПОЛНОСТЬЮ пройдено сегодня (для бейджа ×N). */
@@ -908,8 +944,19 @@ class CrystalRingView @JvmOverloads constructor(
         val bodyH = bodyBottom - bodyTop
         val tierH = bodyH / 5f
 
-        val prog = if (storedGoal > 0) storedTotal.toFloat() / storedGoal else 0f
         val tms = System.currentTimeMillis()
+        // Шаг догоняния считается по фактическому промежутку между
+        // кадрами и ограничен сверху: после сворачивания экрана пауза
+        // может быть в минуты, и один кадр не должен съедать всю анимацию.
+        val dt = if (lastFrameMs == 0L) 16L else (tms - lastFrameMs).coerceIn(1L, 120L)
+        lastFrameMs = tms
+        advanceLevel(dt)
+
+        // Вся картинка живёт по ПОКАЗАННОМУ уровню: заливка, ярусы, тропа,
+        // алмазы, разряды и сияние трогаются одновременно.
+        val prog = shownLevel
+        storedLap = prog.toInt().coerceAtMost(4)
+        storedFrac = if (prog >= 5f) 1f else prog - storedLap
         val maxed = prog >= 5f
 
         // Пробуждение горы начинается с 20% цели, а не с первой взятой
@@ -1088,7 +1135,9 @@ class CrystalRingView @JvmOverloads constructor(
         // Вершина при ×5: живая энергия вместо круга со спицами.
         if (maxed) drawSummitEnergy(canvas, tms)
 
-        // Живая молния: перерисовка ~14 к/с, только пока есть заряд (батарея).
-        if (storedTotal > 0) postInvalidateDelayed(70)
+        // Перерисовка ~22 к/с (было 14): на 14 к/с разряд и ветер шли
+        // рывками - глаз ловит именно неравномерность, а не частоту.
+        // Кадры по-прежнему тратятся, только пока есть заряд.
+        if (storedTotal > 0 || shownLevel != targetLevel) postInvalidateDelayed(45)
     }
 }
