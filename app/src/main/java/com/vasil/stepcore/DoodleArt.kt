@@ -1231,6 +1231,8 @@ class DoodleSceneView @JvmOverloads constructor(
         const val HISTORY = 8      // История: тетради, страницы (серый)
 
         private const val DECOR_ALPHA = 130
+        /** Точек в кривой тропы следов. Больше - плавнее, дороже кэш. */
+        private const val TRAIL_PTS = 40
     }
 
     private var scene = HEADER
@@ -1484,46 +1486,134 @@ class DoodleSceneView @JvmOverloads constructor(
      * Голова цикла бежит по следам, за ней затухающий хвост; в конце
      * периода всё гаснет и путь повторяется. Свечение - янтарное.
      */
+    // Путь следов кэшируется по размеру вьюхи: в кадре только отрисовка.
+    private val trailPX = FloatArray(TRAIL_PTS)
+    private val trailPY = FloatArray(TRAIL_PTS)
+    private val trailLen = FloatArray(TRAIL_PTS)
+    private var trailKey = 0
+    private val footPath = Path()
+
+    /**
+     * Тропа следов от ёлок к вершине.
+     *
+     * Что было не так. След рисовался одним овалом, все следы были
+     * одинакового размера, шли по двум прямым отрезкам и стояли через
+     * равные промежутки. Получалась пунктирная линия, а не чей-то путь.
+     *
+     * Что сделано:
+     *  - ФОРМА. След - подошва: широкий передок, узкий свод, круглая
+     *    пятка, плюс отпечаток каблука отдельным пятном. Левый и правый
+     *    зеркальны и развёрнуты носком наружу, как ставит ногу человек.
+     *  - ПЕРСПЕКТИВА. Вверх по склону след мельчает до 45% и шаг
+     *    укорачивается: подъём короче шагом, и он дальше от смотрящего.
+     *  - ГЛУБИНА. Под каждым следом лежит тёмная вмятина со смещением -
+     *    отпечаток продавлен, а не наклеен.
+     *  - ЖИВОСТЬ. Свежий след впечатывается: первые доли секунды он чуть
+     *    крупнее и ярче, потом садится. Старые гаснут по порядку.
+     *  - ПУТЬ. Кривая, а не два отрезка: земля у ёлок, затем подъём по
+     *    левому ребру горы к самой вершине.
+     */
     private fun footprints(c: Canvas, w: Float, h: Float) {
         val base = h * 0.95f
-        val ax = w * 0.03f; val ay = base
-        val bx = w * 0.32f; val by = base
-        val cx = w * 0.508f; val cy = base - h * 0.62f
-        val n = 16
-        val period = 7f
-        val head = ((BoilClock.phase / period) % 1f) * (n + 5)
+        val key = (w.toInt() shl 16) xor h.toInt()
+        if (key != trailKey) {
+            // Квадратичная кривая: старт у ёлок, изгиб у подножия,
+            // конец - вершина среднего пика (mountainsRich: x0+0.52*ww).
+            val ax = w * 0.02f; val ay = base
+            val bx = w * 0.36f; val by = base + h * 0.02f
+            val ex = w * 0.505f; val ey = base - h * 0.60f
+            for (k in 0 until TRAIL_PTS) {
+                val t = k.toFloat() / (TRAIL_PTS - 1)
+                val u = 1f - t
+                trailPX[k] = u * u * ax + 2f * u * t * bx + t * t * ex
+                trailPY[k] = u * u * ay + 2f * u * t * by + t * t * ey
+                trailLen[k] = if (k == 0) 0f else trailLen[k - 1] +
+                    Math.hypot((trailPX[k] - trailPX[k - 1]).toDouble(),
+                        (trailPY[k] - trailPY[k - 1]).toDouble()).toFloat()
+            }
+            trailKey = key
+        }
+        val total = trailLen[TRAIL_PTS - 1]
+        if (total <= 0f) return
+
+        val n = 20
+        val period = 8.5f
+        val head = ((BoilClock.phase / period) % 1f) * (n + 6)
+
         for (i in 0 until n) {
             val rel = head - i
             if (rel < 0f) continue
-            val a = 1f - rel / 6f
+            var a = 1f - rel / 7f
             if (a <= 0f) continue
-            val t = i.toFloat() / (n - 1)
-            val px: Float; val py: Float; val dx: Float; val dy: Float
-            if (t <= 0.55f) {
-                val tt = t / 0.55f
-                px = ax + (bx - ax) * tt; py = ay + (by - ay) * tt
-                dx = bx - ax; dy = by - ay
-            } else {
-                val tt = (t - 0.55f) / 0.45f
-                px = bx + (cx - bx) * tt; py = by + (cy - by) * tt
-                dx = cx - bx; dy = cy - by
-            }
+
+            // Шаг укорачивается к вершине: доля пути растёт быстрее номера.
+            val t = Math.pow(i.toDouble() / (n - 1), 1.28).toFloat()
+            val far = t                                   // 0 близко, 1 далеко
+            val sAt = t * total
+            var k = 1
+            while (k < TRAIL_PTS - 1 && trailLen[k] < sAt) k++
+            val seg = (trailLen[k] - trailLen[k - 1]).coerceAtLeast(0.001f)
+            val f = ((sAt - trailLen[k - 1]) / seg).coerceIn(0f, 1f)
+            val px = trailPX[k - 1] + (trailPX[k] - trailPX[k - 1]) * f
+            val py = trailPY[k - 1] + (trailPY[k] - trailPY[k - 1]) * f
+            val dx = trailPX[k] - trailPX[k - 1]
+            val dy = trailPY[k] - trailPY[k - 1]
             val len = Math.hypot(dx.toDouble(), dy.toDouble()).toFloat().coerceAtLeast(0.001f)
             val ux = dx / len; val uy = dy / len
+
+            // Левая и правая нога по разные стороны осевой линии.
             val side = if (i % 2 == 0) 1f else -1f
-            val off = w * 0.012f
+            val off = w * 0.011f * (1f - 0.5f * far)
             val fx = px + (-uy) * side * off
             val fy = py + ux * side * off
-            val ang = Math.toDegrees(Math.atan2(uy.toDouble(), ux.toDouble())).toFloat()
+
+            // Носок развёрнут наружу - так ставит ногу человек.
+            val ang = Math.toDegrees(Math.atan2(uy.toDouble(), ux.toDouble())).toFloat() +
+                side * 7f
+
+            // Впечатывание свежего следа.
+            val press = if (rel < 0.8f) 1f + 0.22f * (1f - rel / 0.8f) else 1f
+            if (rel < 0.8f) a = (a + 0.25f * (1f - rel / 0.8f)).coerceAtMost(1f)
+            val sz = w * 0.019f * (1f - 0.55f * far) * press
+
+            c.save()
+            c.translate(fx, fy)
+            c.rotate(ang)
+            // Вмятина под следом.
+            footPaint.color = 0xFF1A1206.toInt()
+            footPaint.alpha = (150f * a).toInt().coerceIn(0, 255)
+            solePath(sz * 1.12f, sz * 0.60f, 0.6f * d, 0.6f * d)
+            c.drawPath(footPath, footPaint)
+            // Сам отпечаток.
             footPaint.color = 0xFFFFD98A.toInt()
-            footPaint.alpha = (210f * a).toInt().coerceIn(0, 255)
-            val fl = w * 0.016f; val fw = w * 0.008f
-            c.save(); c.translate(fx, fy); c.rotate(ang)
-            c.drawOval(-fl, -fw, fl, fw, footPaint)
+            footPaint.alpha = (215f * a).toInt().coerceIn(0, 255)
+            solePath(sz, sz * 0.52f, 0f, 0f)
+            c.drawPath(footPath, footPaint)
+            // Каблук отдельным пятном: подошва не сплошная.
+            footPaint.alpha = (150f * a).toInt().coerceIn(0, 255)
+            c.drawOval(-sz * 0.98f, -sz * 0.34f, -sz * 0.42f, sz * 0.34f, footPaint)
             c.restore()
         }
         footPaint.alpha = 255
     }
+
+    /**
+     * Подошва в местных координатах (носок вправо): широкий передок,
+     * узкий свод, круглая пятка. Строится в поле footPath - без
+     * аллокаций в кадре.
+     */
+    private fun solePath(l: Float, wd: Float, ox: Float, oy: Float) {
+        footPath.reset()
+        footPath.moveTo(ox + l * 0.98f, oy)
+        footPath.quadTo(ox + l * 0.92f, oy - wd, ox + l * 0.30f, oy - wd * 0.92f)
+        footPath.quadTo(ox + l * 0.02f, oy - wd * 0.42f, ox - l * 0.46f, oy - wd * 0.72f)
+        footPath.quadTo(ox - l * 1.05f, oy - wd * 0.55f, ox - l * 1.02f, oy)
+        footPath.quadTo(ox - l * 1.05f, oy + wd * 0.55f, ox - l * 0.46f, oy + wd * 0.72f)
+        footPath.quadTo(ox + l * 0.02f, oy + wd * 0.42f, ox + l * 0.30f, oy + wd * 0.92f)
+        footPath.quadTo(ox + l * 0.92f, oy + wd, ox + l * 0.98f, oy)
+        footPath.close()
+    }
+
     private fun fill(c: Int, a: Int = DECOR_ALPHA) = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL; color = c; alpha = a
     }
