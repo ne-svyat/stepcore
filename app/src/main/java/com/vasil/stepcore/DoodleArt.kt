@@ -58,6 +58,20 @@ internal object BoilClock {
 
     private var ticks = 0L
     private val listeners = LinkedHashSet<() -> Unit>()
+    /**
+     * Снимок подписчиков для обхода.
+     *
+     * Обход шёл по `ArrayList(listeners)` - копия всего списка двадцать
+     * раз в секунду, то есть ровно тот мусор, который мы вычищали из
+     * отрисовки, только в самом сердце механизма. Копия была нужна не
+     * зря: подписчик вправе отписаться прямо в своём обработчике, а
+     * правка набора во время обхода роняет итератор.
+     *
+     * Снимок решает обе задачи: он пересобирается ТОЛЬКО когда набор
+     * изменился, а обход всегда идёт по массиву, который никто не трогает.
+     */
+    private var snapshot: Array<() -> Unit> = emptyArray()
+    private var snapshotDirty = true
     private val handler = Handler(Looper.getMainLooper())
 
     /**
@@ -86,7 +100,12 @@ internal object BoilClock {
             ticks++
             phase = (ticks * TICK_MS).toFloat() / 1000f
             if (ticks % BOIL_EVERY == 0L) frame = (frame + 1) % FRAMES
-            for (l in ArrayList(listeners)) l()
+            if (snapshotDirty) {
+                snapshot = listeners.toTypedArray()
+                snapshotDirty = false
+            }
+            val snap = snapshot
+            for (i in snap.indices) snap[i]()
             if (running) handler.postDelayed(this, TICK_MS)
         }
     }
@@ -97,14 +116,17 @@ internal object BoilClock {
     }
 
     fun register(l: () -> Unit) {
-        listeners.add(l)
+        if (listeners.add(l)) snapshotDirty = true
         restartIfNeeded()
     }
 
     fun unregister(l: () -> Unit) {
-        listeners.remove(l)
+        if (listeners.remove(l)) snapshotDirty = true
         restartIfNeeded()
     }
+
+    /** Сколько подписчиков сейчас живо. Нужно проверке на утечку. */
+    fun listenerCount(): Int = listeners.size
 
     /** Экран стал видимым (Activity.onStart). */
     fun screenStarted() {
@@ -588,6 +610,12 @@ class DoodleBorderDrawable(
         /** Каждый какой такт обновляется мелкая плита. */
         private const val SLOW_EVERY = 4
         /**
+         * Сколько ждать без отрисовки, прежде чем считать плиту ушедшей.
+         * 1200 мс с запасом больше самого редкого случая - мелкой плиты,
+         * которую рисуют раз в четыре такта (200 мс).
+         */
+        private const val DEAD_MS = 1200L
+        /**
          * Зажигание плиты, мс. Было 420 при режущем клипе; со завесой
          * движение читается быстрее, а ждать нечего - содержимое видно
          * сразу, поэтому короче и честнее.
@@ -702,13 +730,35 @@ class DoodleBorderDrawable(
     /** Готовые варианты контура - по одному на кадр "кипения". */
     private val frames = Array(BoilClock.FRAMES) { Path() }
     private var builtFor = Rect()
+    /**
+     * ПОДПИСКА ЖИВЁТ РОВНО СТОЛЬКО, СКОЛЬКО НАС РИСУЮТ.
+     *
+     * С v398 плита подписывается при отрисовке - это починило мёртвый
+     * холодный старт, но открыло дыру с другой стороны: отписка осталась
+     * только в setVisible(false). Экран, который просто уничтожили,
+     * setVisible не получает. Значит подписка оставалась в общем наборе
+     * навсегда, а вместе с ней жила цепочка «плита -> вьюха -> экран»:
+     * каждый заход в Историю, Профиль или Статистику добавлял в память
+     * ещё один мёртвый экран и ещё десяток холостых вызовов в такте.
+     * За долгую сессию это и деньги за батарею, и растущая память.
+     *
+     * Чинить симметрично (отписка в onDetachedFromWindow) нельзя: у
+     * Drawable нет такого события. Поэтому подписка САМОПРОВЕРЯЕМАЯ: если
+     * нас не рисовали дольше DEAD_MS, значит нас больше нет на экране -
+     * подписка снимается сама. Вернут на экран - draw подпишет заново,
+     * этот путь уже работает с v398.
+     */
     private val onTick: () -> Unit = {
-        if (needsFullRate()) invalidateSelf()
+        if (android.os.SystemClock.uptimeMillis() - lastDrawMs > DEAD_MS) {
+            BoilClock.unregister(onTick); subscribed = false
+        } else if (needsFullRate()) invalidateSelf()
         else {
             tickSkip = (tickSkip + 1) % SLOW_EVERY
             if (tickSkip == 0) invalidateSelf()
         }
     }
+    /** Когда нас рисовали в последний раз. Ноль - ещё ни разу. */
+    private var lastDrawMs = 0L
 
     /** Идёт ли на плите событие, требующее полной частоты кадров. */
     private fun needsFullRate(): Boolean {
@@ -930,6 +980,7 @@ class DoodleBorderDrawable(
         // Отрисовка - воронка, через которую проходит ЛЮБАЯ живая плита:
         // если нас рисуют, мы обязаны быть подписаны. Отписка остаётся в
         // setVisible(false), так что фон по-прежнему не тикает.
+        lastDrawMs = android.os.SystemClock.uptimeMillis()
         if (!subscribed && isVisible) {
             BoilClock.register(onTick); subscribed = true
         }
