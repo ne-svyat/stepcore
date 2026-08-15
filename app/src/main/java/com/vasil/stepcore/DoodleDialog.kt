@@ -9,6 +9,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.Window
+import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -34,6 +35,9 @@ import androidx.core.content.ContextCompat
  * обрезается на маленьком экране.
  */
 object DoodleDialog {
+
+    /** Потолок высоты прокрутки, пиксели. Ставится перед сборкой окна. */
+    private var scrollMax = 0
 
     fun info(
         ctx: Context,
@@ -73,10 +77,18 @@ object DoodleDialog {
 
         val text = TextView(ctx)
         text.text = body
-        text.textSize = 15f
+        text.textSize = 16f
         text.setTextColor(ContextCompat.getColor(ctx, R.color.text_main))
-        text.setLineSpacing(2.5f * d, 1.02f)
-        val scroll = ScrollView(ctx)
+        text.setLineSpacing(3f * d, 1.03f)
+        // Высота окна ограничена: длинный текст (калории) прокручивается,
+        // а не выталкивает кнопку за край экрана.
+        scrollMax = (ctx.resources.displayMetrics.heightPixels * 0.62f).toInt()
+        val scroll = object : ScrollView(ctx) {
+            override fun onMeasure(wSpec: Int, hSpec: Int) {
+                super.onMeasure(wSpec, MeasureSpec.makeMeasureSpec(
+                    scrollMax, MeasureSpec.AT_MOST))
+            }
+        }
         scroll.isVerticalScrollBarEnabled = true
         scroll.addView(text)
         root.addView(scroll, LinearLayout.LayoutParams(
@@ -103,6 +115,11 @@ object DoodleDialog {
         dlg.requestWindowFeature(Window.FEATURE_NO_TITLE)
         dlg.setContentView(root)
         dlg.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        // Экран под окном ГАСИТСЯ. Без этого пёстрый главный экран
+        // продолжал спорить с текстом, и окно читалось как прозрачное,
+        // даже когда плита под ним была плотной.
+        dlg.window?.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+        dlg.window?.attributes = dlg.window?.attributes?.apply { dimAmount = 0.78f }
         dlg.window?.setLayout(
             (ctx.resources.displayMetrics.widthPixels * 0.93f).toInt(),
             ViewGroup.LayoutParams.WRAP_CONTENT)

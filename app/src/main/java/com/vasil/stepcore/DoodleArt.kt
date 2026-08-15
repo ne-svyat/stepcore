@@ -622,6 +622,18 @@ class DoodleBorderDrawable(
         style = Paint.Style.FILL
         color = fillColor
     }
+    // ГЛУХОЕ ОСНОВАНИЕ. Заливка плиты идёт градиентом, а поверх неё живут
+    // полупрозрачные слои (фактура, пыль, свет). Пока под ними ничего нет,
+    // сквозь плиту просвечивает то, что за окном, и текст читается плохо -
+    // особенно у окна-объяснения, под которым лежит пёстрый главный экран.
+    // Основание рисуется первым и всегда непрозрачно.
+    private val basePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = android.graphics.Color.argb(255,
+            (android.graphics.Color.red(fillColor) * 0.55f).toInt(),
+            (android.graphics.Color.green(fillColor) * 0.55f).toInt(),
+            (android.graphics.Color.blue(fillColor) * 0.55f).toInt())
+    }
     // UI-2: резной бевел. Светлый кант ловит свет сверху-слева, тёмная
     // грань уводит вглубь снизу-справа - плита читается как вырезанная.
     private val hiPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -847,6 +859,22 @@ class DoodleBorderDrawable(
     }
 
     override fun draw(canvas: Canvas) {
+        // ПОДПИСКА В ВОРОНКЕ, А НЕ В СОБЫТИИ.
+        //
+        // Подписка стояла только в setVisible. Но Drawable создаётся уже
+        // видимым (isVisible = true по умолчанию), и при первом показе
+        // экрана система НЕ зовёт setVisible - звать нечего, состояние не
+        // менялось. Поэтому на холодном старте плиты не подписывались
+        // вовсе и стояли мёртвыми; стоило уйти на другую вкладку и
+        // вернуться - видимость окна дёргалась false->true, setVisible
+        // наконец приходил, и всё оживало. Ровно этот симптом и был.
+        //
+        // Отрисовка - воронка, через которую проходит ЛЮБАЯ живая плита:
+        // если нас рисуют, мы обязаны быть подписаны. Отписка остаётся в
+        // setVisible(false), так что фон по-прежнему не тикает.
+        if (!subscribed && isVisible) {
+            BoilClock.register(onTick); subscribed = true
+        }
         // Контур СТАТИЧЕН: смена вариантов кадра давала рывки, которые на
         // фоне плавных сцен читались как фриз. Живут только свет и частицы.
         val p = frames[0]
@@ -866,7 +894,10 @@ class DoodleBorderDrawable(
         // тёмная грань снизу-справа (глубина), затем светлый кант сверху-слева
         canvas.save(); canvas.translate(off, off); canvas.drawPath(p, shPaint); canvas.restore()
         canvas.save(); canvas.translate(-off, -off); canvas.drawPath(p, hiPaint); canvas.restore()
-        if (fillColor != Color.TRANSPARENT) canvas.drawPath(bodyPath, fillPaint)
+        if (fillColor != Color.TRANSPARENT) {
+            canvas.drawPath(bodyPath, basePaint)
+            canvas.drawPath(bodyPath, fillPaint)
+        }
         if (bigEnough) {
             canvas.save(); canvas.clipPath(bodyPath)
             drawTexture(canvas)
