@@ -585,6 +585,8 @@ class DoodleBorderDrawable(
         const val MAT_FIRE = 3       // тёплое дрожащее свечение
         const val MAT_ICE = 4        // резкий кант + холодный отблеск
         const val MAT_MECH = 5       // сегментированный контур (пунктир)
+        /** Каждый какой такт обновляется мелкая плита. */
+        private const val SLOW_EVERY = 4
         /** Наливание плиты при появлении, мс. */
         private const val REVEAL_MS = 420f
         /** Период пробега огонька по канту, с. */
@@ -663,7 +665,12 @@ class DoodleBorderDrawable(
     private val cornerStyle = IntArray(4)
     // Пыль: у каждой плиты свой узор (сид), стабильный между кадрами.
     private val dustPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
-    private val DUST_N = 10
+    /**
+     * Пылинок на плите. Было десять: на карточке в половину экрана
+     * разница между шестью и десятью не читается, а стоит она четырёх
+     * лишних окружностей в кадре на КАЖДОЙ плите.
+     */
+    private val DUST_N = 6
     private val dustX = FloatArray(DUST_N)
     private val dustPhase = FloatArray(DUST_N)
     private val dustSpeed = FloatArray(DUST_N)
@@ -691,7 +698,24 @@ class DoodleBorderDrawable(
     /** Готовые варианты контура - по одному на кадр "кипения". */
     private val frames = Array(BoilClock.FRAMES) { Path() }
     private var builtFor = Rect()
-    private val onTick: () -> Unit = { invalidateSelf() }
+    private val onTick: () -> Unit = {
+        if (needsFullRate()) invalidateSelf()
+        else {
+            tickSkip = (tickSkip + 1) % SLOW_EVERY
+            if (tickSkip == 0) invalidateSelf()
+        }
+    }
+
+    /** Идёт ли на плите событие, требующее полной частоты кадров. */
+    private fun needsFullRate(): Boolean {
+        if (bigEnough) return true
+        if (bornAt == 0L) return true
+        if (android.os.SystemClock.uptimeMillis() - bornAt < REVEAL_MS) return true
+        if (pathLen <= 0f) return false
+        var t = BoilClock.phase / SPARK_PERIOD + sparkOffset
+        t -= Math.floor(t.toDouble()).toFloat()
+        return t <= SPARK_RUN
+    }
     private var subscribed = false
 
     // ---------- Оживление рамки ----------
@@ -709,6 +733,28 @@ class DoodleBorderDrawable(
     // вспыхивают строем, а перекликаются.
     private val pathMeasure = android.graphics.PathMeasure()
     private val sparkPath = Path()
+
+    // ---------- Кадр без мусора ----------
+    // Отрисовка фактуры выделяла в КАЖДОМ кадре: FloatArray(3) на точку
+    // периметра, Path на огонёк, Path на каждую жилу молнии, массив
+    // массивов на углы инея. При двадцати кадрах в секунду и полутора
+    // десятках плит на экране это сотни объектов в секунду - сборщик
+    // мусора просыпается и даёт ровно те подёргивания, которые читаются
+    // как фриз. Отрисовка обязана быть без единой аллокации: все буферы
+    // живут в полях и переиспользуются.
+    private val texPt = FloatArray(3)
+    private val texPath = Path()
+    private val texCorner = FloatArray(2)
+
+    // ---------- Экономия кадров ----------
+    // Не каждой плите нужно 20 кадров в секунду. Мелкая фишка живёт
+    // только фактурой: её движение на площади в палец не читается вовсе,
+    // а перерисовка стоит столько же, сколько у крупной карточки, потому
+    // что тянет за собой перерисовку всей вьюхи. Мелкие обновляются
+    // каждый четвёртый такт (5 к/с), крупные - каждый такт.
+    // Наливание и пробег огонька идут на полной частоте всегда: это
+    // короткие события, и рывок в них виден сразу.
+    private var tickSkip = 0
     private var pathLen = 0f
     private var bornAt = 0L
     private val sparkOffset = ((seed * 2654435761L) ushr 33).toFloat() % 1f
@@ -1032,7 +1078,7 @@ class DoodleBorderDrawable(
     /** Фактура материала по площади плиты: лаконично, у кромок и в углах. */
     private fun drawTexture(canvas: Canvas) {
         val ph = BoilClock.phase
-        val pt = FloatArray(3)
+        val pt = texPt
         when (material) {
             MAT_ROPE -> {
                 // Узлы с перевязкой: сидят на кромке и слегка «дышат».
@@ -1055,7 +1101,8 @@ class DoodleBorderDrawable(
                 // Огонёк у нижней кромки и поднимающийся дымок.
                 val fx = pw * 0.13f; val fy = phh - 8f * d
                 val fl = 0.6f + 0.4f * kotlin.math.sin((ph * 6.5f).toDouble()).toFloat()
-                val flame = Path()
+                val flame = texPath
+                flame.reset()
                 flame.moveTo(fx - 4.6f * d, fy)
                 flame.quadTo(fx - 5.2f * d, fy - 7f * d * fl, fx, fy - 14f * d * fl)
                 flame.quadTo(fx + 5.2f * d, fy - 7f * d * fl, fx + 4.6f * d, fy)
@@ -1075,8 +1122,10 @@ class DoodleBorderDrawable(
             }
             MAT_ICE -> {
                 // Иней: кристаллы нарастают из углов, тихо мерцают.
-                val cs = arrayOf(floatArrayOf(10f * d, 10f * d), floatArrayOf(pw - 10f * d, phh - 10f * d))
-                for ((i, cc) in cs.withIndex()) {
+                for (i in 0 until 2) {
+                    val cc = texCorner
+                    if (i == 0) { cc[0] = 10f * d; cc[1] = 10f * d }
+                    else { cc[0] = pw - 10f * d; cc[1] = phh - 10f * d }
                     val tw = 0.55f + 0.45f * kotlin.math.sin((ph * 0.9f + i * 2.0f).toDouble()).toFloat()
                     texLine.color = lighten(strokeColor, 0.55f)
                     texLine.alpha = (130f + 105f * tw).toInt().coerceIn(0, 255)
@@ -1098,7 +1147,8 @@ class DoodleBorderDrawable(
                 texLine.alpha = (110f + 120f * fl).toInt().coerceIn(0, 255)
                 texLine.strokeWidth = 1.9f * d
                 for (i in 0 until 2) {
-                    val vp = Path()
+                    val vp = texPath
+                    vp.reset()
                     val sx = if (i == 0) 9f * d else pw - 9f * d
                     val dir = if (i == 0) 1f else -1f
                     vp.moveTo(sx, 8f * d)
@@ -1428,15 +1478,28 @@ class DoodleSceneView @JvmOverloads constructor(
      * Декор ПОЛУПРОЗРАЧЕН намеренно: он фон, а не контент, и обязан уступать
      * тексту. Первая версия рисовала в полную силу - цифры стало не прочесть.
      */
-    private fun stroke(c: Int, wpx: Float, a: Int = DECOR_ALPHA) =
-        Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE; color = c; alpha = a
-            strokeWidth = wpx * d; strokeJoin = Paint.Join.ROUND; strokeCap = Paint.Cap.ROUND
-        }
+    // Кисти и пути сцены переиспользуются. Ни один вызов не удерживает
+    // возвращённую кисть дольше одной операции рисования - проверено по
+    // всем местам вызова, присваиваний вида `val p = stroke(...)` нет.
+    private val scStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeJoin = Paint.Join.ROUND; strokeCap = Paint.Cap.ROUND
+    }
+    private val scFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val scPathA = Path()
+    private val scPathB = Path()
+    private val scPathC = Path()
+
+    private fun stroke(c: Int, wpx: Float, a: Int = DECOR_ALPHA): Paint {
+        scStroke.color = c
+        scStroke.alpha = a
+        scStroke.strokeWidth = wpx * d
+        return scStroke
+    }
 
     /** Один ярус пушистой ёлки: бахрома веток снизу (кончики вниз). */
     private fun fluffyTier(x: Float, apexY: Float, botY: Float, tw: Float, w: Wobble): Path {
-        val p = Path()
+        val p = scPathA
+        p.reset()
         p.moveTo(x, apexY)
         p.lineTo(x - tw, botY)
         val n = 5
@@ -1507,7 +1570,8 @@ class DoodleSceneView @JvmOverloads constructor(
         val shadow = darkenC(tint, 0.45f)
         val px = floatArrayOf(x0 + ww * 0.22f, x0 + ww * 0.52f, x0 + ww * 0.80f)
         val py = floatArrayOf(baseY - h * 0.72f, baseY - h, baseY - h * 0.60f)
-        val sil = Path()
+        val sil = scPathB
+        sil.reset()
         sil.moveTo(x0, baseY)
         sil.lineTo(px[0], py[0]); sil.lineTo(px[0] + ww * 0.10f, baseY - h * 0.24f)
         sil.lineTo(px[1], py[1]); sil.lineTo(px[1] + ww * 0.10f, baseY - h * 0.22f)
@@ -1522,14 +1586,16 @@ class DoodleSceneView @JvmOverloads constructor(
 
         mtEdge.color = shadow
         for (i in 0 until 3) {
-            val e = Path(); e.moveTo(px[i], py[i]); e.lineTo(px[i], baseY); c.drawPath(e, mtEdge)
+            val e = scPathC
+            e.reset(); e.moveTo(px[i], py[i]); e.lineTo(px[i], baseY); c.drawPath(e, mtEdge)
         }
 
         mtOutline.color = darkenC(tint, 0.55f)
         Doodle.ink(c, sil, mtOutline, 0.7f * d)
 
         for (i in 0 until 3) {
-            val cap = Path()
+            val cap = scPathA
+            cap.reset()
             cap.moveTo(px[i], py[i])
             cap.lineTo(px[i] - h * 0.09f, py[i] + h * 0.13f)
             cap.lineTo(px[i] + h * 0.02f, py[i] + h * 0.09f)
@@ -1553,7 +1619,8 @@ class DoodleSceneView @JvmOverloads constructor(
         skyFill.alpha = (44f * gl).toInt().coerceIn(0, 255); c.drawCircle(cx, cy, r * 1.35f, skyFill)
         // Полный диск: узкий серп читался как «огрызок». Объём даёт
         // затенённый край, узнаваемость - кратеры.
-        val disc = Path(); disc.addCircle(cx, cy, r, Path.Direction.CW)
+        val disc = scPathA
+        disc.reset(); disc.addCircle(cx, cy, r, Path.Direction.CW)
         skyFill.color = lit; skyFill.alpha = 240; c.drawPath(disc, skyFill)
         c.save(); c.clipPath(disc)
         skyFill.color = darkenC(lit, 0.22f); skyFill.alpha = 130
@@ -1585,7 +1652,8 @@ class DoodleSceneView @JvmOverloads constructor(
         }
         skyFill.color = lit; skyFill.alpha = 225; c.drawCircle(cx, cy, r, skyFill)
         skyFill.color = core; skyFill.alpha = 200; c.drawCircle(cx - r * 0.25f, cy - r * 0.25f, r * 0.5f, skyFill)
-        val disc = Path(); disc.addCircle(cx, cy, r, Path.Direction.CW)
+        val disc = scPathA
+        disc.reset(); disc.addCircle(cx, cy, r, Path.Direction.CW)
         skyOutline.color = dark; Doodle.ink(c, disc, skyOutline, 0.6f * d)
         skyFill.alpha = 255
     }
@@ -1593,7 +1661,8 @@ class DoodleSceneView @JvmOverloads constructor(
     private fun cloudRich(c: Canvas, cx: Float, cy: Float, s: Float, w: Wobble, tint: Int) {
         val lit = lightenC(tint, 0.30f)
         val dark = darkenC(tint, 0.28f)
-        val puff = Path()
+        val puff = scPathA
+        puff.reset()
         puff.moveTo(cx - s * 1.4f, cy)
         puff.quadTo(cx - s * 1.4f, cy - s * 0.7f, cx - s * 0.7f, cy - s * 0.75f)
         puff.quadTo(cx - s * 0.5f, cy - s * 1.15f, cx, cy - s * 1.0f)
@@ -1742,8 +1811,10 @@ class DoodleSceneView @JvmOverloads constructor(
         footPath.close()
     }
 
-    private fun fill(c: Int, a: Int = DECOR_ALPHA) = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.FILL; color = c; alpha = a
+    private fun fill(c: Int, a: Int = DECOR_ALPHA): Paint {
+        scFill.color = c
+        scFill.alpha = a
+        return scFill
     }
     private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL; alpha = DECOR_ALPHA
@@ -1797,7 +1868,8 @@ class DoodleSceneView @JvmOverloads constructor(
         for ((i, p) in pts.withIndex()) {
             val (xf, yf, rf) = p
             val k = twinkle(i * 1.9f)
-            val path = Path()
+            val path = scPathA
+            path.reset()
             Doodle.star(path, w * xf, h * yf, h * rf * k, r)
             Doodle.ink(c, path, stroke(color, 2f, (DECOR_ALPHA * k * scale).toInt()), 0.8f * d)
         }
