@@ -1580,6 +1580,26 @@ class DoodleSceneView @JvmOverloads constructor(
         return p
     }
     // Постоянные наборы, которые пересоздавались в каждом кадре.
+    private val meteorPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND
+    }
+    /** Звёздная пыль: x, y, размер, сдвиг фазы. Постоянна - не в кадре. */
+    private val STAR_DUST = floatArrayOf(
+        0.08f, 0.10f, 0.0055f, 0.0f,
+        0.17f, 0.26f, 0.0040f, 1.7f,
+        0.29f, 0.07f, 0.0060f, 3.1f,
+        0.38f, 0.21f, 0.0035f, 0.9f,
+        0.52f, 0.11f, 0.0050f, 2.4f,
+        0.61f, 0.29f, 0.0038f, 4.2f,
+        0.70f, 0.08f, 0.0058f, 1.2f,
+        0.79f, 0.23f, 0.0042f, 5.0f,
+        0.90f, 0.13f, 0.0050f, 2.9f,
+        0.96f, 0.33f, 0.0036f, 0.4f)
+    /** Лучистые звёзды: x, y, размер, сдвиг фазы. */
+    private val STAR_BIG = floatArrayOf(
+        0.44f, 0.18f, 0.0080f, 0.0f,
+        0.86f, 0.70f, 0.0060f, 2.2f,
+        0.23f, 0.42f, 0.0055f, 4.1f)
     private val mtPX = FloatArray(3)
     private val mtPY = FloatArray(3)
     private val stackHeights = intArrayOf(2, 1, 3, 1)
@@ -1619,6 +1639,16 @@ class DoodleSceneView @JvmOverloads constructor(
     private fun firRich(c: Canvas, x: Float, baseY: Float, h: Float, w: Wobble) {
         val a = 175
         val trunkW = h * 0.07f
+
+        // КАЧАНИЕ. Ёлка гнётся от общего ветра, но со своим запаздыванием:
+        // порыв доходит до дальних деревьев позже, и лес перестаёт быть
+        // строем одинаковых фигур. Наклон вокруг ОСНОВАНИЯ - ствол стоит
+        // на месте, как и положено. Мелкие деревья гнутся сильнее.
+        val lag = x * 0.010f
+        val gust = 0.62f * sin((BoilClock.phase * 0.23f - lag).toDouble()).toFloat() +
+                   0.38f * sin((BoilClock.phase * 0.071f + 1.3f - lag).toDouble()).toFloat()
+        c.save()
+        c.rotate(gust * 1.6f * (1.15f - h * 0.0009f), x, baseY)
         firFill.color = firTrunk; firFill.alpha = a
         c.drawRect(x - trunkW / 2f, baseY - h * 0.12f, x + trunkW / 2f, baseY, firFill)
         for (i in 3 downTo 0) {
@@ -1641,7 +1671,34 @@ class DoodleSceneView @JvmOverloads constructor(
                 c.drawCircle(x - tw * 0.30f, apexY + h * 0.05f, h * 0.035f, firFill)
             }
         }
+
+        // СБРОС СНЕГА. Раз в несколько секунд с лапы срывается ком и
+        // падает, разбиваясь пылью у земли. Окно задано временем и
+        // сдвигом дерева: два соседних никогда не сыплют разом, и ни одно
+        // не сыплет в каждом кадре по случайности.
+        val dropT = BoilClock.phase / 6.5f + x * 0.017f
+        val dropF = dropT - kotlin.math.floor(dropT)
+        if (dropF < 0.34f) {
+            val g = dropF / 0.34f
+            val sy = baseY - h * 0.74f
+            val fall = h * 0.70f * g * g
+            firFill.color = 0xFFFFFFFF.toInt()
+            firFill.alpha = (225f * (1f - g * 0.55f)).toInt().coerceIn(0, 255)
+            c.drawCircle(x - h * 0.16f + gust * h * 0.05f * g, sy + fall,
+                h * 0.030f * (1f - 0.35f * g), firFill)
+            if (g > 0.82f) {
+                // Пыль удара: три крупинки в стороны.
+                val sk = (g - 0.82f) / 0.18f
+                firFill.alpha = (200f * (1f - sk)).toInt().coerceIn(0, 255)
+                for (k in 0 until 3) {
+                    c.drawCircle(x - h * 0.16f + (k - 1) * h * 0.07f * sk,
+                        baseY - h * 0.02f - h * 0.05f * sk * (1f - sk) * 4f,
+                        h * 0.014f * (1f - sk), firFill)
+                }
+            }
+        }
         firFill.alpha = 255
+        c.restore()
     }
 
     private fun lightenC(col: Int, t: Float): Int {
@@ -1712,9 +1769,13 @@ class DoodleSceneView @JvmOverloads constructor(
     private fun moonRich(c: Canvas, cx: Float, cy: Float, r: Float, w: Wobble, tint: Int) {
         val lit = lightenC(tint, 0.55f)
         val dark = darkenC(tint, 0.35f)
+        // Два ореола дышат РАЗНЫМИ периодами: совпадающие пульсации
+        // читаются как мигание лампы, разные - как живой свет.
         val gl = 0.6f + 0.4f * kotlin.math.sin((BoilClock.phase * 0.8f).toDouble()).toFloat()
+        val gl2 = 0.6f + 0.4f * kotlin.math.sin((BoilClock.phase * 0.31f + 2.1f).toDouble()).toFloat()
         skyFill.color = tint
-        skyFill.alpha = (26f * gl).toInt().coerceIn(0, 255); c.drawCircle(cx, cy, r * 1.9f, skyFill)
+        skyFill.alpha = (26f * gl2).toInt().coerceIn(0, 255)
+        c.drawCircle(cx, cy, r * (1.9f + 0.15f * gl2), skyFill)
         skyFill.alpha = (44f * gl).toInt().coerceIn(0, 255); c.drawCircle(cx, cy, r * 1.35f, skyFill)
         // Полный диск: узкий серп читался как «огрызок». Объём даёт
         // затенённый край, узнаваемость - кратеры.
@@ -1729,6 +1790,15 @@ class DoodleSceneView @JvmOverloads constructor(
         c.drawCircle(cx + r * 0.10f, cy + r * 0.34f, r * 0.16f, skyFill)
         c.drawCircle(cx - r * 0.06f, cy - r * 0.52f, r * 0.11f, skyFill)
         c.drawCircle(cx - r * 0.52f, cy + r * 0.30f, r * 0.09f, skyFill)
+        // ФАЗА ЛУНЫ - НАСТОЯЩАЯ. Тень наводится вторым кругом со
+        // смещением: чем ближе к новолунию, тем сильнее он съедает диск.
+        // Полнолуние - тень уходит целиком, и это видно раз в месяц.
+        val term = moonTerminator()
+        if (Math.abs(term) > 0.06f) {
+            skyFill.color = darkenC(lit, 0.62f)
+            skyFill.alpha = 215
+            c.drawCircle(cx + r * 1.35f * term, cy, r * 1.02f, skyFill)
+        }
         c.restore()
         skyOutline.color = dark; Doodle.ink(c, disc, skyOutline, 0.6f * d)
         skyFill.alpha = 255
@@ -1738,11 +1808,25 @@ class DoodleSceneView @JvmOverloads constructor(
         val lit = lightenC(tint, 0.30f)
         val core = lightenC(tint, 0.65f)
         val dark = darkenC(tint, 0.30f)
-        val rot = BoilClock.phase * 0.18f
+        // Корона дышит своим, медленным периодом - под лучами есть
+        // объём, а не пустой фон.
+        val cor = 0.5f + 0.5f * kotlin.math.sin((BoilClock.phase * 0.27f).toDouble()).toFloat()
+        skyFill.color = core
+        skyFill.alpha = (30f + 26f * cor).toInt().coerceIn(0, 255)
+        c.drawCircle(cx, cy, r * (1.55f + 0.22f * cor), skyFill)
+        skyFill.alpha = (20f + 18f * cor).toInt().coerceIn(0, 255)
+        c.drawCircle(cx, cy, r * (2.15f + 0.30f * cor), skyFill)
+        skyFill.alpha = 255
+
+        // Вращение вдвое медленнее прежнего: быстрый оборот читался как
+        // вертушка. Лучи чередуются длинный/короткий и живут врозь.
+        val rot = BoilClock.phase * 0.09f
         rayPaint.color = lit; rayPaint.alpha = 150
         for (k in 0 until 10) {
             val a = rot + k * (Math.PI.toFloat() * 2f / 10f)
-            val len = 1.7f + 0.25f * kotlin.math.sin((BoilClock.phase * 1.4f + k).toDouble()).toFloat()
+            val base = if (k % 2 == 0) 1.85f else 1.45f
+            val len = base + 0.28f *
+                kotlin.math.sin((BoilClock.phase * (1.1f + 0.17f * k) + k).toDouble()).toFloat()
             c.drawLine(
                 cx + r * 1.25f * kotlin.math.cos(a.toDouble()).toFloat(),
                 cy + r * 1.25f * kotlin.math.sin(a.toDouble()).toFloat(),
@@ -1927,6 +2011,51 @@ class DoodleSceneView @JvmOverloads constructor(
         return 0.45f + 0.55f * (0.5f + 0.5f * sin(ph.toDouble()).toFloat())
     }
 
+    /**
+     * ВЕТЕР - ОДИН НА ВСЮ СЦЕНУ.
+     *
+     * Прежде каждый элемент двигался сам по себе, и сцена читалась как
+     * набор независимых заводных игрушек. Ветер связывает их: он гонит
+     * облака, качает ёлки и стряхивает с них снег. Порыв собран из двух
+     * несоразмерных волн, поэтому не повторяется на слух глаза: период
+     * заметного повтора - минуты, а не секунды.
+     *
+     * Возвращает -1..1: знак - направление, модуль - сила.
+     */
+    private fun wind(): Float {
+        val p = BoilClock.phase
+        return 0.62f * sin((p * 0.23f).toDouble()).toFloat() +
+               0.38f * sin((p * 0.071f + 1.3f).toDouble()).toFloat()
+    }
+
+    /**
+     * Освещённая доля луны, -1..1: знак - с какой стороны тень.
+     *
+     * Луна в приложении показывает ТУ ЖЕ фазу, что и настоящая за окном.
+     * Это ничего не стоит и делает картинку правдой, а не украшением:
+     * человек, поднявший голову, увидит то же самое. Считается по
+     * синодическому месяцу от известного новолуния; точность - день,
+     * большего для картинки не нужно.
+     *
+     * Пересчёт раз в час, а не в кадре: LocalDate в кадре - лишний мусор.
+     */
+    private var moonKeyH = -1L
+    private var moonTermK = 0f
+    private fun moonTerminator(): Float {
+        val h = System.currentTimeMillis() / 3_600_000L
+        if (h != moonKeyH) {
+            moonKeyH = h
+            // Новолуние 2000-01-06 18:14 UTC = 947182440 с. Месяц 29.53 сут.
+            val days = (System.currentTimeMillis() / 1000.0 - 947182440.0) / 86400.0
+            var age = (days % 29.530588) / 29.530588
+            if (age < 0) age += 1.0
+            // 0 - новолуние, 0.5 - полнолуние. Терминатор идёт от края к
+            // краю и обратно, знак меняется в полнолуние.
+            moonTermK = (Math.cos(age * 2.0 * Math.PI)).toFloat()
+        }
+        return moonTermK
+    }
+
     /** Петля 0..1 по времени: облако проходит экран и заходит снова. */
     private fun loop(periodSec: Float, off: Float): Float {
         val t = (BoilClock.phase / periodSec + off)
@@ -1955,10 +2084,17 @@ class DoodleSceneView @JvmOverloads constructor(
     /** Облака, плывущие по петле: ушло за правый край - вошло слева. */
     private fun drifting(c: Canvas, w: Float, h: Float, r: Wobble, color: Int,
                          specs: List<Triple<Float, Float, Float>>) {
+        // Облака несёт ТОТ ЖЕ ветер, что качает ёлки: при порыве они
+        // заметно ускоряются. Дрейф остаётся равномерным в среднем -
+        // облако не должно останавливаться и пятиться.
+        val gust = wind()
         for ((yFrac, sizeFrac, period) in specs) {
             val margin = w * 0.25f
-            val x = -margin + (w + 2 * margin) * loop(period, yFrac)
-            cloudRich(c, x, h * yFrac, h * sizeFrac, r, color)
+            val x = -margin + (w + 2 * margin) * loop(period, yFrac) +
+                gust * w * 0.035f
+            // Высота слегка гуляет: облако не жёсткая наклейка.
+            val bob = h * 0.012f * sin((BoilClock.phase * 0.4f + yFrac * 9f).toDouble()).toFloat()
+            cloudRich(c, x, h * yFrac + bob, h * sizeFrac * (1f + 0.05f * gust), r, color)
         }
     }
 
@@ -1971,6 +2107,73 @@ class DoodleSceneView @JvmOverloads constructor(
             path.reset()
             Doodle.star(path, w * xf, h * yf, h * rf * k, r)
             Doodle.ink(c, path, stroke(color, 2f, (DECOR_ALPHA * k * scale).toInt()), 0.8f * d)
+        }
+    }
+
+    /**
+     * НЕБО ИЗ ТРЁХ ПОРОД ЗВЁЗД.
+     *
+     * Две одинаковые звезды, мерцающие в такт, читались как две лампочки.
+     * Теперь на небе три разных вида, и у каждой звезды свой период:
+     *  - ПЫЛЬ: мелкие точки, живут только яркостью; их много, они держат
+     *    глубину неба и почти ничего не стоят;
+     *  - ЛУЧИСТЫЕ: крупные четырёхлучевые, дышат размером;
+     *  - ПАДАЮЩАЯ: раз в семнадцать секунд одна прочерчивает небо. Она
+     *    не случайна в кадре - её окно задано временем, поэтому полёт
+     *    ровный и не дёргается при просадке частоты.
+     *
+     * Данные звёзд лежат в постоянном массиве: ни списков, ни Triple в
+     * кадре. Формат: x, y, размер, сдвиг фазы.
+     */
+    private fun starfield(c: Canvas, w: Float, h: Float, r: Wobble, scale: Float) {
+        if (scale <= 0f) return
+        // Пыль.
+        var i = 0
+        while (i < STAR_DUST.size) {
+            val x = w * STAR_DUST[i]
+            val y = h * STAR_DUST[i + 1]
+            val rad = h * STAR_DUST[i + 2]
+            val ph = BoilClock.phase * (0.9f + 0.31f * (i % 7)) + STAR_DUST[i + 3]
+            val k = 0.30f + 0.70f * (0.5f + 0.5f * sin(ph.toDouble()).toFloat())
+            skyFill.color = if (i % 12 == 0) amberBr else blueBr
+            skyFill.alpha = (190f * k * scale).toInt().coerceIn(0, 255)
+            c.drawCircle(x, y, rad * (0.7f + 0.5f * k), skyFill)
+            i += 4
+        }
+        skyFill.alpha = 255
+        // Лучистые.
+        i = 0
+        while (i < STAR_BIG.size) {
+            val ph = BoilClock.phase * (1.2f + 0.4f * i) + STAR_BIG[i + 3]
+            val k = 0.45f + 0.55f * (0.5f + 0.5f * sin(ph.toDouble()).toFloat())
+            val path = scPathA
+            path.reset()
+            Doodle.star(path, w * STAR_BIG[i], h * STAR_BIG[i + 1], h * STAR_BIG[i + 2] * k, r)
+            Doodle.ink(c, path, stroke(blueBr, 2f, (DECOR_ALPHA * k * scale).toInt()), 0.8f * d)
+            i += 4
+        }
+        // Падающая.
+        val periodS = 17f
+        val t = BoilClock.phase / periodS
+        val slot = kotlin.math.floor(t).toInt()
+        val f = t - slot
+        if (f < 0.085f) {
+            val g = f / 0.085f
+            val hs = ((slot * 2654435761L) ushr 20)
+            val x0 = w * (0.12f + 0.62f * ((hs % 100L) / 100f))
+            val y0 = h * (0.05f + 0.22f * (((hs shr 7) % 100L) / 100f))
+            val len = w * 0.30f
+            val hx = x0 + len * g
+            val hy = y0 + len * 0.42f * g
+            val fade = sin((g * Math.PI).toFloat())
+            meteorPaint.color = 0xFFFFFFFF.toInt()
+            meteorPaint.strokeWidth = 1.8f * d
+            meteorPaint.alpha = (235f * fade * scale).toInt().coerceIn(0, 255)
+            c.drawLine(hx - len * 0.26f, hy - len * 0.11f, hx, hy, meteorPaint)
+            meteorPaint.color = blueBr
+            meteorPaint.strokeWidth = 4.5f * d
+            meteorPaint.alpha = (90f * fade * scale).toInt().coerceIn(0, 255)
+            c.drawLine(hx - len * 0.34f, hy - len * 0.14f, hx, hy, meteorPaint)
         }
     }
 
@@ -2059,15 +2262,14 @@ class DoodleSceneView @JvmOverloads constructor(
             DayPhase.DAWN -> 0.45f
             DayPhase.DAY -> 0f
         }
-        if (starA > 0f) stars(c, blueBr, listOf(
-            Triple(0.44f, 0.18f, 0.08f), Triple(0.86f, 0.70f, 0.06f)), w, h, r, starA)
+        if (starA > 0f) starfield(c, w, h, r, starA)
 
         footprints(c, w, h)
     }
 
     private fun drawNight(c: Canvas, w: Float, h: Float, r: Wobble) {
         moonRich(c, w * 0.80f, h * 0.16f, h * 0.11f, r, violetBr)
-        stars(c, blueBr, listOf(Triple(0.68f, 0.09f, 0.045f), Triple(0.92f, 0.36f, 0.04f)), w, h, r)
+        starfield(c, w, h, r, 1f)
         dotPaint.color = violetBr
         c.drawCircle(w * 0.70f, h * 0.30f, 1.8f * d, dotPaint)
     }
