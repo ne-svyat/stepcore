@@ -370,12 +370,14 @@ class SynxActivity : AppCompatActivity() {
         val cm = getSystemService(Context.CLIPBOARD_SERVICE)
             as android.content.ClipboardManager
         cm.setPrimaryClip(android.content.ClipData.newPlainText("StepCore heading", text))
-        androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle(if (saved != null) "Курс — отчёт (файл + буфер)"
-                      else "Курс — отчёт (буфер)")
-            .setMessage(text)
-            .setPositiveButton("Ок", null)
-            .show()
+        DoodleDialog.info(
+            this,
+            if (saved != null) "Курс — отчёт (файл + буфер)"
+                      else "Курс — отчёт (буфер)",
+            text,
+            "Ок",
+            R.color.accent_amber, R.color.surface_amber,
+            DoodleBorderDrawable.MAT_LIGHTNING)
     }
 
     private suspend fun exportCorpusSynx() {

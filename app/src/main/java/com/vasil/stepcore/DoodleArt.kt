@@ -585,6 +585,12 @@ class DoodleBorderDrawable(
         const val MAT_FIRE = 3       // тёплое дрожащее свечение
         const val MAT_ICE = 4        // резкий кант + холодный отблеск
         const val MAT_MECH = 5       // сегментированный контур (пунктир)
+        /** Наливание плиты при появлении, мс. */
+        private const val REVEAL_MS = 420f
+        /** Период пробега огонька по канту, с. */
+        private const val SPARK_PERIOD = 6.5f
+        /** Какую долю периода огонёк бежит (остальное - покой). */
+        private const val SPARK_RUN = 0.34f
     }
 
     private val texFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
@@ -676,6 +682,25 @@ class DoodleBorderDrawable(
     private val onTick: () -> Unit = { invalidateSelf() }
     private var subscribed = false
 
+    // ---------- Оживление рамки ----------
+    // Две вещи, которых плите не хватало, чтобы перестать быть наклейкой:
+    //
+    // 1) ПОЯВЛЕНИЕ. Плита не возникает целиком - она НАЛИВАЕТСЯ снизу
+    //    вверх, и по кромке заливки идёт светящийся фронт. Тот же приём,
+    //    что у горы прогресса, но здесь он длится 420 мс и заканчивается:
+    //    постоянная заливка мешала бы читать.
+    // 2) ЖИЗНЬ. По канту раз в несколько секунд пробегает огонёк -
+    //    короткий отрезок контура, взятый через PathMeasure. Он идёт по
+    //    настоящей кромке, со всеми её кривыми, а не по прямоугольнику.
+    //
+    // Фаза огонька смещена сидом плиты: карточки на одном экране не
+    // вспыхивают строем, а перекликаются.
+    private val pathMeasure = android.graphics.PathMeasure()
+    private val sparkPath = Path()
+    private var pathLen = 0f
+    private var bornAt = 0L
+    private val sparkOffset = ((seed * 2654435761L) ushr 33).toFloat() % 1f
+
     override fun onBoundsChange(bounds: Rect) {
         super.onBoundsChange(bounds)
         if (bounds == builtFor || bounds.isEmpty) return
@@ -711,6 +736,10 @@ class DoodleBorderDrawable(
         rivets[2] = bounds.width() - inset - ri; rivets[3] = inset + ri
         rivets[4] = inset + ri; rivets[5] = bounds.height() - inset - ri
         rivets[6] = bounds.width() - inset - ri; rivets[7] = bounds.height() - inset - ri
+
+        pathMeasure.setPath(frames[0], false)
+        pathLen = pathMeasure.length
+        bornAt = 0L
 
         pw = bounds.width().toFloat(); phh = bounds.height().toFloat()
         bodyPath.reset()
@@ -807,6 +836,9 @@ class DoodleBorderDrawable(
     override fun setVisible(visible: Boolean, restart: Boolean): Boolean {
         val changed = super.setVisible(visible, restart)
         if (visible && !subscribed) {
+            // Плита показалась заново - наливается заново. Иначе окно,
+            // открытое второй раз, просто появлялось бы.
+            bornAt = 0L
             BoilClock.register(onTick); subscribed = true
         } else if (!visible && subscribed) {
             BoilClock.unregister(onTick); subscribed = false
@@ -818,6 +850,18 @@ class DoodleBorderDrawable(
         // Контур СТАТИЧЕН: смена вариантов кадра давала рывки, которые на
         // фоне плавных сцен читались как фриз. Живут только свет и частицы.
         val p = frames[0]
+
+        // Наливание снизу вверх. Замедление к концу (easeOut): резкая
+        // остановка читалась бы как обрыв кадра.
+        val nowMs = android.os.SystemClock.uptimeMillis()
+        if (bornAt == 0L) bornAt = nowMs
+        val rk = ((nowMs - bornAt).toFloat() / REVEAL_MS).coerceIn(0f, 1f)
+        val grow = 1f - (1f - rk) * (1f - rk)
+        val filling = rk < 1f
+        if (filling) {
+            canvas.save()
+            canvas.clipRect(0f, phh * (1f - grow) - 1f, pw, phh + 1f)
+        }
         val off = 1.7f * d
         // тёмная грань снизу-справа (глубина), затем светлый кант сверху-слева
         canvas.save(); canvas.translate(off, off); canvas.drawPath(p, shPaint); canvas.restore()
@@ -880,6 +924,59 @@ class DoodleBorderDrawable(
                 canvas.drawCircle(dustX[i] + sway, y, dustSize[i], dustPaint)
             }
         }
+
+        if (filling) {
+            canvas.restore()
+            // Светящийся фронт заливки: широкое гало и тонкое ядро.
+            val fy = phh * (1f - grow)
+            val fade = if (rk > 0.85f) (1f - rk) / 0.15f else 1f
+            riftPaint.color = lighten(strokeColor, 0.30f)
+            riftPaint.strokeWidth = 7f * d
+            riftPaint.alpha = (90f * fade).toInt().coerceIn(0, 255)
+            canvas.drawLine(3f * d, fy, pw - 3f * d, fy, riftPaint)
+            riftPaint.color = lighten(strokeColor, 0.85f)
+            riftPaint.strokeWidth = 1.8f * d
+            riftPaint.alpha = (225f * fade).toInt().coerceIn(0, 255)
+            canvas.drawLine(3f * d, fy, pw - 3f * d, fy, riftPaint)
+            // Искры срываются с фронта - заливка не безжизненная полоса.
+            dustPaint.color = lighten(strokeColor, 0.70f)
+            for (i in 0 until 5) {
+                val sx = pw * (0.12f + 0.19f * i)
+                val lift = (12f + 9f * i % 7) * d * grow
+                dustPaint.alpha = (200f * fade * (1f - grow * 0.5f)).toInt().coerceIn(0, 255)
+                canvas.drawCircle(sx, fy - lift, (1.1f + 0.5f * (i % 3)) * d, dustPaint)
+            }
+        }
+
+        drawSpark(canvas)
+    }
+
+    /**
+     * Огонёк по канту: короткий отрезок настоящего контура, взятый через
+     * PathMeasure. Бежит не всё время - треть цикла, остальное кант живёт
+     * своим материалом. Постоянный бег превратил бы карточку в вывеску.
+     */
+    private fun drawSpark(canvas: Canvas) {
+        if (pathLen <= 0f) return
+        var t = (BoilClock.phase / SPARK_PERIOD + sparkOffset)
+        t -= Math.floor(t.toDouble()).toFloat()
+        if (t > SPARK_RUN) return
+        val k = t / SPARK_RUN
+        val head = k * pathLen
+        val tail = 0.16f * pathLen
+        // Голова ярче хвоста: у бегущего света есть направление.
+        val fade = kotlin.math.sin((k * Math.PI).toFloat())
+        sparkPath.reset()
+        pathMeasure.getSegment(Math.max(0f, head - tail), head, sparkPath, true)
+        matPaint.pathEffect = null
+        matPaint.color = lighten(strokeColor, 0.35f)
+        matPaint.strokeWidth = 7f * d
+        matPaint.alpha = (85f * fade).toInt().coerceIn(0, 255)
+        canvas.drawPath(sparkPath, matPaint)
+        matPaint.color = lighten(strokeColor, 0.90f)
+        matPaint.strokeWidth = 1.9f * d
+        matPaint.alpha = (235f * fade).toInt().coerceIn(0, 255)
+        canvas.drawPath(sparkPath, matPaint)
     }
 
     /**

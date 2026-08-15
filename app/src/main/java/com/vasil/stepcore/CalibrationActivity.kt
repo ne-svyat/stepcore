@@ -91,11 +91,13 @@ class CalibrationActivity : AppCompatActivity() {
                     as android.content.ClipboardManager
                 cm.setPrimaryClip(
                     android.content.ClipData.newPlainText("StepCore calib", rep))
-                AlertDialog.Builder(this)
-                    .setTitle("Отчёт калибровки (скопирован)")
-                    .setMessage(rep)
-                    .setPositiveButton("Ок", null)
-                    .show()
+                DoodleDialog.info(
+                    this,
+                    "Отчёт калибровки (скопирован)",
+                    rep,
+                    "Ок",
+                    R.color.accent_amber, R.color.surface_amber,
+                    DoodleBorderDrawable.MAT_LIGHTNING)
             }
 
         finishBtn.setOnClickListener { finishActive() }
@@ -207,10 +209,13 @@ class CalibrationActivity : AppCompatActivity() {
     private fun onCardTap(k: CalibrationRegistry.Kind) {
         if (activeKind != null) { toastState("Сначала заверши текущую калибровку"); return }
         if (!StepsState.serviceRunning.value) {
-            AlertDialog.Builder(this)
-                .setTitle("Нужен запущенный счётчик")
-                .setMessage("Вернись на главный экран и нажми Старт — калибровке нужны шаги.")
-                .setPositiveButton("Понятно", null).show()
+            DoodleDialog.info(
+                this,
+                "Нужен запущенный счётчик",
+                "Вернись на главный экран и нажми Старт — калибровке нужны шаги.",
+                "Понятно",
+                R.color.accent_amber, R.color.surface_amber,
+                DoodleBorderDrawable.MAT_LIGHTNING)
             return
         }
         when (k) {

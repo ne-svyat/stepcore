@@ -103,10 +103,10 @@ class TimelineActivity : AppCompatActivity() {
     }
 
     private fun showKcalInfo() {
-        androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Активные и покой")
-            .setMessage(
-                "АКТИВНЫЕ — калории, сожжённые именно на движение (сверх покоя).\n\n" +
+        DoodleDialog.info(
+            this,
+            "Активные и покой",
+            "АКТИВНЫЕ — калории, сожжённые именно на движение (сверх покоя).\n\n" +
                 "ПОКОЙ — базовый расход организма: сердце, дыхание, тепло. " +
                 "Тратится всегда, даже когда ты сидишь или спишь.\n\n" +
                 "ВСЕГО = активные + покой. Это полный расход, по нему считают дефицит.\n\n" +
@@ -115,10 +115,10 @@ class TimelineActivity : AppCompatActivity() {
                 "За будущие и пустые дни покой не считается.\n\n" +
                 "Калории и дистанция закрытых дней заморожены: смена веса или новая " +
                 "калибровка не меняют прошлое. За сегодня каждый час считается " +
-                "с тем профилем, который действовал именно в тот час."
-            )
-            .setPositiveButton("Понятно", null)
-            .show()
+                "с тем профилем, который действовал именно в тот час.",
+            "Понятно",
+            R.color.accent_teal, R.color.surface_teal,
+            DoodleBorderDrawable.MAT_ROPE)
     }
 
     private fun fmtNum(n: Int) = "%,d".format(n).replace(',', ' ')

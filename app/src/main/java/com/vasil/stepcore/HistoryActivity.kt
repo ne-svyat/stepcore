@@ -411,11 +411,13 @@ class HistoryActivity : AppCompatActivity() {
         reload()
         if (!isFinishing && !isDestroyed) {
             try {
-                androidx.appcompat.app.AlertDialog.Builder(this)
-                    .setTitle("Импорт завершён")
-                    .setMessage(report)
-                    .setPositiveButton("Понятно", null)
-                    .show()
+                DoodleDialog.info(
+                    this,
+                    "Импорт завершён",
+                    report,
+                    "Понятно",
+                    R.color.accent_amber, R.color.surface_amber,
+                    DoodleBorderDrawable.MAT_LIGHTNING)
             } catch (e: Exception) {
                 toast("Импорт завершён. " + report.replace("\n", " · "))
             }

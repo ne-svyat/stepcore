@@ -861,11 +861,13 @@ class MainActivity : AppCompatActivity() {
             "приблизительно.\n\n" +
             "Что портит точность: подъёмы и спуски (шаг короче и длиннее), " +
             "смена обуви, рюкзак. Раз в месяц имеет смысл перекалиброваться."
-        androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Как считается дистанция")
-            .setMessage(msg)
-            .setPositiveButton("Понятно", null)
-            .show()
+        DoodleDialog.info(
+            this,
+            "Как считается дистанция",
+            msg,
+            "Понятно",
+            R.color.accent_blue, R.color.surface_blue,
+            DoodleBorderDrawable.MAT_ICE)
     }
 
     /** Что именно считается активным временем и что им НЕ считается. */
@@ -880,11 +882,13 @@ class MainActivity : AppCompatActivity() {
             "— тряска телефоном на месте: она отсекается на входе.\n\n" +
             "Поэтому цифра почти всегда меньше, чем «время с начала дня», " +
             "и это правильно: она про движение, а не про часы."
-        androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Как считается активное время")
-            .setMessage(msg)
-            .setPositiveButton("Понятно", null)
-            .show()
+        DoodleDialog.info(
+            this,
+            "Как считается активное время",
+            msg,
+            "Понятно",
+            R.color.accent_teal, R.color.surface_teal,
+            DoodleBorderDrawable.MAT_ROPE)
     }
 
     /** Диалог-объяснение Active/Basal/Total. */
@@ -906,11 +910,13 @@ class MainActivity : AppCompatActivity() {
             "— Google Fit показывает ВСЕГО за сутки (близко к нашему «всего»).\n\n" +
             "Для контроля дефицита ориентируйся на «всего»: это полный расход. " +
             "Съедая меньше — теряешь вес."
-        androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Как считаются калории")
-            .setMessage(msg)
-            .setPositiveButton("Понятно", null)
-            .show()
+        DoodleDialog.info(
+            this,
+            "Как считаются калории",
+            msg,
+            "Понятно",
+            R.color.accent_amber, R.color.surface_amber,
+            DoodleBorderDrawable.MAT_FIRE)
     }
 
     private fun todayWalkRun(): Pair<Int, Int> {
