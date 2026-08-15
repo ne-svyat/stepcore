@@ -748,11 +748,23 @@ class DoodleBorderDrawable(
      * подписка снимается сама. Вернут на экран - draw подпишет заново,
      * этот путь уже работает с v398.
      */
-    private val onTick: () -> Unit = {
+    // ЛЯМБДА НЕ МОЖЕТ ССЫЛАТЬСЯ НА САМУ СЕБЯ В СВОЁМ ОБЪЯВЛЕНИИ.
+    // Тело `onTick` снимало подписку через `BoilClock.unregister(onTick)`,
+    // то есть читало переменную, которая в этот момент ещё не
+    // инициализирована. Kotlin отказывается компилировать: «Variable
+    // 'onTick' must be initialized». Лечится выносом тела в ФУНКЦИЮ:
+    // её тело выполняется позже объявления поля, и ссылка на onTick там
+    // законна. Лямбда остаётся тонкой оболочкой.
+    private val onTick: () -> Unit = { tickOnce() }
+
+    private fun tickOnce() {
         if (android.os.SystemClock.uptimeMillis() - lastDrawMs > DEAD_MS) {
             BoilClock.unregister(onTick); subscribed = false
-        } else if (needsFullRate()) invalidateSelf()
-        else {
+            return
+        }
+        if (needsFullRate()) {
+            invalidateSelf()
+        } else {
             tickSkip = (tickSkip + 1) % SLOW_EVERY
             if (tickSkip == 0) invalidateSelf()
         }
