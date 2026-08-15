@@ -1580,6 +1580,16 @@ class DoodleSceneView @JvmOverloads constructor(
         return p
     }
     // Постоянные наборы, которые пересоздавались в каждом кадре.
+    private val birdPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
+    }
+    private val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val beamPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val sparkLine = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND
+    }
+    private val pagePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val smokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val meteorPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND
     }
@@ -2284,6 +2294,198 @@ class DoodleSceneView @JvmOverloads constructor(
     }
 
     /** Лагерь: живой костёр (пламя дышит), палатка, лес, горы. */
+
+    /**
+     * АТМОСФЕРА ВКЛАДОК: РАЗНАЯ ПО ПРИРОДЕ, А НЕ ПО НАСТРОЙКАМ.
+     *
+     * Соблазн был очевидный: сделать один красивый слой (скажем, парящие
+     * частицы) и включить его всюду с разным цветом. Это дало бы шесть
+     * одинаковых экранов - и хуже: перестало бы что-либо значить, потому
+     * что одинаковое движение не отличает Историю от Калибровки.
+     *
+     * Поэтому у каждой вкладки приём СВОЕЙ природы, и он вытекает из
+     * смысла экрана:
+     *   Аналитика   - стая птиц клином: взгляд сверху, издалека, на общее;
+     *   Timeline    - тени облаков бегут по земле: время как движение дня;
+     *   Профиль     - объёмный луч сканера с пылью: тебя разглядывают;
+     *   Калибровка  - искры зацепления: механизм работает и стачивается;
+     *   История     - улетающие страницы: прошлое листается и уходит;
+     *   Экспедиция  - дым по ветру и светлячки: стоянка живёт ночью.
+     *
+     * Все слои: без аллокаций в кадре, время - из общего такта, никакой
+     * случайности внутри кадра (иначе дрожь вместо движения).
+     */
+
+    /** Аналитика: стая клином проходит над хребтом раз в цикл. */
+    private fun birdFlock(c: Canvas, w: Float, h: Float) {
+        val t = loop(21f, 0f)
+        // Стая видна не весь цикл: пришла, прошла, небо снова пустое.
+        if (t > 0.62f) return
+        val g = t / 0.62f
+        val fx = -w * 0.15f + w * 1.30f * g
+        val fy = h * (0.30f - 0.10f * sin((g * Math.PI).toFloat()))
+        val fade = sin((g * Math.PI).toFloat()).coerceIn(0f, 1f)
+        var i = 0
+        while (i < 7) {
+            // Клин: чётные - левое крыло строя, нечётные - правое.
+            val rank = (i + 1) / 2
+            val side = if (i % 2 == 0) -1f else 1f
+            val bx = fx - rank * w * 0.045f
+            val by = fy + side * rank * h * 0.035f
+            // Взмах: у каждой птицы свой сдвиг, стая не машет строем.
+            val flap = sin((BoilClock.phase * 6.5f + i * 0.9f).toDouble()).toFloat()
+            val sp2 = h * 0.030f
+            val lift = sp2 * 0.55f * flap
+            birdPaint.color = blueBr
+            birdPaint.strokeWidth = 1.6f * d
+            birdPaint.alpha = (170f * fade).toInt().coerceIn(0, 255)
+            c.drawLine(bx - sp2, by - lift, bx, by + sp2 * 0.18f, birdPaint)
+            c.drawLine(bx, by + sp2 * 0.18f, bx + sp2, by - lift, birdPaint)
+            i++
+        }
+    }
+
+    /** Timeline: тени облаков ползут по земле - день идёт. */
+    private fun cloudShadows(c: Canvas, w: Float, h: Float, base: Float) {
+        var i = 0
+        while (i < 3) {
+            val t = loop(22f + 9f * i, 0.17f * i)
+            val cx = -w * 0.3f + w * 1.6f * t
+            // Тень длиннее облака и мягче: свет идёт под углом.
+            val sw = w * (0.26f + 0.07f * i)
+            val sy = base - h * (0.02f + 0.03f * i)
+            shadowPaint.color = 0xFF000000.toInt()
+            shadowPaint.alpha = (34 - i * 7).coerceIn(0, 255)
+            c.drawOval(cx - sw, sy - h * 0.045f, cx + sw, sy + h * 0.045f, shadowPaint)
+            i++
+        }
+    }
+
+    /** Профиль: луч сканера объёмен - в нём видна пыль. */
+    private fun scanBeam(c: Canvas, w: Float, h: Float, cx: Float, dw: Float) {
+        val t = loop(3.4f, 0f)
+        // Проход туда-обратно: сканер не телепортируется в начало.
+        val y = h * (0.10f + 0.80f * (if (t < 0.5f) t * 2f else 2f - t * 2f))
+        val x0 = cx - dw * 0.62f
+        val x1 = cx + dw * 0.62f
+        // Конус света: три полосы разной ширины и прозрачности.
+        var k = 0
+        while (k < 3) {
+            beamPaint.color = red
+            beamPaint.alpha = (46 - k * 13).coerceIn(0, 255)
+            val hh = h * (0.010f + 0.020f * k)
+            c.drawRect(x0, y - hh, x1, y + hh, beamPaint)
+            k++
+        }
+        beamPaint.color = redBr
+        beamPaint.alpha = 210
+        c.drawRect(x0, y - 0.9f * d, x1, y + 0.9f * d, beamPaint)
+        // Пыль в луче: всплывает и гаснет, поэтому свет читается объёмным.
+        var i = 0
+        while (i < 9) {
+            val ph = BoilClock.phase * 0.8f + i * 0.7f
+            val dx = x0 + (x1 - x0) * (((i * 37) % 100) / 100f)
+            val dy = y - h * 0.03f * (0.5f + 0.5f * sin(ph.toDouble()).toFloat())
+            beamPaint.alpha = (120f * (0.4f + 0.6f *
+                sin((ph * 1.7f).toDouble()).toFloat())).toInt().coerceIn(0, 255)
+            c.drawCircle(dx, dy, 1.1f * d, beamPaint)
+            i++
+        }
+    }
+
+    /** Калибровка: искры в точке зацепления шестерён. */
+    private fun gearSparks(c: Canvas, cx: Float, cy: Float, rad: Float) {
+        val t = loop(2.6f, 0f)
+        // Искрит не постоянно: зуб входит в зуб - вспышка, дальше тишина.
+        if (t > 0.22f) return
+        val g = t / 0.22f
+        val fade = 1f - g
+        var i = 0
+        while (i < 6) {
+            val a = Math.toRadians((-40.0 + i * 23.0))
+            val len = rad * (0.25f + 0.55f * g) * (0.6f + 0.4f * ((i % 3) / 2f))
+            val sx = cx + (Math.cos(a) * rad * 0.15f).toFloat()
+            val sy = cy + (Math.sin(a) * rad * 0.15f).toFloat()
+            // Искра летит по дуге и падает: у неё есть вес.
+            val ex = sx + (Math.cos(a) * len).toFloat()
+            val ey = sy + (Math.sin(a) * len).toFloat() + rad * 0.35f * g * g
+            sparkLine.color = if (i % 2 == 0) amberBr else 0xFFFFFFFF.toInt()
+            sparkLine.strokeWidth = (1.7f - 0.7f * g) * d
+            sparkLine.alpha = (230f * fade).toInt().coerceIn(0, 255)
+            c.drawLine(sx, sy, ex, ey, sparkLine)
+            i++
+        }
+    }
+
+    /** История: страницы отрываются и уносятся вверх, кружась. */
+    private fun flyingPages(c: Canvas, w: Float, h: Float) {
+        var i = 0
+        while (i < 4) {
+            val t = loop(7.5f, i * 0.27f)
+            val x = w * (0.14f + 0.16f * i) + w * 0.55f * t
+            // Подъём с замедлением: страницу подхватывает и отпускает.
+            val y = h * 0.72f - h * 0.80f * (1f - (1f - t) * (1f - t))
+            val fade = (sin((t * Math.PI).toFloat())).coerceIn(0f, 1f)
+            val sz = h * 0.075f
+            c.save()
+            c.translate(x, y)
+            // Кувырок вокруг своей оси: лист то плашмя, то ребром.
+            c.rotate(t * 420f + i * 40f)
+            val flat = kotlin.math.abs(sin((BoilClock.phase * 2.2f + i).toDouble()).toFloat())
+            c.scale(0.25f + 0.75f * flat, 1f)
+            pagePaint.color = 0xFFE8E4DA.toInt()
+            pagePaint.alpha = (215f * fade).toInt().coerceIn(0, 255)
+            c.drawRect(-sz * 0.7f, -sz, sz * 0.7f, sz, pagePaint)
+            pagePaint.color = gray
+            pagePaint.alpha = (170f * fade).toInt().coerceIn(0, 255)
+            var k = 0
+            while (k < 3) {
+                val ly = -sz * 0.5f + sz * 0.45f * k
+                c.drawRect(-sz * 0.45f, ly, sz * 0.45f, ly + 1.2f * d, pagePaint)
+                k++
+            }
+            c.restore()
+            i++
+        }
+    }
+
+    /** Экспедиция: дым по ветру и светлячки у палатки. */
+    private fun campAir(c: Canvas, w: Float, h: Float, fireX: Float, fireY: Float) {
+        val gust = wind()
+        // Дым: клубы поднимаются, растут и уводятся ветром тем сильнее,
+        // чем выше поднялись - внизу воздух спокойнее.
+        var i = 0
+        while (i < 6) {
+            var g = (BoilClock.phase * 0.22f + i * 0.1667f) % 1f
+            if (g < 0f) g += 1f
+            val y = fireY - h * 0.62f * g
+            val x = fireX + gust * w * 0.16f * g * g +
+                w * 0.02f * sin((BoilClock.phase * 0.9f + i).toDouble()).toFloat()
+            smokePaint.color = 0xFF9AA0AA.toInt()
+            smokePaint.alpha = (70f * (1f - g) * (1f - g)).toInt().coerceIn(0, 255)
+            c.drawCircle(x, y, h * (0.03f + 0.11f * g), smokePaint)
+            i++
+        }
+        // Светлячки: висят, дышат светом и медленно смещаются. Их мало -
+        // редкая точка в темноте заметнее россыпи.
+        i = 0
+        while (i < 4) {
+            val ph = BoilClock.phase * (0.5f + 0.13f * i) + i * 1.9f
+            val fx = w * (0.16f + 0.20f * i) +
+                w * 0.05f * sin(ph.toDouble()).toFloat()
+            val fy = h * (0.52f + 0.10f * ((i * 3) % 4) / 3f) +
+                h * 0.04f * sin((ph * 0.7f + 1.4f).toDouble()).toFloat()
+            val gl = (0.5f + 0.5f * sin((ph * 2.3f).toDouble()).toFloat())
+            val bright = gl * gl * gl      // вспышка короче темноты
+            smokePaint.color = amberBr
+            smokePaint.alpha = (60f * bright).toInt().coerceIn(0, 255)
+            c.drawCircle(fx, fy, h * 0.030f, smokePaint)
+            smokePaint.alpha = (235f * bright).toInt().coerceIn(0, 255)
+            c.drawCircle(fx, fy, 1.5f * d, smokePaint)
+            i++
+        }
+    }
+
     private fun drawCamp(c: Canvas, w: Float, h: Float, r: Wobble, tint: Int, tintBr: Int) {
         val base = h * 0.90f
         val tn = sp(0)
@@ -2316,6 +2518,10 @@ class DoodleSceneView @JvmOverloads constructor(
         Doodle.line(trail, w * 0.74f, base - 2f * d, w * 0.80f, base + 2f * d, 1.2f, 6, r)
         Doodle.ink(c, trail, stroke(tint, 1f), 0.8f * d)
         stars(c, tintBr, listOf(Triple(0.88f, 0.16f, 0.10f)), w, h, r)
+
+        // Воздух стоянки: дым от костра уводит общим ветром, в темноте
+        // висят светлячки. Огонь уже нарисован - воздух ложится ПОВЕРХ.
+        campAir(c, w, h, w * 0.30f, base - h * 0.10f)
     }
 
     /**
@@ -2366,6 +2572,7 @@ class DoodleSceneView @JvmOverloads constructor(
         val dw = w * 0.44f
         val dh = h * 0.76f
 
+        scanBeam(c, w, h, cx, dw)
         val doc = sp(0); val photo = sp(1); val bars = sp(2)
         Doodle.passport(doc, photo, bars, cx, cy, dw, dh, r)
         Doodle.ink(c, doc, stroke(violet, 2f), 0.8f * d)
@@ -2459,6 +2666,8 @@ class DoodleSceneView @JvmOverloads constructor(
         firRich(c, w * 0.14f, base, h * 0.36f, r)
         firRich(c, w * 0.90f, base, h * 0.42f, r)
         drifting(c, w, h, r, violet, listOf(Triple(0.16f, 0.10f, 30f)))
+        // Взгляд сверху и издалека - как и сама Аналитика.
+        birdFlock(c, w, h)
 
 
         // Кубики-дни: рекорд и провал. У каждого кубика своя роль и свой
@@ -2649,6 +2858,9 @@ class DoodleSceneView @JvmOverloads constructor(
         sunRich(c, w * 0.60f, h * 0.26f, h * 0.13f * k, r, amber)
         drifting(c, w, h, r, violet, listOf(
             Triple(0.20f, 0.12f, 22f), Triple(0.34f, 0.09f, 31f)))
+        // Тени бегут по земле раньше всего остального: они лежат ПОД
+        // деревьями и указателем, иначе фокус ломается.
+        cloudShadows(c, w, h, base)
         val post = sp(0)
         Doodle.signpost(post, w * 0.86f, base, h * 0.50f, r)
         Doodle.ink(c, post, stroke(amberBr, 2f), 0.8f * d)
@@ -3006,6 +3218,9 @@ class DoodleSceneView @JvmOverloads constructor(
         // Вторая шестерня крутится В ОБРАТНУЮ сторону и быстрее - так и
         // работает зубчатая передача: меньше колесо - выше обороты.
         gearRich(c, w * 0.34f, h * 0.72f, h * 0.19f, 6, -ph * 33f, r, violetBr)
+        // Искры бьют В ТОЧКЕ ЗАЦЕПЛЕНИЯ - между двумя колёсами, а не
+        // где придётся: иначе это фейерверк, а не работающий механизм.
+        gearSparks(c, w * 0.26f, h * 0.60f, h * 0.13f)
         // Песок пересыпается, затем часы переворачиваются (см. hourglassRich).
         hourglassRich(c, w * 0.62f, h * 0.50f, h * 0.34f, h * 0.62f, amber)
         // Компас: прибор поверки направления рядом с механизмом.
@@ -3361,6 +3576,7 @@ class DoodleSceneView @JvmOverloads constructor(
         Doodle.notebook(nb, w * 0.09f, h * 0.54f, w * 0.10f, h * 0.44f, r)
         Doodle.ink(c, nb, stroke(gray, 2f), 0.8f * d)
         scrollAct(c, w, h, r)
+        flyingPages(c, w, h)
         stars(c, gray, listOf(Triple(0.88f, 0.22f, 0.08f)), w, h, r)
         drifting(c, w, h, r, gray, listOf(Triple(0.20f, 0.10f, 38f)))
     }
