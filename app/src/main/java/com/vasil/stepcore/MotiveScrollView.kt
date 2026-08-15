@@ -3,8 +3,10 @@ package com.vasil.stepcore
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.Shader
 import android.util.AttributeSet
 import android.view.View
 import kotlin.math.cos
@@ -17,13 +19,29 @@ import kotlin.math.sin
  * или во льду), рассыпается помехой, и из этой помехи разворачивается
  * новый, после чего построчно проступает текст.
  *
- * Хореография (v276, переделана):
+ * Хореография:
  *   0 .. DEATH    гибель: огонь или лёд
  *   .. GLITCH     полотно теряет сигнал: срезы, расслоение по цвету
- *   .. BIRTH      валики расходятся, полотно разворачивается
- *   .. TOTAL      проступает текст
+ *   .. BIRTH      валики расходятся, полотно разворачивается ВОЛНОЙ
+ *   .. TOTAL      текст проступает волной, буква за буквой
  *
- * Что было сломано до v276:
+ * v394 - волна как основа облика:
+ *  - Полотно больше не прямоугольник. Верхняя и нижняя кромки идут одной
+ *    и той же синусоидой: ткань, а не бумажка. Амплитуда велика в момент
+ *    раскрытия и затухает по easeOut; в покое остаётся «дыхание» около
+ *    0.6dp с периодом 7 с - глазом читается как живое полотно, а кадр в
+ *    покое по-прежнему редкий.
+ *  - По полотну идёт затенение ПО ТОЙ ЖЕ волне (провисание ткани):
+ *    столбцы прозрачной тени, яркость которых берётся из производной
+ *    волны. Это даёт объём без единой картинки.
+ *  - Текст проявляется бегущей по строке волной: каждая буква всплывает
+ *    и наливается чернилами со сдвигом фазы по x. Прежнее построчное
+ *    проявление сохранено как огибающая, буквенная волна идёт поверх.
+ *  - Валики получили продольный градиент и торцевые шайбы: круглые, а не
+ *    плоские полоски.
+ *  - Под свитком мягкая тень, по кромкам полотна - виньетка.
+ *
+ * Что было сломано до v276 (уроки сохранены):
  *  - кривая раскрытия имела ПРОВАЛ: множитель (1 + 0.06·sin(k·2π)) на
  *    k≈0.75 давал −1, и свиток откатывался назад перед финалом. Заменено
  *    на честный easeOutBack - один перелёт в самом конце и возврат.
@@ -32,10 +50,8 @@ import kotlin.math.sin
  *    фазы рождения и разворачивается как все прочие.
  *  - блик по полотну шёл, пока полотно ещё закрыто. Теперь строго после
  *    полного раскрытия.
- *  - красная печать с крестом убрана.
  *
- * Кадры тратятся только во время номера. В покое свиток статичен, идёт
- * лишь редкий перелив чернил.
+ * Кадры тратятся только во время номера. В покое свиток почти статичен.
  */
 class MotiveScrollView @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null, defStyle: Int = 0
@@ -52,12 +68,14 @@ class MotiveScrollView @JvmOverloads constructor(
     private val parchment = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL; color = 0xFFE8DCC0.toInt()
     }
-    private val stain = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
-    private val roller = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.FILL; color = 0xFF7A5A32.toInt()
+    private val shade = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val shadow = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL; color = 0x33000000
     }
+    private val stain = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val roller = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val rollerLit = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.FILL; color = 0xFFB08A50.toInt()
+        style = Paint.Style.FILL; color = 0xFFC79B5C.toInt()
     }
     private val rollerDark = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL; color = 0xFF4E3A20.toInt()
@@ -75,12 +93,15 @@ class MotiveScrollView @JvmOverloads constructor(
     }
     private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL; color = 0xFF4A3B22.toInt()
-        textAlign = Paint.Align.CENTER
+        textAlign = Paint.Align.LEFT
         typeface = android.graphics.Typeface.create(
             android.graphics.Typeface.SERIF, android.graphics.Typeface.BOLD_ITALIC)
     }
     private val body = Path()
     private val tmp = Path()
+
+    /** Ширина валика, для которой построен градиент. Пересобираем при смене. */
+    private var rollerShaderW = -1f
 
     fun show(line: String) {
         if (line == current && pending == null && current.isNotEmpty()) return
@@ -119,6 +140,20 @@ class MotiveScrollView @JvmOverloads constructor(
         return 1f + c3 * k * k * k + c1 * k * k
     }
 
+    /**
+     * Смещение кромки полотна по волне. Одна функция на верх, низ,
+     * затенение и текст - иначе слои разъедутся и обман развалится.
+     *
+     * u - доля вдоль полотна [0..1], amp - амплитуда в пикселях,
+     * phase - фаза бегущей волны.
+     */
+    private fun wave(u: Float, amp: Float, phase: Float): Float {
+        if (amp <= 0f) return 0f
+        val a = sin(u * WAVES * 2f * Math.PI.toFloat() + phase)
+        val b = 0.45f * sin(u * WAVES * 3.1f * Math.PI.toFloat() - phase * 0.7f)
+        return amp * (a + b) / 1.45f
+    }
+
     override fun onDraw(canvas: Canvas) {
         val w = width.toFloat(); val h = height.toFloat()
         if (w <= 0f || h <= 0f) return
@@ -137,6 +172,7 @@ class MotiveScrollView @JvmOverloads constructor(
         var alive = 1f
         var textK = 0f
         var glitchK = 0f
+        var birthK = 1f
         when {
             t < PHASE_DEATH -> alive = 1f - smooth((t / PHASE_DEATH).coerceIn(0f, 1f))
             t < PHASE_GLITCH -> {
@@ -147,20 +183,32 @@ class MotiveScrollView @JvmOverloads constructor(
                 alive = 1f
                 val k = ((t - PHASE_GLITCH) / (PHASE_BIRTH - PHASE_GLITCH)).coerceIn(0f, 1f)
                 open = easeOutBack(k)
+                birthK = k
                 // Остаточная помеха гаснет по мере раскрытия.
                 glitchK = (1f - k) * 0.55f
                 if (pending != null) { current = pending!!; pending = null }
             }
-            t < PHASE_TOTAL -> textK = (t - PHASE_BIRTH) / (PHASE_TOTAL - PHASE_BIRTH)
-            else -> textK = 1f
+            t < PHASE_TOTAL -> {
+                textK = (t - PHASE_BIRTH) / (PHASE_TOTAL - PHASE_BIRTH)
+                birthK = 1f + (t - PHASE_BIRTH) / (PHASE_TOTAL - PHASE_BIRTH)
+            }
+            else -> { textK = 1f; birthK = 2f }
         }
         val openC = open.coerceIn(0f, 1.08f)
         val leftX = midX - (midX - fullL) * openC
         val rightX = midX + (fullR - midX) * openC
 
+        // Амплитуда волны: велика в раскрытии, затухает после него,
+        // в покое остаётся дыхание. Затухание квадратичное - ткань
+        // успокаивается быстро, но не обрывом.
+        val settle = (2f - birthK).coerceIn(0f, 1f)
+        val waveAmp = h * (0.005f + 0.085f * settle * settle)
+        val phase = (now % 4200L) / 4200f * 2f * Math.PI.toFloat() * -1f
+
         // ================= ПОЛОТНО =================
         if (openC > 0.01f && alive > 0.001f) {
             val burnX = if (byFire && alive < 1f) leftX + (rightX - leftX) * alive else rightX
+            val span = (rightX - leftX).coerceAtLeast(1f)
             body.reset()
             if (byFire && alive < 1f) {
                 // Рваная кромка горения, а не прямой срез.
@@ -177,23 +225,86 @@ class MotiveScrollView @JvmOverloads constructor(
                 body.lineTo(leftX, bottom)
                 body.close()
             } else {
-                body.addRoundRect(leftX, top, rightX, bottom, 3f * d, 3f * d, Path.Direction.CW)
+                // Волнистое полотно: верх и низ идут одной волной,
+                // поэтому высота листа постоянна - он гнётся, а не тянется.
+                body.moveTo(leftX, top + wave(0f, waveAmp, phase))
+                for (i in 1..WAVE_SEGMENTS) {
+                    val u = i.toFloat() / WAVE_SEGMENTS
+                    body.lineTo(leftX + span * u, top + wave(u, waveAmp, phase))
+                }
+                body.lineTo(rightX, bottom + wave(1f, waveAmp, phase))
+                for (i in WAVE_SEGMENTS - 1 downTo 0) {
+                    val u = i.toFloat() / WAVE_SEGMENTS
+                    body.lineTo(leftX + span * u, bottom + wave(u, waveAmp, phase))
+                }
+                body.close()
+            }
+
+            // Мягкая тень под полотном - свиток отрывается от фона.
+            if (alive > 0.99f) {
+                canvas.save()
+                canvas.translate(0f, 3f * d)
+                canvas.drawPath(body, shadow)
+                canvas.restore()
             }
 
             canvas.save()
             canvas.clipPath(body)
-            canvas.drawRect(leftX, top, rightX, bottom, parchment)
+            canvas.drawRect(leftX, top - h * 0.2f, rightX, bottom + h * 0.2f, parchment)
             for (i in 0 until 5) {
                 stain.color = if (i % 2 == 0) 0xFFB79A63.toInt() else 0xFFD8E4EE.toInt()
                 stain.alpha = 50
-                canvas.drawCircle(leftX + (rightX - leftX) * (0.10f + 0.2f * i),
+                canvas.drawCircle(leftX + span * (0.10f + 0.2f * i),
                     top + (bottom - top) * (0.2f + 0.6f * rnd(i)),
                     h * (0.04f + 0.05f * rnd(i + 9)), stain)
             }
-            var fy = top + (bottom - top) * 0.22f
-            while (fy < bottom - 2f * d) {
-                canvas.drawLine(leftX + 7f * d, fy, rightX - 7f * d, fy, fiber)
-                fy += (bottom - top) * 0.19f
+            // Волокна идут по волне: прямая линия на волнистом листе
+            // выдала бы плоскость.
+            var fk = 0.22f
+            while (fk < 1f) {
+                val fy = top + (bottom - top) * fk
+                var px = leftX + 7f * d
+                var py = fy + wave(7f * d / span, waveAmp, phase)
+                var i = 1
+                while (i <= WAVE_SEGMENTS) {
+                    val u = (7f * d + (span - 14f * d) * i / WAVE_SEGMENTS) / span
+                    val nx = leftX + span * u
+                    val ny = fy + wave(u, waveAmp, phase)
+                    canvas.drawLine(px, py, nx, ny, fiber)
+                    px = nx; py = ny
+                    i++
+                }
+                fk += 0.19f
+            }
+
+            // Затенение по волне: там, где ткань уходит от света, ложится
+            // тень. Яркость берём из производной волны - получается
+            // объём без единого растрового ресурса.
+            if (waveAmp > 0.6f * d) {
+                for (i in 0 until WAVE_SEGMENTS) {
+                    val u = i.toFloat() / WAVE_SEGMENTS
+                    val slope = (wave(u + 0.02f, waveAmp, phase) -
+                            wave(u - 0.02f, waveAmp, phase)) / (0.04f * span)
+                    val a = (slope * 110f)
+                    if (a > 0f) {
+                        shade.color = 0xFF3A2C14.toInt()
+                        shade.alpha = a.coerceIn(0f, 70f).toInt()
+                    } else {
+                        shade.color = 0xFFFFF6DC.toInt()
+                        shade.alpha = (-a).coerceIn(0f, 70f).toInt()
+                    }
+                    canvas.drawRect(leftX + span * u, top - h * 0.2f,
+                        leftX + span * (u + 1f / WAVE_SEGMENTS) + 0.6f, bottom + h * 0.2f, shade)
+                }
+            }
+            // Виньетка по кромкам: край листа всегда темнее середины.
+            shade.color = 0xFF6B5C3C.toInt()
+            for (i in 0 until 6) {
+                shade.alpha = 26 - i * 4
+                canvas.drawRect(leftX + i * 1.4f * d, top - h * 0.2f,
+                    leftX + (i + 1) * 1.4f * d, bottom + h * 0.2f, shade)
+                canvas.drawRect(rightX - (i + 1) * 1.4f * d, top - h * 0.2f,
+                    rightX - i * 1.4f * d, bottom + h * 0.2f, shade)
             }
 
             if (!byFire && alive < 1f) {
@@ -305,8 +416,8 @@ class MotiveScrollView @JvmOverloads constructor(
         }
 
         // ================= ПОМЕХА В ПУСТОТЕ =================
-        // Печати с крестом больше нет. Между гибелью и рождением остаётся
-        // сам сигнал: узкая полоса помехи там, где сейчас свёрнут свиток.
+        // Между гибелью и рождением остаётся сам сигнал: узкая полоса
+        // помехи там, где сейчас свёрнут свиток.
         if (openC <= 0.01f && glitchK > 0.01f) {
             val cy = (top + bottom) / 2f
             val half = h * (0.03f + 0.20f * glitchK)
@@ -320,20 +431,33 @@ class MotiveScrollView @JvmOverloads constructor(
 
         // ================= ВАЛИКИ =================
         if (openC > 0.01f) {
+            if (rollerShaderW != rollW) {
+                rollerShaderW = rollW
+                roller.shader = LinearGradient(
+                    -rollW * 0.42f, 0f, rollW * 0.42f, 0f,
+                    intArrayOf(0xFF4A3418.toInt(), 0xFFB0854A.toInt(),
+                        0xFF8A6636.toInt(), 0xFF3E2C13.toInt()),
+                    floatArrayOf(0f, 0.32f, 0.62f, 1f), Shader.TileMode.CLAMP)
+            }
             for (cx in floatArrayOf(leftX - rollW * 0.02f, rightX + rollW * 0.02f)) {
-                canvas.drawRoundRect(cx - rollW * 0.42f, top - h * 0.06f,
-                    cx + rollW * 0.42f, bottom + h * 0.06f, rollW * 0.4f, rollW * 0.4f, roller)
-                canvas.drawRoundRect(cx - rollW * 0.20f, top - h * 0.04f,
-                    cx + rollW * 0.04f, bottom + h * 0.04f, rollW * 0.3f, rollW * 0.3f, rollerLit)
-                canvas.drawRoundRect(cx - rollW * 0.50f, top - h * 0.10f,
-                    cx + rollW * 0.50f, top - h * 0.01f, rollW * 0.2f, rollW * 0.2f, rollerDark)
-                canvas.drawRoundRect(cx - rollW * 0.50f, bottom + h * 0.01f,
-                    cx + rollW * 0.50f, bottom + h * 0.10f, rollW * 0.2f, rollW * 0.2f, rollerDark)
-                for (i in 1..3) {
-                    val ry = top + (bottom - top) * (i / 4f)
-                    canvas.drawRect(cx - rollW * 0.42f, ry - 0.9f * d,
-                        cx + rollW * 0.42f, ry + 0.9f * d, rollerDark)
-                }
+                canvas.save()
+                canvas.translate(cx, 0f)
+                canvas.drawRoundRect(-rollW * 0.42f, top - h * 0.06f,
+                    rollW * 0.42f, bottom + h * 0.06f, rollW * 0.4f, rollW * 0.4f, roller)
+                canvas.restore()
+                // Торцевые шайбы: валик обязан быть круглым на концах.
+                canvas.drawOval(cx - rollW * 0.50f, top - h * 0.12f,
+                    cx + rollW * 0.50f, top - h * 0.01f, rollerDark)
+                canvas.drawOval(cx - rollW * 0.50f, bottom + h * 0.01f,
+                    cx + rollW * 0.50f, bottom + h * 0.12f, rollerDark)
+                canvas.drawOval(cx - rollW * 0.30f, top - h * 0.095f,
+                    cx + rollW * 0.30f, top - h * 0.035f, rollerLit)
+                canvas.drawOval(cx - rollW * 0.30f, bottom + h * 0.035f,
+                    cx + rollW * 0.30f, bottom + h * 0.095f, rollerLit)
+                // Продольный блик - тонкая светлая жила по оси валика.
+                fx.color = 0xFFE8C58B.toInt(); fx.alpha = 90
+                canvas.drawRoundRect(cx - rollW * 0.10f, top - h * 0.03f,
+                    cx - rollW * 0.02f, bottom + h * 0.03f, rollW * 0.1f, rollW * 0.1f, fx)
             }
             // Блик пробегает по полотну ПОСЛЕ полного раскрытия: раньше он
             // шёл по ещё закрытому свитку и читался как мусор.
@@ -347,7 +471,8 @@ class MotiveScrollView @JvmOverloads constructor(
 
         // ================= ТЕКСТ =================
         if (textK > 0.01f && current.isNotEmpty()) {
-            val maxW = (rightX - leftX) - 14f * d
+            val span = (rightX - leftX).coerceAtLeast(1f)
+            val maxW = span - 14f * d
             val maxH = (bottom - top) - 6f * d
             var size = h * 0.26f
             var lines: List<String> = emptyList()
@@ -362,35 +487,50 @@ class MotiveScrollView @JvmOverloads constructor(
             }
             text.textSize = size
             val shim = 0.5f + 0.5f * sin(((now % 6000L) / 6000.0 * 2.0 * Math.PI)).toFloat()
-            text.color = Color.rgb(
+            val inkColor = Color.rgb(
                 (0x4A + (0x6B - 0x4A) * shim).toInt(),
                 (0x3B + (0x50 - 0x3B) * shim).toInt(),
                 (0x22 + (0x2E - 0x22) * shim).toInt())
             val fm = text.fontMetrics
             val lineH = (fm.descent - fm.ascent) * 0.94f
             var y2 = (top + bottom) / 2f - lines.size * lineH / 2f - fm.ascent * 0.94f
-            // Строки проявляются снизу вверх - как проступающие чернила.
+            // Строки проявляются снизу вверх - как проступающие чернила,
+            // а внутри строки бежит буквенная волна.
             for ((i, ln) in lines.withIndex()) {
                 val share = (lines.size - i).toFloat() / lines.size
-                val a = ((textK - (1f - share) * 0.5f) / 0.5f).coerceIn(0f, 1f)
-                text.alpha = (238f * a).toInt().coerceIn(0, 255)
-                // Пока чернила проступают, буквы изредка «дёргает» помехой:
-                // короткий цветной дубль со сдвигом. Только на своей строке
-                // и только в первой половине проявления.
-                if (a < 0.92f && ((now / 90L + i) % 11L) == 0L) {
-                    val save = text.color
-                    text.color = if ((now / 90L) % 2L == 0L) TINT_MAGENTA else TINT_CYAN
-                    text.alpha = (110f * a).toInt().coerceIn(0, 255)
-                    canvas.drawText(ln, midX + 2.2f * d, y2, text)
-                    text.color = save
-                    text.alpha = (238f * a).toInt().coerceIn(0, 255)
+                val lineA = ((textK - (1f - share) * 0.5f) / 0.5f).coerceIn(0f, 1f)
+                if (lineA <= 0.001f) { y2 += lineH; continue }
+                val lw = text.measureText(ln)
+                var cxPen = midX - lw / 2f
+                for (ci in ln.indices) {
+                    val ch = ln.substring(ci, ci + 1)
+                    val cw = text.measureText(ch)
+                    val u = ((cxPen + cw / 2f) - leftX) / span
+                    // Волна проявления бежит слева направо: буква
+                    // сначала всплывает, потом наливается чернилами.
+                    val ca = ((lineA - 0.35f * (1f - u)) / 0.65f).coerceIn(0f, 1f)
+                    if (ca > 0.004f) {
+                        // Буква лежит на полотне: та же волна, что у листа.
+                        val ride = wave(u, waveAmp, phase) * 0.8f
+                        val lift = (1f - ca) * lineH * 0.55f
+                        val by = y2 + ride + lift
+                        if (ca < 0.92f && ((now / 90L + i) % 11L) == 0L) {
+                            text.color = if ((now / 90L) % 2L == 0L) TINT_MAGENTA else TINT_CYAN
+                            text.alpha = (110f * ca).toInt().coerceIn(0, 255)
+                            canvas.drawText(ch, cxPen + 2.2f * d, by, text)
+                        }
+                        text.color = inkColor
+                        text.alpha = (238f * ca).toInt().coerceIn(0, 255)
+                        canvas.drawText(ch, cxPen, by, text)
+                    }
+                    cxPen += cw
                 }
-                canvas.drawText(ln, midX, y2, text)
                 y2 += lineH
             }
         }
 
-        if (running) postInvalidateOnAnimation() else postInvalidateDelayed(220)
+        // В покое кадры редкие: живёт только медленное дыхание волны.
+        if (running) postInvalidateOnAnimation() else postInvalidateDelayed(140)
     }
 
     /**
@@ -466,5 +606,8 @@ class MotiveScrollView @JvmOverloads constructor(
         const val PHASE_GLITCH = 2150f
         const val PHASE_BIRTH = 3150f
         const val PHASE_TOTAL = 4300f
+        // Волна полотна.
+        const val WAVE_SEGMENTS = 26
+        const val WAVES = 1.6f
     }
 }
