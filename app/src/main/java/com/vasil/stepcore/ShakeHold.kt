@@ -216,36 +216,63 @@ class ShakeHold {
         if (first < 1) return false
         if (nowMs - timesMs[first - 1] < windows * WINDOW_MS - SPAN_SLACK_MS) return false
 
-        val rates = FloatArray(windows)
+        val acc = FloatArray(windows)
+        var used = 0
+        var skipped = 0
         var rateBad = -1
         for (k in 0 until windows) {
             val idx = first + k
             val gap = timesMs[idx] - timesMs[idx - 1]
             if (gap < MIN_GAP_MS) {
-                // Слишком близкие приходы: делить нельзя, темп получится
-                // бесконечным. Такое бывает на границе эпизода.
                 lastReport = "приходы ближе " + MIN_GAP_MS + " мс — судить нечем"
                 return false
             }
-            rates[k] = deltas[idx] * 1000f / gap
-            if (rateBad < 0 && (rates[k] < RATE_MIN || rates[k] > RATE_MAX)) rateBad = k
+            if (gap > MAX_GAP_MS) {
+                // РАЗРЫВ, а не низкий темп. Журнал 13.08: пауза 180024 мс,
+                // затем 28 шагов разом -> 0,16 ш/с, и правило резало 28
+                // шагов чипа. Но 28 шагов за 180 с не измерение темпа: чип
+                // молчал (батарейные окна при погашенном экране), а потом
+                // отдал накопленное.
+                //
+                // Промежуток ИСКЛЮЧАЕТСЯ из выборки, а не роняет всё
+                // правило: первая редакция этой правки отвечала «судить
+                // нечем» и теряла БОЛЬШЕ прежнего (87 против 116 на том же
+                // сценарии), потому что вместе с разрывом выбрасывались и
+                // соседние здоровые промежутки.
+                skipped++
+                continue
+            }
+            val r = deltas[idx] * 1000f / gap
+            acc[used] = r
+            if (rateBad < 0 && (r < RATE_MIN || r > RATE_MAX)) rateBad = used
+            used++
         }
+
+        // Здоровых промежутков должно остаться достаточно, иначе судить
+        // действительно не о чем.
+        if (used < MIN_JUDGE_WINDOWS) {
+            lastReport = "здоровых промежутков " + used + " (пропущено разрывов " +
+                skipped + ") — судить нечем"
+            return false
+        }
+        val rates = acc.copyOf(used)
 
         var s = 0.0
         for (r in rates) s += r.toDouble()
-        val mean = s / windows
+        val mean = s / used
         if (mean <= 0.0) { lastReport = "темп нулевой"; return false }
         var v = 0.0
         for (r in rates) { val d = r - mean; v += d * d }
-        val cv = sqrt(v / windows) / mean
+        val cv = sqrt(v / used) / mean
 
-        buildReport(rates, cv, rateBad)
+        buildReport(rates, cv, rateBad, skipped)
         if (rateBad >= 0) return false
         return cv < CV_MAX
     }
 
     /** Строка приходов для журнала. Порядок: старый -> новый. */
-    private fun buildReport(rates: FloatArray, cv: Double, rateBad: Int) {
+    private fun buildReport(rates: FloatArray, cv: Double, rateBad: Int,
+                            skipped: Int) {
         val sb = StringBuilder()
         sb.append("приходы(старый→новый) ш/с: ")
         for (i in rates.indices) {
@@ -254,6 +281,7 @@ class ShakeHold {
         }
         sb.append(" · разброс ").append("%.0f".format(cv * 100)).append("%")
         sb.append(" (порог ").append((CV_MAX * 100).toInt()).append("%)")
+        if (skipped > 0) sb.append(" · пропущено разрывов ").append(skipped)
         if (rateBad >= 0) {
             sb.append(" · приход ").append(rateBad)
             sb.append(" вне диапазона ").append(RATE_MIN).append("-").append(RATE_MAX)
@@ -295,6 +323,10 @@ class ShakeHold {
 
         /** Приходы ближе этого делить нельзя: темп улетит в бесконечность. */
         const val MIN_GAP_MS = 1_000L
+
+        /** Пауза длиннее этого — разрыв выдачи, а не медленная ходьба.
+         *  Чип отдаёт каждые ~10 с; полторы нормы с запасом. */
+        const val MAX_GAP_MS = 20_000L
 
         /** Допуск на покрытие. Чип отдаёт каждые ~10003 мс, и требование
          *  ровно windows*WINDOW_MS не выполнялось бы никогда. */

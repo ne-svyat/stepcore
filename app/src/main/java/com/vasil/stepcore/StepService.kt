@@ -595,7 +595,8 @@ class StepService : Service(), SensorEventListener {
                 // v392. Место телефона — предположение, на счёт не влияет.
                 // Все пороги проекта мерились в одном положении и в другом
                 // врут; пока место неизвестно, любой порог — лотерея.
-                val where = PlacementGuess.of(snap.dipG, snap.peakG, snap.strength)
+                val where = PlacementGuess.of(
+                    snap.dipG, snap.peakG, snap.strength, snap.periodMs)
                 if (where != PlacementGuess.Where.UNKNOWN) {
                     val conf = PlacementGuess.confidence(snap.dipG, snap.peakG, where)
                     logEvent("[гип] телефон: " + PlacementGuess.ru(where) +
