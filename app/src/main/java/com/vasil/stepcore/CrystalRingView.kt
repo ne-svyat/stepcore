@@ -154,6 +154,10 @@ class CrystalRingView @JvmOverloads constructor(
         strokeJoin = Paint.Join.ROUND
     }
     private val boltPath = Path()
+    private val windPath = Path()
+    private val windPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
+    }
     private val eyeAlmond = Path()
     private val eyePupil = Path()
     private val bloodTrail = Path()
@@ -283,7 +287,10 @@ class CrystalRingView @JvmOverloads constructor(
         // Зигзаг-тропа: 5 пролётов (×5), сужается к вершине; со ступенями.
         val inset = ww * 0.14f
         yTrailBottom = bodyBottom - inner * 0.04f
-        yTrailTop = pad + inner * 0.30f
+        // Тропа обязана доводить ДО ВЕРШИНЫ. Прежний потолок 0.30 обрывал
+        // её у четвёртого алмаза: гора говорила, что путь кончается раньше
+        // пятой цели. Верхний узел теперь садится на саму вершину.
+        yTrailTop = pad + inner * 0.055f
         trailPath.reset(); tickPath.reset()
         var prevX = 0f; var prevY = 0f
         val flights = 5
@@ -295,7 +302,9 @@ class CrystalRingView @JvmOverloads constructor(
                      else lerpX(ty, rs[0], rs[1], rb[0], rb[1])
             var leftB = lx + inset; var rightB = rx - inset
             if (rightB < leftB) { val m = (lx + rx) / 2f; leftB = m; rightB = m }
-            val tx = if (k % 2 == 0) leftB else rightB
+            // Последний пролёт приходит В ВЕРШИНУ, а не к склону.
+            val tx = if (k == flights) peak[0]
+                     else if (k % 2 == 0) leftB else rightB
             if (k == 0) {
                 trailPath.moveTo(tx, ty)
             } else {
@@ -431,68 +440,156 @@ class CrystalRingView @JvmOverloads constructor(
         c.drawPath(edges, veinPaint)
     }
 
-    /** Луна = багровый глаз хищника, из которого течёт кровь. */
+    /**
+     * Треугольная волна моргания: 0 - глаз открыт, 1 - закрыт полностью.
+     * Отдельная функция, потому что один и тот же профиль нужен всем
+     * повадкам, а не переписывался бы в каждой.
+     */
+    private fun blinkAt(ph: Float, center: Float, half: Float): Float {
+        val dd = Math.abs(ph - center)
+        if (dd >= half) return 0f
+        return 1f - dd / half
+    }
+
+    /**
+     * Луна = глаз хищника. Не украшение: он смотрит, моргает и у него
+     * есть повадки.
+     *
+     * Повадка выбирается детерминированно по номеру временного окна -
+     * значит она одинакова для любого кадра одного окна и не зависит от
+     * частоты перерисовки. Четыре повадки: медленное веко, двойное
+     * моргание, распахнутый взгляд с сжатым зрачком и дрожью, злой
+     * прищур. Ни одна не «случайна в кадре» - иначе глаз дёргался бы.
+     *
+     * Кровь течёт по веку и срывается каплями, которые падают ДО НИЗА
+     * вьюхи и разбиваются - у рекорда есть цена, и она долетает до земли.
+     */
     private fun drawMoonEye(c: Canvas, tms: Long, bh: Float) {
         val pulse = 0.5f + 0.5f * Math.sin(tms * 0.0016).toFloat()
-        val eh = moonR * 0.50f
+        // Глаз крупнее луны: он должен доминировать в небе.
+        val rr = moonR * 1.30f
 
-        // Гало.
+        val slotMs = 5200L
+        val slot = tms / slotMs
+        val ph = (tms % slotMs).toFloat() / slotMs
+        val kind = (((slot * 6364136223846793005L) ushr 60).toInt() and 3)
+
+        var openK = 1f          // раскрытие века
+        var pupilK = 1f         // сжатие зрачка
+        var jitter = 0f         // дрожь взгляда
+        when (kind) {
+            0 -> openK = 1f - blinkAt(ph, 0.78f, 0.075f)
+            1 -> openK = 1f - Math.max(blinkAt(ph, 0.58f, 0.045f),
+                                       blinkAt(ph, 0.70f, 0.045f))
+            2 -> {
+                openK = 1.18f - 0.18f * blinkAt(ph, 0.90f, 0.10f)
+                pupilK = 0.40f + 0.18f * pulse
+                jitter = 1.1f * d * Math.sin(tms * 0.021).toFloat()
+            }
+            else -> {
+                openK = 0.46f + 0.06f * pulse
+                pupilK = 1.35f
+            }
+        }
+        openK = openK.coerceIn(0.02f, 1.25f)
+        val eh = rr * 0.52f * openK
+        val ew = rr * 0.98f
+        val cx = moonCx + jitter
+        val cy = moonCy
+
+        // Гало: при прищуре тускнеет, при распахнутом взгляде вспыхивает.
         gemGlowPaint.color = bloodHi
-        gemGlowPaint.alpha = (70f + 45f * pulse).toInt().coerceIn(0, 255)
-        c.drawCircle(moonCx, moonCy, moonR * (1.45f + 0.12f * pulse), gemGlowPaint)
+        gemGlowPaint.alpha = ((55f + 50f * pulse) * (0.55f + 0.45f * openK))
+            .toInt().coerceIn(0, 255)
+        c.drawCircle(cx, cy, rr * (1.55f + 0.14f * pulse), gemGlowPaint)
 
         // Диск: к краю темнее.
-        for (i in 0 until 6) {
-            moonFillPaint.color = blend(bloodLo, bloodHi, i / 5f)
-            c.drawCircle(moonCx, moonCy, moonR * (1f - 0.12f * i), moonFillPaint)
+        for (i in 0 until 7) {
+            moonFillPaint.color = blend(bloodLo, bloodHi, i / 6f)
+            c.drawCircle(cx, cy, rr * (1f - 0.11f * i), moonFillPaint)
         }
 
-        // Миндаль глаза.
+        // Миндаль строится каждый кадр: веко живое.
+        eyeAlmond.reset()
+        eyeAlmond.moveTo(cx - ew, cy)
+        eyeAlmond.quadTo(cx - ew * 0.30f, cy - eh * 1.45f, cx + ew * 0.55f, cy - eh * 0.55f)
+        eyeAlmond.quadTo(cx + ew, cy - eh * 0.18f, cx + ew, cy)
+        eyeAlmond.quadTo(cx, cy + eh * 1.15f, cx - ew, cy)
+        eyeAlmond.close()
+
         moonFillPaint.color = 0xFF2A0608.toInt()
         c.drawPath(eyeAlmond, moonFillPaint)
 
-        // Радужка лучами - только внутри миндаля.
         c.save()
         c.clipPath(eyeAlmond)
+        // Радужка лучами.
         moonStrokePaint.strokeWidth = 1.2f * d
-        for (k in 0 until 24) {
-            val a = k / 24f * 2f * Math.PI.toFloat()
+        for (k in 0 until 26) {
+            val a = k / 26f * 2f * Math.PI.toFloat()
             moonStrokePaint.color = blend(bloodMid, bloodHi, (k % 3) / 2f)
-            moonStrokePaint.alpha = 165
-            c.drawLine(
-                moonCx, moonCy,
-                moonCx + moonR * 0.95f * Math.cos(a.toDouble()).toFloat(),
-                moonCy + moonR * 0.55f * Math.sin(a.toDouble()).toFloat(),
+            moonStrokePaint.alpha = 170
+            c.drawLine(cx, cy,
+                cx + rr * 0.98f * Math.cos(a.toDouble()).toFloat(),
+                cy + rr * 0.60f * Math.sin(a.toDouble()).toFloat(),
                 moonStrokePaint)
         }
-        c.restore()
-        moonStrokePaint.alpha = 255
-
+        // Сосуды белка: короткие ветвящиеся нити от углов.
+        veinPaint.color = bloodHi
+        veinPaint.strokeWidth = 1.1f * d
+        veinPaint.alpha = (110f + 60f * pulse).toInt().coerceIn(0, 255)
+        for (k in 0 until 6) {
+            val dir = if (k % 2 == 0) -1f else 1f
+            val vy = cy + eh * ((k % 3) - 1) * 0.35f
+            val x0 = cx + dir * ew * 0.92f
+            windPath.reset()
+            windPath.moveTo(x0, vy)
+            windPath.quadTo(x0 - dir * ew * 0.30f, vy + eh * 0.18f,
+                x0 - dir * ew * 0.52f, vy - eh * 0.10f)
+            c.drawPath(windPath, veinPaint)
+        }
         // Зрачок-щель: сужается и расширяется, как у хищника.
-        val pw = moonR * (0.10f + 0.07f * pulse)
+        val pw = rr * (0.09f + 0.06f * pulse) * pupilK
         eyePupil.reset()
-        eyePupil.moveTo(moonCx, moonCy - eh * 0.95f)
-        eyePupil.lineTo(moonCx + pw, moonCy)
-        eyePupil.lineTo(moonCx, moonCy + eh * 0.95f)
-        eyePupil.lineTo(moonCx - pw, moonCy)
+        eyePupil.moveTo(cx, cy - eh * 1.05f)
+        eyePupil.lineTo(cx + pw, cy)
+        eyePupil.lineTo(cx, cy + eh * 1.05f)
+        eyePupil.lineTo(cx - pw, cy)
         eyePupil.close()
         moonFillPaint.color = 0xFF060203.toInt()
         c.drawPath(eyePupil, moonFillPaint)
-
         // Блик смещён от центра - глаз живой, а не нарисованный.
         bloodPaint.color = 0xFFFFE1E1.toInt()
         bloodPaint.alpha = 190
-        c.drawOval(moonCx - pw * 2.0f, moonCy - eh * 0.55f, moonCx - pw * 0.5f, moonCy - eh * 0.10f, bloodPaint)
+        c.drawOval(cx - pw * 2.2f, cy - eh * 0.60f, cx - pw * 0.6f, cy - eh * 0.12f, bloodPaint)
         bloodPaint.alpha = 255
+        c.restore()
 
-        // Веко.
+        // Веко: жирная линия сверху, тонкая снизу - взгляд сразу тяжелее.
         moonStrokePaint.color = bloodLo
-        moonStrokePaint.strokeWidth = 2.0f * d
+        moonStrokePaint.strokeWidth = 2.6f * d
+        moonStrokePaint.alpha = 255
         c.drawPath(eyeAlmond, moonStrokePaint)
 
-        // Ручей крови из внутреннего угла.
+        // Надбровный скол: угол злости. Наклон растёт при прищуре.
+        val angry = 1f - (openK - 0.4f).coerceIn(0f, 0.85f) / 0.85f
         veinPaint.color = bloodLo
-        veinPaint.strokeWidth = 5.2f * d
+        veinPaint.strokeWidth = 3.4f * d
+        veinPaint.alpha = 255
+        windPath.reset()
+        windPath.moveTo(cx - ew * 1.02f, cy - rr * (0.60f + 0.10f * angry))
+        windPath.quadTo(cx - ew * 0.10f, cy - rr * (0.86f + 0.16f * angry),
+            cx + ew * 1.00f, cy - rr * (0.42f - 0.16f * angry))
+        c.drawPath(windPath, veinPaint)
+
+        // Кровь: ручей по веку строится под текущее раскрытие.
+        val sx = cx - ew * 0.80f
+        val sy = cy + eh * 0.55f
+        bloodTrail.reset()
+        bloodTrail.moveTo(sx, sy)
+        bloodTrail.quadTo(sx - rr * 0.12f, cy + rr * 0.75f, sx - rr * 0.05f, cy + rr * 1.20f)
+        bloodTrail.quadTo(sx + rr * 0.05f, cy + rr * 1.45f, sx - rr * 0.02f, cy + rr * 1.70f)
+        veinPaint.color = bloodLo
+        veinPaint.strokeWidth = 5.4f * d
         veinPaint.alpha = 235
         c.drawPath(bloodTrail, veinPaint)
         veinPaint.color = bloodMid
@@ -500,17 +597,37 @@ class CrystalRingView @JvmOverloads constructor(
         veinPaint.alpha = 255
         c.drawPath(bloodTrail, veinPaint)
 
-        // Тяжёлые капли с хвостом срываются вниз.
-        for (k in 0 until 3) {
-            var g = (tms * 0.00030f) + k * 0.333f
+        // Капли срываются и падают ДО НИЗА: ускорение свободного падения,
+        // хвост вытягивается со скоростью, внизу - разлёт брызг.
+        val yStart = cy + rr * 1.70f
+        val yEnd = bodyBottom
+        val fall = (yEnd - yStart).coerceAtLeast(1f)
+        for (k in 0 until 4) {
+            var g = (tms * 0.00026f) + k * 0.25f
             g -= Math.floor(g.toDouble()).toFloat()
-            val dx = moonCx - moonR * 0.80f + moonR * 0.05f * k
-            val dy = moonCy + moonR * 1.55f + g * bh * 0.42f
-            val rr = (4.4f - 1.9f * g) * d
+            val f = g * g                        // разгон, а не равномерность
+            val dx = sx + rr * 0.04f * k
+            val dy = yStart + f * fall
+            val rad = (4.6f - 1.6f * g) * d
             bloodPaint.color = bloodMid
-            bloodPaint.alpha = (240f * (1f - g * 0.85f)).toInt().coerceIn(0, 255)
-            c.drawCircle(dx, dy, rr, bloodPaint)
-            c.drawOval(dx - rr * 0.55f, dy - rr * 2.6f, dx + rr * 0.55f, dy, bloodPaint)
+            bloodPaint.alpha = 240
+            c.drawCircle(dx, dy, rad, bloodPaint)
+            // Хвост тем длиннее, чем быстрее летит капля.
+            c.drawOval(dx - rad * 0.5f, dy - rad * (1.6f + 5.0f * g), dx + rad * 0.5f, dy,
+                bloodPaint)
+            // Разлёт у земли.
+            if (g > 0.90f) {
+                val sk = (g - 0.90f) / 0.10f
+                bloodPaint.alpha = (220f * (1f - sk)).toInt().coerceIn(0, 255)
+                for (s in 0 until 5) {
+                    val a = Math.toRadians(200.0 + s * 35.0)
+                    val rl = rr * 0.55f * sk
+                    c.drawCircle(dx + rl * Math.cos(a).toFloat(),
+                        yEnd + rl * Math.sin(a).toFloat() * 0.5f,
+                        (1.6f - 1.0f * sk) * d, bloodPaint)
+                }
+            }
+            bloodPaint.alpha = 255
         }
     }
 
@@ -608,37 +725,111 @@ class CrystalRingView @JvmOverloads constructor(
     }
 
     /**
-     * Мелкий глитч: помеха в сигнале, не украшение. Срабатывает редко и
-     * живёт пару кадров - если он заметен постоянно, он сломан.
+     * Ветер вместо помехи.
+     *
+     * Прежний глитч был набором прямоугольников: на округлой горе это
+     * читалось как чужой прямоугольный мусор поверх картинки. Прямых
+     * линий в природе нет, и в силуэте горы их тоже нет.
+     *
+     * Теперь то же беспокойство даёт ВЕТЕР: длинные изогнутые струи
+     * проносятся вдоль склона, силуэт сносит по синусоиде (сдвиг зависит
+     * от высоты - как гнётся всё длинное), в воздухе летят искры-пылинки.
+     * Эффект непрерывный, но тихий: заметен движением, а не яркостью.
      */
-    private fun drawGlitch(c: Canvas, tms: Long) {
-        val slot = tms / 140L
-        if ((slot % 7L) != 0L) return
-        val r = (slot * 1103515245L + 12345L) ushr 16
-        val off = (if ((r and 1L) == 0L) 1f else -1f) * 2.5f * d
+    private fun drawWind(c: Canvas, tms: Long) {
+        val bh = bodyBottom - bodyTop
+        val w = width.toFloat()
+        val t = tms * 0.001f
 
-        // Расслоение контура по цвету.
+        // Порыв: сила ветра сама дышит, поэтому картинка не монотонна.
+        val gust = 0.35f + 0.65f *
+            Math.abs(Math.sin(t * 0.42 + Math.sin(t * 0.17) * 1.7)).toFloat()
+
+        // Снос силуэта: чем выше точка, тем сильнее её уводит. Рисуем
+        // два цветных двойника контура с изгибом - расслоение остаётся,
+        // но по кривой, а не по прямому срезу.
+        val bend = 3.4f * d * gust
         glitchPaint.style = Paint.Style.STROKE
-        glitchPaint.strokeWidth = 1.8f * d
-        glitchPaint.color = magenta; glitchPaint.alpha = 120
-        c.save(); c.translate(off, 0f); c.drawPath(mountainPath, glitchPaint); c.restore()
-        glitchPaint.color = glitchCyan; glitchPaint.alpha = 120
-        c.save(); c.translate(-off, 0f); c.drawPath(mountainPath, glitchPaint); c.restore()
+        glitchPaint.strokeWidth = 1.7f * d
+        for (side in 0 until 2) {
+            val dir = if (side == 0) 1f else -1f
+            glitchPaint.color = if (side == 0) magenta else glitchCyan
+            glitchPaint.alpha = (60f + 55f * gust).toInt().coerceIn(0, 255)
+            windPath.reset()
+            var y = bodyTop
+            var first = true
+            while (y <= bodyBottom) {
+                val u = (bodyBottom - y) / bh
+                val off = dir * bend * u * u
+                val lx = silhouetteX(y, true) + off
+                if (first) { windPath.moveTo(lx, y); first = false } else windPath.lineTo(lx, y)
+                y += bh * 0.06f
+            }
+            y = bodyBottom
+            while (y >= bodyTop) {
+                val u = (bodyBottom - y) / bh
+                windPath.lineTo(silhouetteX(y, false) + dir * bend * u * u, y)
+                y -= bh * 0.06f
+            }
+            c.drawPath(windPath, glitchPaint)
+        }
 
-        // Срезы - только по телу горы.
+        // Струи ветра: длинные дуги, летящие поперёк горы.
         c.save()
         c.clipPath(mountainPath)
-        glitchPaint.style = Paint.Style.FILL
-        for (i in 0 until 3) {
-            val rr = (r shr (i * 5)) and 0xFFL
-            val yy = bodyTop + (bodyBottom - bodyTop) * (rr.toFloat() / 255f)
-            val hh = (2f + (rr % 6L).toFloat()) * d
-            val dxs = (if ((rr and 2L) == 0L) 1f else -1f) * (4f + (rr % 11L).toFloat()) * d
-            glitchPaint.color = if ((rr and 4L) == 0L) magenta else glitchCyan
-            glitchPaint.alpha = 45 + (rr % 50L).toInt()
-            c.drawRect(dxs, yy, width.toFloat() + dxs, yy + hh, glitchPaint)
+        for (i in 0 until 7) {
+            var g = t * (0.34f + 0.06f * i) + i * 0.137f
+            g -= Math.floor(g.toDouble()).toFloat()
+            val y0 = bodyTop + bh * (((i * 37) % 100) / 100f)
+            val x0 = -w * 0.35f + g * w * 1.7f
+            val len = w * (0.30f + 0.22f * gust)
+            val sag = bh * 0.06f * Math.sin((t * 1.7 + i).toDouble()).toFloat()
+            windPath.reset()
+            windPath.moveTo(x0, y0)
+            windPath.quadTo(x0 + len * 0.5f, y0 + sag, x0 + len, y0 + sag * 0.35f)
+            // Прозрачность гаснет к краям пролёта - струя не обрывается.
+            val fade = Math.sin(g * Math.PI).toFloat()
+            windPaint.color = if (i % 3 == 0) glitchCyan else magenta
+            windPaint.strokeWidth = (0.9f + 1.6f * gust) * d
+            windPaint.alpha = (95f * fade * gust).toInt().coerceIn(0, 255)
+            c.drawPath(windPath, windPaint)
+            windPaint.color = hotCore
+            windPaint.strokeWidth = 0.7f * d
+            windPaint.alpha = (60f * fade * gust).toInt().coerceIn(0, 255)
+            c.drawPath(windPath, windPaint)
         }
+
+        // Пылинки-искры несёт тем же ветром.
+        for (i in 0 until 14) {
+            var g = t * (0.5f + 0.09f * (i % 5)) + i * 0.0714f
+            g -= Math.floor(g.toDouble()).toFloat()
+            val y = bodyTop + bh * (((i * 61) % 100) / 100f) +
+                bh * 0.03f * Math.sin((t * 2.3 + i).toDouble()).toFloat()
+            val x = -w * 0.1f + g * w * 1.2f
+            bloodPaint.color = if (i % 4 == 0) hotCore else magenta
+            bloodPaint.alpha = (200f * Math.sin(g * Math.PI).toFloat() * gust)
+                .toInt().coerceIn(0, 255)
+            c.drawCircle(x, y, (0.9f + 1.3f * (1f - g)) * d, bloodPaint)
+        }
+        bloodPaint.alpha = 255
         c.restore()
+    }
+
+    /** X силуэта горы на высоте y: левое (true) или правое (false) ребро. */
+    private fun silhouetteX(y: Float, left: Boolean): Float {
+        val ww = width.toFloat()
+        val pad = contourPaint.strokeWidth * 0.5f + 1f * d
+        val inner = height - 2 * pad
+        val peakX = ww * 0.52f
+        return if (left) {
+            val lsY = pad + inner * 0.42f
+            if (y < lsY) lerpX(y, peakX, pad, ww * 0.28f, lsY)
+            else lerpX(y, ww * 0.28f, lsY, pad, bodyBottom)
+        } else {
+            val rsY = pad + inner * 0.34f
+            if (y < rsY) lerpX(y, peakX, pad, ww * 0.74f, rsY)
+            else lerpX(y, ww * 0.74f, rsY, ww - pad, bodyBottom)
+        }
     }
 
     /**
@@ -647,17 +838,22 @@ class CrystalRingView @JvmOverloads constructor(
      * поэтому не мозолит глаз и не жрёт кадры.
      * Бьёт в узел тропы - в то место, куда человек уже дошёл.
      */
-    private fun drawStrike(c: Canvas, tms: Long, maxed: Boolean) {
-        val period = 3200L
+    private fun drawStrike(c: Canvas, tms: Long, maxed: Boolean, wake: Float) {
+        // Чем ближе цель, тем чаще разряд: 5.6 с на старте пробуждения,
+        // 3.2 с у самой цели. Это темп картинки, а не измеренный порог.
+        val period = (5600L - (2400L * wake).toLong()).coerceAtLeast(2600L)
         val phase = (tms % period).toFloat()
         if (phase > 260f) return
         val slot = tms / period
         val r = (slot * 6364136223846793005L) ushr 24
         val k = phase / 260f
         // Резкий фронт и спад - как у настоящей вспышки, а не ровное свечение.
-        val br = if (k < 0.12f) k / 0.12f else (1f - (k - 0.12f) / 0.88f).coerceAtLeast(0f)
+        var br = if (k < 0.12f) k / 0.12f else (1f - (k - 0.12f) / 0.88f).coerceAtLeast(0f)
+        // Слабый разряд в начале пути, полный - у цели.
+        br *= 0.35f + 0.65f * wake
 
-        val node = (r % 5L).toInt() + 1
+        val reached = (1 + (4f * wake).toInt()).coerceIn(1, 5)
+        val node = (r % reached.toLong()).toInt() + 1
         val tx = trailX[node]; val ty = trailY[node]
         val sx = tx + (((r shr 8) % 100L).toFloat() / 100f - 0.5f) * width * 0.5f
 
@@ -716,9 +912,14 @@ class CrystalRingView @JvmOverloads constructor(
         val tms = System.currentTimeMillis()
         val maxed = prog >= 5f
 
+        // Пробуждение горы начинается с 20% цели, а не с первой взятой
+        // цели: до этого экран был мёртвым ровно тогда, когда человеку
+        // нужнее всего увидеть, что путь уже идёт.
+        val wake = ((prog - 0.20f) / 0.80f).coerceIn(0f, 1f)
+
         // Северное сияние за горой: разгорается по мере прогресса - мир
         // отзывается на пройденный путь.
-        val auroraK = (prog / 5f).coerceIn(0f, 1f)
+        val auroraK = ((prog - 0.20f) / 4.80f).coerceIn(0f, 1f)
         if (auroraK > 0.02f) {
             for (b2 in 0 until 3) {
                 auroraPath.reset()
@@ -870,9 +1071,10 @@ class CrystalRingView @JvmOverloads constructor(
         // Жирный двойной контур: тёмная основа + яркий кант.
         canvas.drawPath(mountainPath, contourPaint)
         canvas.drawPath(mountainPath, kantPaint)
-        // С первой взятой цели в гору бьют разряды.
-        if (prog >= 1f) drawStrike(canvas, tms, maxed)
-        if (maxed) drawGlitch(canvas, tms)
+        // Разряды приходят уже с 20% цели: редкие и слабые вначале,
+        // частые и яркие ближе к цели.
+        if (wake > 0f) drawStrike(canvas, tms, maxed, wake)
+        if (maxed) drawWind(canvas, tms)
 
         // Искры вспыхивают только у ВЗЯТЫХ целей - награда, а не украшение.
         for (i in sparkX.indices) {

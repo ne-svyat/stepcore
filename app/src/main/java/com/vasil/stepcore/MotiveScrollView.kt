@@ -534,47 +534,80 @@ class MotiveScrollView @JvmOverloads constructor(
     }
 
     /**
-     * Помеха: горизонтальные срезы уезжают в стороны, поверх идёт
-     * расслоение по цвету и редкие строки развёртки. Оттенки взяты из
-     * палитры приложения, чтобы помеха принадлежала этому экрану, а не
-     * выглядела чужим эффектом.
+     * Ветер вместо помехи.
+     *
+     * Прежняя помеха была набором прямоугольных срезов: на волнистом
+     * полотне прямой срез читается как чужой объект, а не как состояние
+     * самого свитка. Прямоугольник убран целиком.
+     *
+     * Теперь полотно РВЁТ ВЕТРОМ: изогнутые полосы сдуваются в сторону
+     * по той же волне, что и лист, кромки размываются струями, в воздухе
+     * летит цветная пыль. Сила эффекта - тот же k, что и раньше, поэтому
+     * хореография номера не изменилась ни на кадр.
      */
     private fun drawGlitch(
         c: Canvas, l: Float, t0: Float, r: Float, b: Float,
         h: Float, k: Float, now: Long
     ) {
         val kk = k.coerceIn(0f, 1f)
-        val frame = (now / 70L).toInt()
-        val slices = 7
-        for (i in 0 until slices) {
-            val n = rnd(frame * 13 + i * 5 + 200)
-            if (n < 0.35f) continue
-            val y = t0 + (b - t0) * rnd(frame * 7 + i + 210)
-            val hh = (b - t0) * (0.02f + 0.10f * n) * kk
-            val dx = (rnd(frame * 3 + i + 220) - 0.5f) * (r - l) * 0.55f * kk
+        val span = (r - l).coerceAtLeast(1f)
+        val hh = (b - t0).coerceAtLeast(1f)
+        val tt = now * 0.001f
+
+        // Полосы сдуваемого полотна: у каждой свой изгиб и свой снос.
+        for (i in 0 until 5) {
+            val n = rnd(i * 5 + 200)
+            var g = tt * (0.55f + 0.18f * i) + n
+            g -= Math.floor(g.toDouble()).toFloat()
+            val y = t0 + hh * ((0.10f + 0.19f * i) % 1f)
+            val bandH = hh * (0.06f + 0.10f * n) * kk
+            val dx = (0.35f + 0.65f * g) * span * 0.5f * kk * (if (i % 2 == 0) 1f else -1f)
+            val sag = hh * 0.10f * kk * sin((tt * 2.1f + i).toFloat())
+            tmp.reset()
+            tmp.moveTo(l + dx, y)
+            tmp.quadTo(l + dx + span * 0.5f, y + sag, l + dx + span, y + sag * 0.3f)
+            tmp.lineTo(l + dx + span, y + sag * 0.3f + bandH)
+            tmp.quadTo(l + dx + span * 0.5f, y + sag + bandH, l + dx, y + bandH)
+            tmp.close()
             fx.color = when (i % 3) {
                 0 -> TINT_MAGENTA
                 1 -> TINT_CYAN
                 else -> TINT_AMBER
             }
-            fx.alpha = (170f * kk * (0.45f + 0.55f * n)).toInt().coerceIn(0, 255)
-            c.drawRect(l + dx, y, r + dx, y + hh, fx)
+            val fade = sin(g * Math.PI.toFloat())
+            fx.alpha = (150f * kk * fade).toInt().coerceIn(0, 255)
+            c.drawPath(tmp, fx)
         }
-        // Расслоение по цвету: два полупрозрачных дубля полотна со сдвигом.
-        val off = 3.2f * d * kk
-        fx.color = TINT_MAGENTA; fx.alpha = (55f * kk).toInt().coerceIn(0, 255)
-        c.drawRect(l - off, t0, r - off, b, fx)
-        fx.color = TINT_CYAN; fx.alpha = (55f * kk).toInt().coerceIn(0, 255)
-        c.drawRect(l + off, t0, r + off, b, fx)
-        // Строки развёртки.
-        fxLine.color = 0xFF000000.toInt()
-        fxLine.alpha = (40f * kk).toInt().coerceIn(0, 255)
-        fxLine.strokeWidth = 1f * d
-        var sy = t0 + (frame % 4) * 1.5f * d
-        while (sy < b) {
-            c.drawLine(l, sy, r, sy, fxLine)
-            sy += 4f * d
+
+        // Струи ветра поперёк листа: тонкие дуги, гаснут к концам пролёта.
+        for (i in 0 until 6) {
+            var g = tt * (0.7f + 0.13f * i) + i * 0.166f
+            g -= Math.floor(g.toDouble()).toFloat()
+            val y = t0 + hh * (((i * 37) % 100) / 100f)
+            val x0 = l - span * 0.3f + g * span * 1.6f
+            val len = span * 0.35f
+            val sag = hh * 0.07f * sin((tt * 1.9f + i).toFloat())
+            tmp.reset()
+            tmp.moveTo(x0, y)
+            tmp.quadTo(x0 + len * 0.5f, y + sag, x0 + len, y + sag * 0.4f)
+            fxLine.color = if (i % 2 == 0) TINT_CYAN else TINT_MAGENTA
+            fxLine.strokeWidth = (0.8f + 1.4f * kk) * d
+            fxLine.alpha = (170f * kk * sin(g * Math.PI.toFloat())).toInt().coerceIn(0, 255)
+            c.drawLine(x0, y, x0 + len, y + sag * 0.4f, fxLine)
         }
+
+        // Цветная пыль, которую несёт тем же ветром.
+        for (i in 0 until 12) {
+            var g = tt * (0.9f + 0.11f * (i % 4)) + i * 0.083f
+            g -= Math.floor(g.toDouble()).toFloat()
+            val x = l - span * 0.1f + g * span * 1.2f
+            val y = t0 + hh * (((i * 61) % 100) / 100f) +
+                hh * 0.06f * sin((tt * 2.6f + i).toFloat())
+            fx.color = if (i % 3 == 0) TINT_AMBER else TINT_CYAN
+            fx.alpha = (200f * kk * sin(g * Math.PI.toFloat())).toInt().coerceIn(0, 255)
+            c.drawCircle(x, y, (0.8f + 1.2f * (1f - g)) * d, fx)
+        }
+        fx.alpha = 255
     }
 
     private fun wrapLines(src: String, maxW: Float, limit: Int): List<String> {

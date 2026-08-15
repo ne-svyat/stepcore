@@ -25,8 +25,8 @@
             android:layout_marginTop="6dp">
 
             <FrameLayout
-                android:layout_width="118dp"
-                android:layout_height="172dp">
+                android:layout_width="132dp"
+                android:layout_height="192dp">
 
                 <com.vasil.stepcore.CrystalRingView
                     android:id="@+id/progressRing"
