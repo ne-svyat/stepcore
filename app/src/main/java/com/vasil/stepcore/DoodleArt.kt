@@ -1584,7 +1584,17 @@ class DoodleSceneView @JvmOverloads constructor(
         style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
     }
     private val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
-    private val beamPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    /**
+     * ИМЯ ПОЛЯ - ЭТО ТОЖЕ ИНТЕРФЕЙС.
+     *
+     * Кисть луча сканера была названа beamPaint - имя, уже занятое в этом
+     * же классе кистью лучей другого назначения. Kotlin увидел два поля с
+     * одним именем и отказался разбирать КАЖДОЕ обращение к нему.
+     * Названо по слою, которому принадлежит: путаницы больше не будет.
+     */
+    private val scanBeamPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+    }
     private val sparkLine = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND
     }
@@ -2371,24 +2381,27 @@ class DoodleSceneView @JvmOverloads constructor(
         // Конус света: три полосы разной ширины и прозрачности.
         var k = 0
         while (k < 3) {
-            beamPaint.color = red
-            beamPaint.alpha = (46 - k * 13).coerceIn(0, 255)
+            scanBeamPaint.color = red
+            scanBeamPaint.alpha = (46 - k * 13).coerceIn(0, 255)
             val hh = h * (0.010f + 0.020f * k)
-            c.drawRect(x0, y - hh, x1, y + hh, beamPaint)
+            c.drawRect(x0, y - hh, x1, y + hh, scanBeamPaint)
             k++
         }
-        beamPaint.color = redBr
-        beamPaint.alpha = 210
-        c.drawRect(x0, y - 0.9f * d, x1, y + 0.9f * d, beamPaint)
+        // Ядро луча ярче тела: в классе есть red, отдельного яркого
+        // красного нет, поэтому осветляем имеющийся - на один
+        // цвет в палитре меньше поводов ошибиться.
+        scanBeamPaint.color = lightenC(red, 0.45f)
+        scanBeamPaint.alpha = 210
+        c.drawRect(x0, y - 0.9f * d, x1, y + 0.9f * d, scanBeamPaint)
         // Пыль в луче: всплывает и гаснет, поэтому свет читается объёмным.
         var i = 0
         while (i < 9) {
             val ph = BoilClock.phase * 0.8f + i * 0.7f
             val dx = x0 + (x1 - x0) * (((i * 37) % 100) / 100f)
             val dy = y - h * 0.03f * (0.5f + 0.5f * sin(ph.toDouble()).toFloat())
-            beamPaint.alpha = (120f * (0.4f + 0.6f *
+            scanBeamPaint.alpha = (120f * (0.4f + 0.6f *
                 sin((ph * 1.7f).toDouble()).toFloat())).toInt().coerceIn(0, 255)
-            c.drawCircle(dx, dy, 1.1f * d, beamPaint)
+            c.drawCircle(dx, dy, 1.1f * d, scanBeamPaint)
             i++
         }
     }
