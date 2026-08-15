@@ -154,6 +154,35 @@ class MotiveScrollView @JvmOverloads constructor(
         return amp * (a + b) / 1.45f
     }
 
+    /**
+     * X линии разлома номер i на доле высоты u.
+     *
+     * Лёд не рассыпается салютом одинаковых ромбов - он ЛОМАЕТСЯ ПО
+     * ЛИНИЯМ. Линии заданы один раз (детерминированно от сида строки) и
+     * работают дважды: сначала по ним ползут трещины в целом полотне,
+     * потом ровно по ним полотно распадается на куски. Осколок - это
+     * настоящий кусок листа, а не абстрактная фигура рядом.
+     */
+    private fun riftX(i: Int, u: Float, leftX: Float, span: Float): Float {
+        val base = leftX + span * (i.toFloat() / ICE_PIECES)
+        if (i == 0) return leftX
+        if (i == ICE_PIECES) return leftX + span
+        // Ломаная из трёх колен: наклон свой у каждой линии, изгиб - свой
+        // у каждого колена. Ровная вертикаль читалась бы как разрез.
+        val tilt = (rnd(i * 13 + 300) - 0.5f) * span * 0.16f
+        val knee = sin((u * 3.1f + rnd(i * 7 + 310) * 6.28f)) * span * 0.045f
+        return base + tilt * (u - 0.5f) * 2f + knee
+    }
+
+    /** Кромка горения на доле высоты u: та же ломаная, что ест полотно. */
+    private fun burnEdgeX(u: Float, burnX: Float, h: Float): Float {
+        val i = (u * 8f).toInt()
+        val a = rnd(i + 400) - 0.45f
+        val b = rnd(i + 401) - 0.45f
+        val f = u * 8f - i
+        return burnX + h * 0.075f * (a + (b - a) * f)
+    }
+
     override fun onDraw(canvas: Canvas) {
         val w = width.toFloat(); val h = height.toFloat()
         if (w <= 0f || h <= 0f) return
@@ -205,21 +234,25 @@ class MotiveScrollView @JvmOverloads constructor(
         val waveAmp = h * (0.005f + 0.085f * settle * settle)
         val phase = (now % 4200L) / 4200f * 2f * Math.PI.toFloat() * -1f
 
+        // Лёд ломается раньше, чем полотно догорает до нуля: с этого
+        // мига целого листа больше нет, есть куски.
+        val iceBroken = !byFire && alive < ICE_BREAK
+
         // ================= ПОЛОТНО =================
-        if (openC > 0.01f && alive > 0.001f) {
+        if (openC > 0.01f && alive > 0.001f && !iceBroken) {
             val burnX = if (byFire && alive < 1f) leftX + (rightX - leftX) * alive else rightX
             val span = (rightX - leftX).coerceAtLeast(1f)
             body.reset()
             if (byFire && alive < 1f) {
-                // Рваная кромка горения, а не прямой срез.
+                // Кромка горения - одна ломаная на всех: по ней обрезано
+                // полотно, по ней же встают языки пламени и лежит уголь.
+                // Раньше кромка и огонь считались отдельно, и пламя висело
+                // рядом с краем, а не НА нём.
                 body.moveTo(leftX, top)
-                body.lineTo(burnX + h * 0.03f * (rnd(1) - 0.5f), top)
-                var y = top
                 var i = 0
-                while (y < bottom) {
-                    val jag = h * 0.055f * (rnd(i + 2) - 0.4f)
-                    y += (bottom - top) / 7f
-                    body.lineTo(burnX + jag, y.coerceAtMost(bottom))
+                while (i <= BURN_SEGS) {
+                    val u = i.toFloat() / BURN_SEGS
+                    body.lineTo(burnEdgeX(u, burnX, h), top + (bottom - top) * u)
                     i++
                 }
                 body.lineTo(leftX, bottom)
@@ -309,40 +342,53 @@ class MotiveScrollView @JvmOverloads constructor(
 
             if (!byFire && alive < 1f) {
                 val fr = 1f - alive
-                // Иней ползёт от обоих краёв кристаллами.
-                fx.color = 0xFFBFE3FF.toInt(); fx.alpha = (120f * fr).toInt().coerceIn(0, 255)
-                canvas.drawRect(leftX, top, rightX, bottom, fx)
-                fxLine.color = 0xFFFFFFFF.toInt(); fxLine.strokeWidth = 1.3f * d
-                for (i in 0 until 14) {
-                    val side = if (i % 2 == 0) 0f else 1f
-                    val reach = (rightX - leftX) * 0.5f * fr
-                    val cx = if (side == 0f) leftX + reach * rnd(i + 20)
-                             else rightX - reach * rnd(i + 30)
-                    val cy = top + (bottom - top) * rnd(i + 40)
-                    fxLine.alpha = (200f * fr).toInt().coerceIn(0, 255)
-                    val rr = h * 0.06f * (0.5f + rnd(i + 50))
-                    for (k in 0 until 3) {
-                        val a = Math.toRadians((k * 60f + 15f).toDouble())
-                        canvas.drawLine(cx - rr * cos(a).toFloat(), cy - rr * sin(a).toFloat(),
-                            cx + rr * cos(a).toFloat(), cy + rr * sin(a).toFloat(), fxLine)
-                    }
+
+                // ФРОНТ ПРОМЕРЗАНИЯ идёт слева направо одной полосой.
+                // Прежняя версия заливала весь лист голубым и сыпала по
+                // нему четырнадцать одинаковых снежинок - сразу везде и
+                // потому нигде. Мороз должен ПРИХОДИТЬ.
+                val fx0 = leftX + span * (fr * 1.15f).coerceAtMost(1f)
+                fx.color = 0xFFBFE3FF.toInt()
+                fx.alpha = (95f * fr).toInt().coerceIn(0, 255)
+                canvas.drawRect(leftX, top - h * 0.2f, fx0, bottom + h * 0.2f, fx)
+                // Сам фронт: узкая яркая полоса с иглами инея.
+                fxLine.color = 0xFFEAF6FF.toInt()
+                fxLine.strokeWidth = 1.6f * d
+                fxLine.alpha = (210f * (1f - fr * 0.4f)).toInt().coerceIn(0, 255)
+                canvas.drawLine(fx0, top, fx0, bottom, fxLine)
+                fxLine.strokeWidth = 1.1f * d
+                for (k in 0 until 9) {
+                    val ny = top + (bottom - top) * (k + 0.5f) / 9f
+                    val nl = h * 0.055f * (0.4f + rnd(k + 60))
+                    val nd = if (k % 2 == 0) -1f else 1f
+                    canvas.drawLine(fx0, ny, fx0 - nl, ny + nl * 0.55f * nd, fxLine)
+                    canvas.drawLine(fx0 - nl * 0.55f, ny + nl * 0.30f * nd,
+                        fx0 - nl * 0.30f, ny + nl * 0.85f * nd, fxLine)
                 }
-                // Ветвящиеся трещины прорастают по мере промерзания.
-                if (fr > 0.45f) {
-                    val ck = ((fr - 0.45f) / 0.55f).coerceIn(0f, 1f)
-                    fxLine.color = 0xFFEAF6FF.toInt(); fxLine.alpha = 235
-                    fxLine.strokeWidth = 1.8f * d
-                    for (i in 0 until 4) {
-                        var x = leftX + (rightX - leftX) * (0.2f + 0.2f * i)
-                        var y2 = top
-                        val steps = (6 * ck).toInt().coerceAtLeast(1)
-                        for (s in 0 until steps) {
-                            val nx = x + h * 0.10f * (rnd(i * 7 + s) - 0.5f)
-                            val ny = y2 + (bottom - top) / 6f
-                            canvas.drawLine(x, y2, nx, ny, fxLine)
-                            if (s == 2) canvas.drawLine(nx, ny, nx + h * 0.16f, ny + h * 0.10f, fxLine)
-                            x = nx; y2 = ny
+
+                // ТРЕЩИНЫ РАСТУТ ПО БУДУЩИМ ЛИНИЯМ РАЗЛОМА - лист
+                // заранее показывает, где сломается.
+                val ck = ((fr - 0.30f) / 0.70f).coerceIn(0f, 1f)
+                if (ck > 0f) {
+                    for (r in 1 until ICE_PIECES) {
+                        tmp.reset()
+                        var first = true
+                        var s = 0
+                        while (s <= 10) {
+                            val u = s / 10f
+                            if (u > ck) break
+                            val x = riftX(r, u, leftX, span)
+                            val y2 = top + (bottom - top) * u
+                            if (first) { tmp.moveTo(x, y2); first = false } else tmp.lineTo(x, y2)
+                            s++
                         }
+                        fxLine.color = 0xFFFFFFFF.toInt()
+                        fxLine.strokeWidth = 2.4f * d
+                        fxLine.alpha = (70f * ck).toInt().coerceIn(0, 255)
+                        canvas.drawPath(tmp, fxLine)
+                        fxLine.strokeWidth = 1.1f * d
+                        fxLine.alpha = (235f * ck).toInt().coerceIn(0, 255)
+                        canvas.drawPath(tmp, fxLine)
                     }
                 }
             }
@@ -353,65 +399,164 @@ class MotiveScrollView @JvmOverloads constructor(
             canvas.restore()
             canvas.drawPath(body, edge)
 
-            // Огонь: обугливание, языки пламени, дым, искры.
+            // ОГОНЬ. Было: девять одинаковых язычков, двенадцать круглых
+            // искр и пять круглых клубов дыма - много мелкого мусора и ни
+            // одной запоминающейся формы. Стало три слоя, крупных и
+            // разных: уголь по кромке, четыре больших языка, редкие
+            // чешуйки пепла. Меньше элементов - больше картинки.
             if (byFire && alive < 1f) {
-                fx.color = 0xFF1C1208.toInt(); fx.alpha = 240
-                canvas.drawRect(burnX - h * 0.05f, top, burnX + h * 0.02f, bottom, fx)
-                for (i in 0 until 9) {
-                    val ly = top + (bottom - top) * (i / 8f)
-                    val fl = 0.55f + 0.45f * sin((now * 0.012f + i).toFloat())
+                val bh = bottom - top
+
+                // 1. УГОЛЬ. Полоса вдоль ломаной кромки: снаружи чёрная,
+                // изнутри раскалённая. Ширина дышит.
+                tmp.reset()
+                tmp.moveTo(burnEdgeX(0f, burnX, h) - h * 0.055f, top)
+                var i2 = 1
+                while (i2 <= BURN_SEGS) {
+                    val u = i2.toFloat() / BURN_SEGS
+                    tmp.lineTo(burnEdgeX(u, burnX, h) - h * 0.055f, top + bh * u)
+                    i2++
+                }
+                i2 = BURN_SEGS
+                while (i2 >= 0) {
+                    val u = i2.toFloat() / BURN_SEGS
+                    tmp.lineTo(burnEdgeX(u, burnX, h) + h * 0.012f, top + bh * u)
+                    i2--
+                }
+                tmp.close()
+                fx.color = 0xFF160D06.toInt(); fx.alpha = 245
+                canvas.drawPath(tmp, fx)
+                fxLine.color = 0xFFFFC257.toInt()
+                fxLine.strokeWidth = 2.2f * d + 1.2f * d * sin((now * 0.009f).toFloat())
+                fxLine.alpha = 250
+                tmp.reset()
+                i2 = 0
+                while (i2 <= BURN_SEGS) {
+                    val u = i2.toFloat() / BURN_SEGS
+                    val x = burnEdgeX(u, burnX, h)
+                    if (i2 == 0) tmp.moveTo(x, top) else tmp.lineTo(x, top + bh * u)
+                    i2++
+                }
+                canvas.drawPath(tmp, fxLine)
+
+                // 2. ЯЗЫКИ. Четыре крупных, каждый со своей фазой и своей
+                // высотой; растут ИЗ кромки, а не рядом с ней.
+                for (k in 0 until 4) {
+                    val u = (k + 0.5f) / 4f
+                    val ly = top + bh * u
+                    val lx = burnEdgeX(u, burnX, h)
+                    val fl = 0.45f + 0.55f *
+                        (0.5f + 0.5f * sin((now * 0.0075f + k * 1.9f).toFloat()))
+                    val lh = bh * (0.34f + 0.30f * fl)
+                    val lean = h * 0.16f * fl
                     tmp.reset()
-                    tmp.moveTo(burnX - h * 0.02f, ly)
-                    tmp.quadTo(burnX + h * 0.10f * fl, ly - h * 0.10f * fl,
-                        burnX + h * 0.04f, ly - h * 0.20f * fl)
-                    tmp.quadTo(burnX + h * 0.02f * fl, ly - h * 0.06f, burnX - h * 0.02f, ly)
-                    fx.color = if (i % 2 == 0) 0xFFFF9A2E.toInt() else 0xFFE2521F.toInt()
-                    fx.alpha = 225
+                    tmp.moveTo(lx - h * 0.03f, ly + bh * 0.10f)
+                    tmp.cubicTo(lx + lean * 0.4f, ly - lh * 0.25f,
+                        lx - lean * 0.2f, ly - lh * 0.60f,
+                        lx + lean, ly - lh)
+                    tmp.cubicTo(lx + lean * 1.2f, ly - lh * 0.45f,
+                        lx + h * 0.11f, ly - lh * 0.15f,
+                        lx + h * 0.05f, ly + bh * 0.10f)
+                    tmp.close()
+                    fx.color = 0xFFD8371A.toInt()
+                    fx.alpha = (180f + 60f * fl).toInt().coerceIn(0, 255)
                     canvas.drawPath(tmp, fx)
+                    // Ядро языка: тот же силуэт, сжатый к основанию.
+                    canvas.save()
+                    canvas.translate(lx, ly)
+                    canvas.scale(0.55f, 0.55f)
+                    canvas.translate(-lx, -ly)
+                    fx.color = 0xFFFFD25A.toInt(); fx.alpha = 235
+                    canvas.drawPath(tmp, fx)
+                    canvas.restore()
                 }
-                fxLine.color = 0xFFFFE08A.toInt(); fxLine.alpha = 245; fxLine.strokeWidth = 2.6f * d
-                canvas.drawLine(burnX, top + 2f * d, burnX, bottom - 2f * d, fxLine)
-                for (i in 0 until 12) {
-                    val g = (rnd(i) + (1f - alive) * 1.3f) % 1f
-                    fx.color = if (i % 3 == 0) 0xFFFFF0B0.toInt() else 0xFFFFB347.toInt()
-                    fx.alpha = (240f * (1f - g)).toInt().coerceIn(0, 255)
-                    val ex = burnX + (rnd(i + 5) - 0.35f) * h * 0.5f + g * h * 0.25f
-                    val ey = bottom - g * (bottom - top) * 1.9f + h * 0.35f * g * g
-                    canvas.drawCircle(ex, ey, (1.2f + 1.8f * (1f - g)) * d, fx)
-                }
-                for (i in 0 until 5) {
-                    val g = (rnd(i + 60) + (1f - alive) * 0.9f) % 1f
-                    fx.color = 0xFF6B6459.toInt()
-                    fx.alpha = (90f * (1f - g)).toInt().coerceIn(0, 255)
-                    canvas.drawCircle(burnX + (rnd(i + 70) - 0.5f) * h * 0.4f,
-                        top - g * h * 0.7f, h * (0.10f + 0.22f * g), fx)
+
+                // 3. ПЕПЕЛ. Редкие чешуйки: вытянутые, кувыркаются и
+                // гаснут. Круглых искр нет - зола не шарик.
+                for (k in 0 until 7) {
+                    var g = (rnd(k + 5) + (1f - alive) * 1.15f) % 1f
+                    if (g < 0f) g += 1f
+                    val ax = burnX + (rnd(k + 15) - 0.4f) * h * 0.30f + g * h * 0.30f
+                    val ay = bottom - g * bh * 1.7f
+                    canvas.save()
+                    canvas.translate(ax, ay)
+                    canvas.rotate(g * 520f * (if (k % 2 == 0) 1f else -1f))
+                    fx.color = if (k % 3 == 0) 0xFFFFB347.toInt() else 0xFF7A6A5C.toInt()
+                    fx.alpha = (225f * (1f - g)).toInt().coerceIn(0, 255)
+                    val s = (1.5f + 2.2f * (1f - g)) * d
+                    canvas.drawRect(-s * 1.6f, -s * 0.45f, s * 1.6f, s * 0.45f, fx)
+                    canvas.restore()
                 }
             }
         }
 
         // ================= ЛЁД: ОСКОЛКИ =================
-        if (!byFire && t in (PHASE_DEATH * 0.82f)..PHASE_GLITCH) {
-            val k = ((t - PHASE_DEATH * 0.82f) / (PHASE_GLITCH - PHASE_DEATH * 0.82f)).coerceIn(0f, 1f)
-            for (i in 0 until 12) {
-                val a = Math.PI * (0.08 + 0.84 * i / 11.0)
-                val sp = 0.6f + 0.5f * rnd(i + 80)
-                val dx = cos(a).toFloat() * w * 0.6f * k * sp
-                val dy = -sin(a).toFloat() * h * 1.0f * k * sp + h * 2.0f * k * k
+        // Куски НАСТОЯЩЕГО листа, отломанные по тем же линиям, вдоль
+        // которых только что росли трещины: тот же пергамент, тот же
+        // голубой налёт, тот же кант. Их пять, а не двенадцать - глаз
+        // успевает прочитать каждый. Падают с ускорением, вращаются
+        // вокруг собственного центра и тают.
+        if (!byFire && t > PHASE_DEATH * ICE_BREAK_T && t < PHASE_GLITCH) {
+            val k = ((t - PHASE_DEATH * ICE_BREAK_T) /
+                (PHASE_GLITCH - PHASE_DEATH * ICE_BREAK_T)).coerceIn(0f, 1f)
+            val span = fullR - fullL
+            val bh = bottom - top
+            for (p in 0 until ICE_PIECES) {
+                tmp.reset()
+                var s = 0
+                while (s <= 8) {
+                    val u = s / 8f
+                    val x = riftX(p, u, fullL, span)
+                    if (s == 0) tmp.moveTo(x, top) else tmp.lineTo(x, top + bh * u)
+                    s++
+                }
+                s = 8
+                while (s >= 0) {
+                    val u = s / 8f
+                    tmp.lineTo(riftX(p + 1, u, fullL, span), top + bh * u)
+                    s--
+                }
+                tmp.close()
+
+                // Разлёт: наружные куски уходят дальше, средние почти
+                // падают отвесно - так ломается лист, а не взрывается.
+                val mid = (p + 0.5f) / ICE_PIECES - 0.5f
+                val dx = mid * span * 0.55f * k
+                val dy = bh * 1.9f * k * k - bh * 0.10f * k
+                val cxp = fullL + span * ((p + 0.5f) / ICE_PIECES)
+                val cyp = (top + bottom) / 2f
+                val a = 46f * k * mid * 4f
+
                 canvas.save()
-                canvas.translate(fullL + (fullR - fullL) * (0.06f + 0.08f * i) + dx,
-                    (top + bottom) / 2f + dy)
-                canvas.rotate(420f * k * (if (i % 2 == 0) 1f else -1f))
-                val s = h * (0.07f + 0.05f * rnd(i + 90))
-                tmp.reset()
-                tmp.moveTo(0f, -s); tmp.lineTo(s * 0.8f, -s * 0.1f)
-                tmp.lineTo(s * 0.25f, s); tmp.lineTo(-s * 0.7f, s * 0.2f); tmp.close()
-                fx.color = 0xFFDCEEFF.toInt(); fx.alpha = (240f * (1f - k)).toInt().coerceIn(0, 255)
-                canvas.drawPath(tmp, fx)
-                fx.color = 0xFFFFFFFF.toInt(); fx.alpha = (200f * (1f - k)).toInt().coerceIn(0, 255)
-                tmp.reset()
-                tmp.moveTo(0f, -s); tmp.lineTo(s * 0.8f, -s * 0.1f); tmp.lineTo(0f, 0f); tmp.close()
-                canvas.drawPath(tmp, fx)
+                canvas.translate(dx, dy)
+                canvas.rotate(a, cxp, cyp)
+                canvas.save()
+                canvas.clipPath(tmp)
+                val al = (1f - k * k)
+                parchment.alpha = (255f * al).toInt().coerceIn(0, 255)
+                canvas.drawRect(fullL, top, fullR, bottom, parchment)
+                fx.color = 0xFFBFE3FF.toInt(); fx.alpha = (150f * al).toInt().coerceIn(0, 255)
+                canvas.drawRect(fullL, top, fullR, bottom, fx)
+                // Блик по грани скола: кусок ловит свет, пока летит.
+                fx.color = 0xFFFFFFFF.toInt(); fx.alpha = (120f * al * (1f - k)).toInt().coerceIn(0, 255)
+                canvas.drawRect(cxp - span * 0.03f, top, cxp + span * 0.02f, bottom, fx)
                 canvas.restore()
+                fxLine.color = 0xFFEAF6FF.toInt()
+                fxLine.strokeWidth = 1.3f * d
+                fxLine.alpha = (215f * al).toInt().coerceIn(0, 255)
+                canvas.drawPath(tmp, fxLine)
+                canvas.restore()
+            }
+            parchment.alpha = 255
+
+            // Крупинки: то, что осталось от кромок. Пять штук, не рой.
+            for (p in 0 until 5) {
+                val g = (k + rnd(p + 200)) % 1f
+                val gx = fullL + span * rnd(p + 210)
+                val gy = (top + bottom) / 2f + bh * 1.6f * g * g
+                fx.color = 0xFFDCEEFF.toInt()
+                fx.alpha = (200f * (1f - k)).toInt().coerceIn(0, 255)
+                canvas.drawCircle(gx, gy, (1.4f - 0.8f * k) * d, fx)
             }
         }
 
@@ -639,6 +784,18 @@ class MotiveScrollView @JvmOverloads constructor(
         const val PHASE_GLITCH = 2150f
         const val PHASE_BIRTH = 3150f
         const val PHASE_TOTAL = 4300f
+        // Гибель во льду: на сколько кусков ломается лист и когда.
+        const val ICE_PIECES = 5
+        /** Доля фазы гибели, на которой лист уже раскололся. */
+        const val ICE_BREAK_T = 0.62f
+        /**
+         * Остаток жизни листа, ниже которого целого полотна уже нет.
+         * 1 - smooth(0.62) = 0.32; взято 0.30, чтобы кадр-другой первые
+         * куски отходили от ещё живого листа - скол не бывает мгновенным.
+         */
+        const val ICE_BREAK = 0.30f
+        /** Сегментов в ломаной кромке горения. */
+        const val BURN_SEGS = 9
         // Волна полотна.
         const val WAVE_SEGMENTS = 26
         const val WAVES = 1.6f
