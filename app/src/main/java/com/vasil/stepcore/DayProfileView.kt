@@ -56,11 +56,26 @@ class DayProfileView @JvmOverloads constructor(
         textSize = 26f
     }
     private val path = Path()
+    private val head = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+
+    /**
+     * ПРОФИЛЬ ПРОЧЕРЧИВАЕТСЯ, А НЕ ВОЗНИКАЕТ.
+     *
+     * Это единственный график приложения, который появлялся целиком и
+     * мгновенно. Разница не косметическая: линия профиля - это ПУТЬ, и
+     * прочерченная слева направо она сразу говорит, в какую сторону
+     * читается время. Возникшая целиком - выглядит схемой, и направление
+     * приходится выяснять по подписям, которых здесь нет.
+     *
+     * Впереди линии идёт светлая головка - точка, которая её и рисует.
+     */
+    private var bornAt = 0L
 
     fun setData(list: List<Seg>, byTimeAxis: Boolean) {
         segs = list
         byTime = byTimeAxis
         selectedIndex = -1
+        bornAt = System.currentTimeMillis()
         invalidate()
     }
 
@@ -70,6 +85,9 @@ class DayProfileView @JvmOverloads constructor(
     }
 
     companion object {
+        /** Прочерчивание профиля, мс. */
+        const val REVEAL_MS = 760f
+
         /** Единая палитра меток: те же цвета у линии, у плиты интервала и у
          *  кнопок на главном экране. Один смысл - один цвет. */
         fun colorFor(label: String): Int = when (label) {
@@ -129,6 +147,14 @@ class DayProfileView @JvmOverloads constructor(
         val plotW = w - padL - padR
         val plotH = h - padV * 2f
 
+        if (bornAt == 0L) bornAt = System.currentTimeMillis()
+        val raw = ((System.currentTimeMillis() - bornAt).toFloat() / REVEAL_MS)
+            .coerceIn(0f, 1f)
+        // Замедление к концу: перо не втыкается в правый край.
+        val grow = 1f - (1f - raw) * (1f - raw)
+        // Граница прочерченного, в долях ширины графика.
+        val frontier = padL + plotW * grow
+
         fun px(acc: Float) = padL + plotW * (acc / total)
         fun py(v: Float) = padV + plotH * (1f - (v - minY) / span)
 
@@ -155,11 +181,32 @@ class DayProfileView @JvmOverloads constructor(
                 else -> 4f * d
             }
             line.alpha = if (selectedIndex >= 0 && !sel) 90 else 255
+
+            // Отрезок целиком за границей прочерченного - его ещё нет.
+            if (x0 > frontier) { acc += wgt; continue }
+            // Отрезок пересечён границей - рисуем его ЧАСТЬ, а высоту
+            // берём линейной долей: перо не может опередить само себя.
+            var ex = x1
+            var ey = y1
+            if (x1 > frontier) {
+                val f = ((frontier - x0) / (x1 - x0).coerceAtLeast(0.001f)).coerceIn(0f, 1f)
+                ex = x0 + (x1 - x0) * f
+                ey = y0 + (y1 - y0) * f
+            }
             path.reset()
             path.moveTo(x0, y0)
-            path.lineTo(x1, y1)
+            path.lineTo(ex, ey)
             canvas.drawPath(path, line)
-            if (sel) {
+
+            // Головка пера: светится на самом кончике линии.
+            if (grow < 1f && x1 >= frontier && x0 <= frontier) {
+                head.color = colorOf(s.label)
+                head.alpha = 70
+                canvas.drawCircle(ex, ey, 7f * d, head)
+                head.alpha = 255
+                canvas.drawCircle(ex, ey, 2.6f * d, head)
+            }
+            if (sel && x1 <= frontier) {
                 // Отбивки по краям: видно, где именно этот отрезок на ленте.
                 axis.color = colorOf(s.label)
                 canvas.drawLine(x0, padV, x0, h - padV, axis)
@@ -169,5 +216,9 @@ class DayProfileView @JvmOverloads constructor(
             line.alpha = 255
             acc += wgt
         }
+
+        // Кадры тратятся только пока перо идёт. Готовый профиль статичен:
+        // ему движение не нужно, а батарее оно стоит.
+        if (grow < 1f) postInvalidateOnAnimation()
     }
 }
