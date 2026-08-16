@@ -274,6 +274,33 @@ class SurvivalActivity : AppCompatActivity() {
     private fun survPrefs() =
         getSharedPreferences(com.vasil.stepcore.StepService.PREFS, MODE_PRIVATE)
 
+    /**
+     * ЧТО ИЗМЕНИЛОСЬ, ПОКА ТЕБЯ НЕ БЫЛО.
+     *
+     * Экспедицию двигают шаги, и человек возвращается сюда ПОСЛЕ прогулки
+     * - иногда через несколько дней мира сразу. Журнал при этом выглядел
+     * одинаково: сверху лента карточек, и понять, какие из них новые,
+     * можно было только помня номер последнего прочитанного дня. То есть
+     * никак.
+     *
+     * Теперь номер прочитанного дня помнится за пользователя, и новые дни
+     * ПРОСТУПАЮТ по очереди сверху вниз, а не появляются готовым списком.
+     * Отметка «новое» держится ровно до следующего захода: перечитал -
+     * значит прочитал.
+     *
+     * Ключ привязан к номеру экспедиции: в новой экспедиции счёт дней
+     * начинается заново, и чужая отметка сбила бы её первый день.
+     */
+    private fun seenKey(expeditionId: Long) = "surv_seen_tick_" + expeditionId
+
+    private fun lastSeenTick(expeditionId: Long): Int =
+        survPrefs().getInt(seenKey(expeditionId), -1)
+
+    private fun markSeen(expeditionId: Long, tick: Int) {
+        if (tick <= lastSeenTick(expeditionId)) return
+        survPrefs().edit().putInt(seenKey(expeditionId), tick).apply()
+    }
+
     /** Строка настроек сигналов: звук и вибро, оба по умолчанию включены. */
     private fun addFeedbackSettings() {
         val root = startBox.parent as? LinearLayout ?: return
@@ -537,15 +564,39 @@ class SurvivalActivity : AppCompatActivity() {
         for (ev in events) byTick.getOrPut(ev.tick) { mutableListOf() }.add(ev)
         val heads = repo.days(e).associateBy { it.tick }
 
+        val seen = lastSeenTick(e.id)
         val first = maxOf(0, e.ticksDone - MAX_CARDS + 1)
+        var newIdx = 0
         for (t in e.ticksDone downTo first) {
             val dayEvents = byTick[t]
                 ?.filter { JournalStyle.visibleInCard(it.category) }
                 ?: emptyList()
             val head = heads[t]
             if (dayEvents.isEmpty() && head == null) continue
-            journalBox.addView(dayCard(t, head, dayEvents))
+            // Новым считается день, которого не было при прошлом заходе.
+            // При первом открытии экспедиции новыми не считаются никакие:
+            // подсвечивать весь журнал целиком - то же самое, что не
+            // подсвечивать ничего.
+            val fresh = seen >= 0 && t > seen
+            val card = dayCard(t, head, dayEvents, fresh)
+            journalBox.addView(card)
+            if (fresh) {
+                // Проступают сверху вниз, по одному: лента читается в том
+                // же порядке, в каком дни происходили бы у тебя на глазах.
+                card.alpha = 0f
+                card.translationY = dp(14).toFloat()
+                card.animate()
+                    .alpha(1f).translationY(0f)
+                    .setStartDelay(90L * newIdx)
+                    .setDuration(340L)
+                    .start()
+                newIdx++
+            }
         }
+        // Отметку ставим ПОСЛЕ показа: если поставить раньше, при повороте
+        // экрана или быстрой перерисовке новые дни успели бы «прочитаться»
+        // сами, не побыв ни секунды новыми.
+        journalBox.postDelayed({ markSeen(e.id, e.ticksDone) }, 1200L)
         if (first > 0) {
             journalBox.addView(dimRow("Показаны последние " + MAX_CARDS +
                 " дней. Полный журнал — в «Поделиться»."))
@@ -597,6 +648,7 @@ class SurvivalActivity : AppCompatActivity() {
         tick: Int,
         head: com.vasil.stepcore.survival.engine.DaySnap?,
         events: List<ExpeditionEvent>,
+        fresh: Boolean = false,
     ): View {
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -615,6 +667,18 @@ class SurvivalActivity : AppCompatActivity() {
                     resources.displayMetrics.density, tick.toLong(),
                 ))
                 layoutParams = LinearLayout.LayoutParams(dp(30), dp(30))
+            })
+        }
+        if (fresh) {
+            // Отметка новизны - точка того же тона, что и номер дня.
+            // Слово «новое» здесь было бы лишним шумом: в дневнике
+            // говорят события, а не подписи к ним.
+            top.addView(TextView(this).apply {
+                text = "•"
+                textSize = 20f
+                setTextColor(ContextCompat.getColor(
+                    this@SurvivalActivity, R.color.accent_amber_bright))
+                setPadding(0, 0, dp(4), 0)
             })
         }
         top.addView(TextView(this).apply {

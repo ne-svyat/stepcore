@@ -12,8 +12,8 @@ android {
         applicationId "com.vasil.stepcore"
         minSdk 30
         targetSdk 34
-        versionCode 417
-        versionName "3.5.1"
+        versionCode 418
+        versionName "3.5.2"
     }
 
     // v285. Ключ подписи БОЛЬШЕ НЕ ЛЕЖИТ В РЕПОЗИТОРИИ.
