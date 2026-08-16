@@ -727,15 +727,22 @@ class VaultChestView(context: Context) : View(context) {
         val poolW = bw * (0.92f - 0.16f * faceK)
         val poolH = bh * (0.13f + 0.15f * faceK)
         val poolY = bot + bh * 0.10f
+        // РАЗЛИВ НЕСИММЕТРИЧЕН. Прежний контур гулял только чётными
+        // гармониками, а они дают фигуру, симметричную относительно оси:
+        // получалась «правильная клякса». Первая гармоника ломает эту
+        // симметрию - лужа растекается в одну сторону сильнее, как и
+        // бывает на неровном полу. Центр тоже смещён.
+        val skew = 0.13f * sin((now * 0.00042).toDouble()).toFloat()
+        val poolCx = cx + poolW * (0.10f + skew)
         goo.reset()
         var a2 = 0
-        while (a2 <= 26) {
-            val th = a2 / 26f * 2f * Math.PI.toFloat()
-            // Две гармоники плюс медленный ход во времени: край разлива
-            // всё время перетекает, но никуда не убегает.
-            val wob = 1f + 0.10f * sin((th * 3f + now * 0.0007).toDouble()).toFloat() +
-                0.06f * sin((th * 5f - now * 0.0011).toDouble()).toFloat()
-            val px2 = cx + cos(th.toDouble()).toFloat() * poolW * wob
+        while (a2 <= 32) {
+            val th = a2 / 32f * 2f * Math.PI.toFloat()
+            val wob = 1f +
+                0.16f * sin((th + 0.9 + now * 0.00035).toDouble()).toFloat() +
+                0.10f * sin((th * 3f + now * 0.0007).toDouble()).toFloat() +
+                0.05f * sin((th * 5f - now * 0.0011).toDouble()).toFloat()
+            val px2 = poolCx + cos(th.toDouble()).toFloat() * poolW * wob
             val py2 = poolY + sin(th.toDouble()).toFloat() * poolH * wob *
                 (if (sin(th.toDouble()) > 0) 0.55f else 1f)
             if (a2 == 0) goo.moveTo(px2, py2) else goo.lineTo(px2, py2)
@@ -763,8 +770,8 @@ class VaultChestView(context: Context) : View(context) {
                 line.color = gooLit
                 line.alpha = (170f * (1f - k) * amount).toInt().coerceIn(0, 255)
                 line.strokeWidth = 1.4f * d
-                c.drawOval(cx - poolW * 0.5f * k - poolW * 0.1f, poolY - poolH * 0.5f * k,
-                    cx + poolW * 0.5f * k + poolW * 0.1f, poolY + poolH * 0.5f * k, line)
+                c.drawOval(poolCx - poolW * 0.5f * k - poolW * 0.1f, poolY - poolH * 0.5f * k,
+                    poolCx + poolW * 0.5f * k + poolW * 0.1f, poolY + poolH * 0.5f * k, line)
             }
             rp++
         }
@@ -775,7 +782,7 @@ class VaultChestView(context: Context) : View(context) {
             fill.alpha = (255f * faceK).toInt().coerceIn(0, 255)
             var e = 0
             while (e < 2) {
-                val ex = cx + (if (e == 0) -1f else 1f) * poolW * 0.40f
+                val ex = poolCx + (if (e == 0) -1f else 1f) * poolW * 0.40f
                 val tilt = (if (e == 0) 1f else -1f) * poolH * 0.20f
                 itemPath.reset()
                 itemPath.moveTo(ex - poolW * 0.20f, poolY - poolH * 0.36f + tilt)
@@ -787,13 +794,13 @@ class VaultChestView(context: Context) : View(context) {
             }
             // Ухмылка: не линия, а вырез с зубцами - оттого и ехидная.
             itemPath.reset()
-            itemPath.moveTo(cx - poolW * 0.46f, poolY - poolH * 0.04f)
-            itemPath.quadTo(cx + poolW * 0.08f, poolY + poolH * 0.46f,
-                cx + poolW * 0.54f, poolY - poolH * 0.34f)
+            itemPath.moveTo(poolCx - poolW * 0.46f, poolY - poolH * 0.04f)
+            itemPath.quadTo(poolCx + poolW * 0.08f, poolY + poolH * 0.46f,
+                poolCx + poolW * 0.54f, poolY - poolH * 0.34f)
             var z = 4
             while (z >= 0) {
                 val f = z / 4f
-                val zx = cx - poolW * 0.46f + poolW * f
+                val zx = poolCx - poolW * 0.46f + poolW * f
                 val zy = poolY - poolH * (0.04f + 0.30f * f) +
                     poolH * (if (z % 2 == 0) 0.10f else 0.24f)
                 itemPath.lineTo(zx, zy)
@@ -803,26 +810,55 @@ class VaultChestView(context: Context) : View(context) {
             c.drawPath(itemPath, fill)
         }
 
-        // Блик и золотая подсветка снизу - последними, поверх всего.
-        line.color = 0xFFFFD07A.toInt()
-        line.alpha = (170f * amount * (0.6f + 0.4f * faceK)).toInt().coerceIn(0, 255)
-        line.strokeWidth = 1.7f * d
-        c.drawArc(cx - poolW, poolY - poolH, cx + poolW, poolY + poolH * 0.55f,
-            10f, 160f, false, line)
-        line.color = 0xFFFFF0D6.toInt()
-        line.alpha = (120f * amount).toInt().coerceIn(0, 255)
-        line.strokeWidth = 1.3f * d
-        c.drawArc(cx - poolW * 0.8f, poolY - poolH * 1.05f, cx + poolW * 0.4f,
-            poolY + poolH * 0.1f, 200f, 90f, false, line)
+        // БЛИКИ РИСУЮТСЯ ПО САМОЙ ЛУЖЕ, А НЕ ПО ЭЛЛИПСУ.
+        //
+        // Здесь была видимая ошибка: тело лужи строилось неровным
+        // контуром, а золотой ободок и светлая дуга - методом drawArc,
+        // то есть по идеальному эллипсу. Две разные геометрии в одном
+        // месте не сходились, и по краям торчали «усы» - именно то
+        // сведение, которое видно на снимке.
+        //
+        // Теперь всё под клипом самой лужи: подсветка снизу - растяжка,
+        // тёплая кромка - обводка того же пути, блик - пятно внутри.
+        // Одна форма - один контур.
+        c.save()
+        c.clipPath(goo)
+        // Тёплая подсветка снизу: жидкость просвечивает у дна.
+        soft.shader = RadialGradient(poolCx, poolY + poolH * 0.5f, poolW * 1.1f,
+            0x8CFFC257.toInt(), 0x00000000, Shader.TileMode.CLAMP)
+        soft.alpha = (190f * amount).toInt().coerceIn(0, 255)
+        c.drawRect(poolCx - poolW * 1.4f, poolY - poolH * 1.4f,
+            poolCx + poolW * 1.4f, poolY + poolH * 1.4f, soft)
+        soft.shader = null
+        // Блик: маленький, резкий, СМЕЩЁННЫЙ от центра. Ровно по центру
+        // он читался бы как дырка, а не как отражение.
         fill.shader = null
         fill.color = 0xFFFFF3E0.toInt()
+        fill.alpha = (215f * amount).toInt().coerceIn(0, 255)
+        itemPath.reset()
+        itemPath.moveTo(poolCx - poolW * 0.46f, poolY - poolH * 0.44f)
+        itemPath.quadTo(poolCx - poolW * 0.18f, poolY - poolH * 0.66f,
+            poolCx - poolW * 0.06f, poolY - poolH * 0.36f)
+        itemPath.quadTo(poolCx - poolW * 0.26f, poolY - poolH * 0.28f,
+            poolCx - poolW * 0.46f, poolY - poolH * 0.44f)
+        itemPath.close()
+        c.drawPath(itemPath, fill)
+        // Второй, крошечный - глаз всегда ищет два отражения.
         fill.alpha = (150f * amount).toInt().coerceIn(0, 255)
-        c.drawOval(cx - poolW * 0.46f, poolY - poolH * 0.60f, cx - poolW * 0.18f,
-            poolY - poolH * 0.34f, fill)
-        soft.shader = RadialGradient(cx, poolY, poolW * 1.5f, 0x3DFFC257, 0x00000000,
+        c.drawCircle(poolCx + poolW * 0.28f, poolY - poolH * 0.30f, poolH * 0.13f, fill)
+        c.restore()
+
+        // Тёплая кромка - обводка ТОГО ЖЕ пути, только снизу ярче.
+        line.shader = null
+        line.color = 0xFFFFD07A.toInt()
+        line.alpha = (130f * amount * (0.6f + 0.4f * faceK)).toInt().coerceIn(0, 255)
+        line.strokeWidth = 1.7f * d
+        c.drawPath(goo, line)
+
+        soft.shader = RadialGradient(poolCx, poolY, poolW * 1.6f, 0x33FFC257, 0x00000000,
             Shader.TileMode.CLAMP)
-        soft.alpha = (200f * amount).toInt().coerceIn(0, 255)
-        c.drawCircle(cx, poolY, poolW * 1.5f, soft)
+        soft.alpha = (190f * amount).toInt().coerceIn(0, 255)
+        c.drawCircle(poolCx, poolY, poolW * 1.6f, soft)
         soft.shader = null
         fill.alpha = 255
         line.alpha = 255

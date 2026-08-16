@@ -613,6 +613,16 @@ class VaultActivity : AppCompatActivity() {
 
         go.setOnClickListener { tryUnlockFromKeyboard() }
         make.setOnClickListener { if (!busy) showCreate() }
+
+        // Под кнопками - провал. Он занимает пустое поле внизу экрана и
+        // объясняет его: там не ничего, там темнота, в которой кто-то
+        // есть. Высота считается от экрана, а не задана числом: на
+        // маленьком телефоне провал не должен выдавливать кнопки.
+        val abyss = VaultAbyssView(this)
+        val abyssH = (resources.displayMetrics.heightPixels * 0.26f).toInt()
+        root.addView(abyss, LinearLayout.LayoutParams(-1, abyssH).also {
+            it.topMargin = dp(6)
+        })
     }
 
     /**
