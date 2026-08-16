@@ -46,6 +46,8 @@ class RadarView @JvmOverloads constructor(
 ) : View(context, attrs) {
 
     private var recon: RadarModel.Recon? = null
+    /** Текущий угол луча развёртки, радианы. */
+    private var sweepA = 0f
     private val dm = resources.displayMetrics.density
 
     private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -55,6 +57,29 @@ class RadarView @JvmOverloads constructor(
         strokeWidth = 1.4f * dm
     }
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+
+    /**
+     * ПУЛ ПУТЕЙ.
+     *
+     * Радар создавал тринадцать объектов Path на каждую отрисовку. Пока
+     * экран был неподвижным, это стоило дёшево - перерисовка случалась
+     * раз в несколько минут. Но радар без движения и был главной его
+     * бедой, а любое движение умножило бы эти тринадцать на частоту кадров.
+     * Пути переиспользуются, и теперь оживление ничего не стоит.
+     *
+     * Номер внутри одной функции не повторяется: два пути в ней могут быть
+     * живы одновременно. Между функциями пересечений нет - радар рисует
+     * их строго по очереди.
+     */
+    /** Оборот луча развёртки, мс. */
+    private val SWEEP_MS = 8000L
+
+    private val pool = Array(4) { Path() }
+    private fun rp(i: Int): Path {
+        val p = pool[i]
+        p.reset()
+        return p
+    }
     private val haze = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
         maskFilter = BlurMaskFilter(7f * dm, BlurMaskFilter.Blur.NORMAL)
@@ -204,6 +229,26 @@ class RadarView @JvmOverloads constructor(
 
     // ---------- отрисовка ----------
 
+    /**
+     * РАДАР СМОТРИТ, А НЕ ЛЕЖИТ.
+     *
+     * Экран был полностью неподвижен - схема на бумаге. Между тем это
+     * прибор наблюдения, и его суть в том, что он ПРОДОЛЖАЕТ смотреть,
+     * пока ты смотришь на него. Добавлены три вещи, и ни одна не выдумана
+     * ради красоты:
+     *
+     *  - РАЗВЁРТКА: луч обходит круг за восемь секунд. Он не только
+     *    оживляет картинку, но и задаёт ритм чтения - взгляд идёт за ним;
+     *  - ОТКЛИК: метки, которых луч только что коснулся, вспыхивают ярче
+     *    и медленно гаснут. Так прибор показывает, что сведения о них
+     *    получены сейчас, а не нарисованы навсегда;
+     *  - ТРЕВОГА: метки, требующие внимания (зверь у лагеря или под
+     *    ветром), пульсируют сами, независимо от луча. Опасность не ждёт
+     *    своей очереди.
+     *
+     * Дрожание линий по-прежнему сеяно НОМЕРОМ ДНЯ, а не кадром: картинка
+     * оживает, но не дёргается.
+     */
     override fun onDraw(canvas: Canvas) {
         val r = recon ?: return
         seed(7717L + r.day * 31L)
@@ -213,13 +258,61 @@ class RadarView @JvmOverloads constructor(
         val rad = min(cx, cy) - 24f * dm
         if (rad <= 0f) return
 
+        sweepA = ((System.currentTimeMillis() % SWEEP_MS).toFloat() / SWEEP_MS) *
+            2f * PI.toFloat() - PI.toFloat() / 2f
+
         drawScent(canvas, r, cx, cy, rad)
         drawSenses(canvas, r, cx, cy, rad)
         drawGrid(canvas, cx, cy, rad)
         if (r.hasWorld) drawWind(canvas, r, cx, cy, rad)
+        drawSweep(canvas, cx, cy, rad)
         for (m in r.marks.reversed()) drawMark(canvas, m, cx, cy, rad)
         drawCamp(canvas, cx, cy)
         if (currentCourse in 0..7) drawCourse(canvas, cx, cy, rad)
+
+        postInvalidateDelayed(70)
+    }
+
+    /**
+     * Луч развёртки: узкий сектор, гаснущий назад по ходу движения.
+     * Хвост нарисован ступенями прозрачности, а не одной заливкой -
+     * ровный сектор читался бы как кусок пирога, а не как след луча.
+     */
+    private fun drawSweep(c: Canvas, cx: Float, cy: Float, rad: Float) {
+        fill.maskFilter = null
+        var i = 0
+        while (i < 7) {
+            val a1 = sweepA - i * 0.075f
+            val a0 = a1 - 0.075f
+            val p = rp(0)
+            wedge(p, cx, cy, 0f, rad, a0.toDouble(), a1.toDouble(), 0.4f)
+            fill.color = withAlpha(cMain, 0.10 - 0.013 * i)
+            c.drawPath(p, fill)
+            i++
+        }
+        stroke.color = withAlpha(cMain, 0.55)
+        stroke.strokeWidth = 1.6f * dm
+        val p = rp(1)
+        p.moveTo(cx, cy)
+        p.lineTo(cx + rad * cos(sweepA.toDouble()).toFloat(),
+            cy + rad * sin(sweepA.toDouble()).toFloat())
+        c.drawPath(p, stroke)
+    }
+
+    /**
+     * Насколько ярко метка отзывается на луч: 1 сразу после касания, 0 к
+     * концу оборота. Угол приводится к одному обороту, иначе метка на
+     * стыке круга не отзывалась бы никогда.
+     */
+    private fun echo(markAngle: Double): Float {
+        // Всё считается в Double и приводится к Float ОДИН раз, на выходе.
+        // Смешение типов по дороге дало бы Double там, где ждут Float.
+        val full = 2.0 * PI
+        var delta = sweepA.toDouble() - markAngle
+        while (delta < 0.0) delta += full
+        while (delta > full) delta -= full
+        val k = 1.0 - delta / full
+        return (k * k * k).toFloat()
     }
 
     /** Стрелка выбранного курса: куда ты держишь путь из лагеря. */
@@ -231,13 +324,13 @@ class RadarView @JvmOverloads constructor(
         fill.maskFilter = null
         stroke.color = withAlpha(cMain, 0.9)
         stroke.strokeWidth = 3f * dm
-        val p = Path()
+        val p = rp(0)
         p.moveTo(cx, cy); p.lineTo(x1, y1)
         c.drawPath(p, stroke)
         val head = 12f * dm
         for (k in intArrayOf(-1, 1)) {
             val ha = a + PI + k * 0.5
-            val q = Path()
+            val q = rp(1)
             q.moveTo(x1, y1)
             q.lineTo(x1 + (head * cos(ha)).toFloat(), y1 + (head * sin(ha)).toFloat())
             c.drawPath(q, stroke)
@@ -257,7 +350,7 @@ class RadarView @JvmOverloads constructor(
     private fun drawScent(c: Canvas, r: RadarModel.Recon, cx: Float, cy: Float, rad: Float) {
         if (!r.hasWorld || r.scentKm <= 0.05) return
         val rr = rpx(r.scentKm, rad)
-        val p = Path()
+        val p = rp(0)
         if (r.calm) {
             ring(p, cx, cy, rr, 1.2f)
         } else {
@@ -295,7 +388,7 @@ class RadarView @JvmOverloads constructor(
         val wind = if (r.calm) 0 else 2
 
         // лепесток слуха
-        val ear = Path()
+        val ear = rp(0)
         val n = 48
         for (i in 0..n) {
             val sec = i * 8.0 / n
@@ -315,7 +408,7 @@ class RadarView @JvmOverloads constructor(
         c.drawPath(ear, stroke)
 
         // кольцо зрения
-        val eye = Path()
+        val eye = rp(1)
         ring(eye, cx, cy, rpx(r.sightKm, rad), 0.8f)
         stroke.color = withAlpha(cMain, 0.55)
         stroke.strokeWidth = 1.5f * dm
@@ -337,7 +430,7 @@ class RadarView @JvmOverloads constructor(
     private fun drawGrid(c: Canvas, cx: Float, cy: Float, rad: Float) {
         stroke.strokeWidth = 1.1f * dm
         for (km in RadarModel.RINGS) {
-            val p = Path()
+            val p = rp(0)
             ring(p, cx, cy, rpx(km, rad), 1.0f)
             stroke.color = withAlpha(cAxis, 0.55)
             c.drawPath(p, stroke)
@@ -356,7 +449,7 @@ class RadarView @JvmOverloads constructor(
         stroke.color = withAlpha(cAxis, 0.35)
         for (s in 0 until 8) {
             val a = ang(s.toDouble())
-            val p = Path()
+            val p = rp(1)
             p.moveTo(cx + (rpx(0.6, rad) * cos(a)).toFloat(),
                 cy + (rpx(0.6, rad) * sin(a)).toFloat())
             p.lineTo(cx + (rad * cos(a)).toFloat() + j(1.5f),
@@ -383,7 +476,7 @@ class RadarView @JvmOverloads constructor(
         val y1 = cy + (rpx(1.2, rad) * sin(a)).toFloat()
         stroke.color = withAlpha(cWind, 0.85)
         stroke.strokeWidth = 2.2f * dm
-        val p = Path()
+        val p = rp(0)
         p.moveTo(x0 + j(1.5f), y0 + j(1.5f))
         val mx = (x0 + x1) / 2f
         val my = (y0 + y1) / 2f
@@ -394,7 +487,7 @@ class RadarView @JvmOverloads constructor(
         val back = a + PI
         for (k in intArrayOf(-1, 1)) {
             val ha = back + k * 0.42
-            val q = Path()
+            val q = rp(1)
             q.moveTo(x1, y1)
             q.lineTo(x1 + (head * cos(ha)).toFloat(), y1 + (head * sin(ha)).toFloat())
             c.drawPath(q, stroke)
@@ -422,7 +515,7 @@ class RadarView @JvmOverloads constructor(
         val bearing = m.bearingErr * 22.5 * PI / 180.0
         val half = min(1.5, atan(m.uncertaintyKm / max(0.5, m.distKm)) + bearing)
 
-        val p = Path()
+        val p = rp(0)
         wedge(p, cx, cy, rIn, rOut, a - half, a + half, 1.0f)
         haze.color = withAlpha(col, 0.06 + 0.16 * m.freshness)
         c.drawPath(p, haze)
@@ -430,13 +523,29 @@ class RadarView @JvmOverloads constructor(
         val mx = cx + (rpx(m.distKm, rad) * cos(a)).toFloat()
         val my = cy + (rpx(m.distKm, rad) * sin(a)).toFloat()
         fill.maskFilter = null
-        fill.color = withAlpha(col, 0.35 + 0.65 * m.freshness)
-        c.drawCircle(mx, my, 4.5f * dm, fill)
+
+        // ОТКЛИК НА ЛУЧ. Метка вспыхивает, когда луч её прошёл, и гаснет
+        // к следующему обороту: прибор показывает, что сведения о ней
+        // получены сейчас, а не нарисованы навсегда.
+        val ec = echo(a)
+        // ТРЕВОГА идёт своим ходом, не дожидаясь луча: опасность не ждёт
+        // очереди. Частота вдвое выше оборота - её слышно отдельно.
+        val alarm = if (m.attention)
+            0.5f + 0.5f * sin((System.currentTimeMillis() * 0.005).toFloat()) else 0f
+
+        if (ec > 0.02f) {
+            fill.color = withAlpha(col, 0.30 * ec.toDouble())
+            c.drawCircle(mx, my, (7f + 9f * ec) * dm, fill)
+        }
+        fill.color = withAlpha(col,
+            (0.35 + 0.65 * m.freshness) * (1.0 + 0.35 * ec + 0.25 * alarm)
+                .coerceAtMost(1.6))
+        c.drawCircle(mx, my, (4.5f + 1.2f * ec + 0.9f * alarm) * dm, fill)
         if (m.attention) {
-            stroke.color = withAlpha(col, 0.9)
+            stroke.color = withAlpha(col, 0.55 + 0.45 * alarm.toDouble())
             stroke.strokeWidth = 1.6f * dm
-            val ringP = Path()
-            ring(ringP, mx, my, 9f * dm, 0.8f)
+            val ringP = rp(1)
+            ring(ringP, mx, my, (9f + 2.5f * alarm) * dm, 0.8f)
             c.drawPath(ringP, stroke)
         }
 
@@ -452,13 +561,13 @@ class RadarView @JvmOverloads constructor(
         val w = 12f * dm
         stroke.color = cMain
         stroke.strokeWidth = 1.8f * dm
-        val p = Path()
+        val p = rp(0)
         p.moveTo(cx - w + j(0.6f), cy + h)
         p.lineTo(cx + j(0.6f), cy - h)
         p.lineTo(cx + w + j(0.6f), cy + h)
         p.close()
         c.drawPath(p, stroke)
-        val d = Path()
+        val d = rp(1)
         d.moveTo(cx, cy - h * 0.55f)
         d.lineTo(cx - w * 0.28f + j(0.5f), cy + h)
         d.moveTo(cx, cy - h * 0.55f)
