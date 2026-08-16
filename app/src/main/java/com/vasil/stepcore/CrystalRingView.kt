@@ -508,23 +508,68 @@ class CrystalRingView @JvmOverloads constructor(
         val slotMs = 5200L
         val slot = tms / slotMs
         val ph = (tms % slotMs).toFloat() / slotMs
-        val kind = (((slot * 6364136223846793005L) ushr 60).toInt() and 3)
+        // Шесть повадок вместо четырёх: цикл в полминуты не успевает
+        // выучиться наизусть. Остаток берётся от ПОЛОЖИТЕЛЬНОГО числа -
+        // сдвиг вправо без знака это гарантирует.
+        val kind = (((slot * 6364136223846793005L) ushr 59).toInt() % 6)
+
+        // ШОВ МЕЖДУ ПОВАДКАМИ.
+        //
+        // Повадка выбиралась по номеру окна, но САМА повадка не
+        // возвращалась к исходному виду к концу окна. Прищур держал веко
+        // на 0.46 все пять секунд, а следующее окно начиналось с 1.0 -
+        // веко распахивалось за один кадр. То же с зрачком и дрожью. Это
+        // и есть «оборвалась анимация»: не она кончилась, а картинка
+        // прыгнула на стыке.
+        //
+        // Правило, которое это закрывает навсегда: КАЖДАЯ ПОВАДКА
+        // НАЧИНАЕТСЯ И КОНЧАЕТСЯ В ОДНОМ И ТОМ ЖЕ ПОКОЕ - веко открыто,
+        // зрачок обычный, взгляд прямой, дрожи нет. Тогда любая
+        // последовательность окон сходится без шва, и порядок повадок
+        // можно менять как угодно.
+        //
+        // Для этого всё, что уводит глаз из покоя, умножается на ОГИБАЮЩУЮ,
+        // равную нулю на обоих концах окна. Их две: мягкая (одна волна
+        // синуса) и резкая (та же волна в квадрате - дольше держит форму,
+        // быстрее отпускает).
+        val envSoft = Math.sin((ph * Math.PI).toDouble()).toFloat()
+        val envHold = envSoft * envSoft
 
         var openK = 1f          // раскрытие века
         var pupilK = 1f         // сжатие зрачка
         var jitter = 0f         // дрожь взгляда
+        var gaze = 0f           // взгляд вбок, доли ширины глаза
         when (kind) {
-            0 -> openK = 1f - blinkAt(ph, 0.78f, 0.075f)
-            1 -> openK = 1f - Math.max(blinkAt(ph, 0.58f, 0.045f),
-                                       blinkAt(ph, 0.70f, 0.045f))
+            // Медленное веко: одно моргание в середине окна.
+            0 -> openK = 1f - blinkAt(ph, 0.50f, 0.075f)
+            // Двойное быстрое.
+            1 -> openK = 1f - Math.max(blinkAt(ph, 0.42f, 0.045f),
+                                       blinkAt(ph, 0.56f, 0.045f))
+            // Распахнутый взгляд: раскрывается и возвращается сам.
             2 -> {
-                openK = 1.18f - 0.18f * blinkAt(ph, 0.90f, 0.10f)
-                pupilK = 0.40f + 0.18f * pulse
-                jitter = 1.1f * d * Math.sin(tms * 0.021).toFloat()
+                openK = 1f + 0.20f * envHold
+                pupilK = 1f - 0.58f * envHold
+                // Целое число волн внутри окна: дрожь начинается и
+                // кончается на нуле, а не обрывается посередине.
+                jitter = 1.3f * d * envSoft *
+                    Math.sin((ph * 14.0 * 2.0 * Math.PI)).toFloat()
             }
+            // Злой прищур: наплывает и отпускает.
+            3 -> {
+                openK = 1f - 0.56f * envHold
+                pupilK = 1f + 0.40f * envHold
+            }
+            // Взгляд вбок: глаз провожает что-то и возвращается.
+            4 -> {
+                gaze = 0.42f * envSoft *
+                    Math.sin((ph * 1.0 * 2.0 * Math.PI)).toFloat()
+                openK = 1f + 0.06f * envSoft
+            }
+            // Долгое немигающее наблюдение: зрачок медленно сужается и
+            // расходится обратно, веко чуть тяжелеет.
             else -> {
-                openK = 0.46f + 0.06f * pulse
-                pupilK = 1.35f
+                pupilK = 1f - 0.34f * envSoft
+                openK = 1f - 0.12f * envSoft
             }
         }
         openK = openK.coerceIn(0.02f, 1.25f)
@@ -583,20 +628,23 @@ class CrystalRingView @JvmOverloads constructor(
                 x0 - dir * ew * 0.52f, vy - eh * 0.10f)
             c.drawPath(windPath, veinPaint)
         }
-        // Зрачок-щель: сужается и расширяется, как у хищника.
+        // Зрачок-щель: сужается, расширяется и УХОДИТ ВБОК вместе со
+        // взглядом. Смещение ограничено шириной глаза - зрачок не может
+        // вылезти за веко.
+        val gx = cx + gaze * ew * 0.55f
         val pw = rr * (0.09f + 0.06f * pulse) * pupilK
         eyePupil.reset()
-        eyePupil.moveTo(cx, cy - eh * 1.05f)
-        eyePupil.lineTo(cx + pw, cy)
-        eyePupil.lineTo(cx, cy + eh * 1.05f)
-        eyePupil.lineTo(cx - pw, cy)
+        eyePupil.moveTo(gx, cy - eh * 1.05f)
+        eyePupil.lineTo(gx + pw, cy)
+        eyePupil.lineTo(gx, cy + eh * 1.05f)
+        eyePupil.lineTo(gx - pw, cy)
         eyePupil.close()
         moonFillPaint.color = 0xFF060203.toInt()
         c.drawPath(eyePupil, moonFillPaint)
-        // Блик смещён от центра - глаз живой, а не нарисованный.
+        // Блик держится зрачка: он и есть отражение в нём.
         bloodPaint.color = 0xFFFFE1E1.toInt()
         bloodPaint.alpha = 190
-        c.drawOval(cx - pw * 2.2f, cy - eh * 0.60f, cx - pw * 0.6f, cy - eh * 0.12f, bloodPaint)
+        c.drawOval(gx - pw * 2.2f, cy - eh * 0.60f, gx - pw * 0.6f, cy - eh * 0.12f, bloodPaint)
         bloodPaint.alpha = 255
         c.restore()
 
