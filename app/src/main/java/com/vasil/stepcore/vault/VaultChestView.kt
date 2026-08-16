@@ -131,16 +131,21 @@ class VaultChestView(context: Context) : View(context) {
         if (shaderKey == w) return
         shaderKey = w
         haloShader = RadialGradient(w / 2f, topY, maxOf(w, h) * 0.62f,
-            intArrayOf(0x66E8A33D, 0x33B4632A, 0x00000000),
+            // Ореол приглушён вдвое: прежний заливал сцену тёплым
+            // молоком, и контраст, на котором держится форма, пропадал.
+            intArrayOf(0x33C4562E, 0x1A7A2A1E, 0x00000000),
             floatArrayOf(0f, 0.45f, 1f), Shader.TileMode.CLAMP)
         shaftShader = LinearGradient(0f, topY - h * 0.62f, 0f, topY,
             intArrayOf(0x00FFD98A, 0x3DFFD98A, 0x8CFFE7B2.toInt()),
             floatArrayOf(0f, 0.55f, 1f), Shader.TileMode.CLAMP)
+        // Размах растяжки СУЖЕН. Широкий переход от светлого к тёмному
+        // читается как надувная поверхность - отсюда и «пластилин».
+        // Узкий диапазон плюс жёсткая обводка дают рисунок, а не лепку.
         woodShader = LinearGradient(w / 2f - bw, 0f, w / 2f + bw, 0f,
-            intArrayOf(shade(WOOD, 1.30f), shade(WOOD, 1.02f), shade(WOOD, 0.62f)),
-            floatArrayOf(0f, 0.42f, 1f), Shader.TileMode.CLAMP)
+            intArrayOf(shade(WOOD, 1.15f), shade(WOOD, 0.98f), shade(WOOD, 0.74f)),
+            floatArrayOf(0f, 0.45f, 1f), Shader.TileMode.CLAMP)
         ironShader = LinearGradient(0f, 0f, 0f, bh * 0.5f,
-            intArrayOf(shade(IRON, 1.45f), shade(IRON, 0.85f), shade(IRON, 1.15f)),
+            intArrayOf(shade(IRON, 1.25f), shade(IRON, 0.70f), shade(IRON, 1.00f)),
             floatArrayOf(0f, 0.5f, 1f), Shader.TileMode.MIRROR)
     }
 
@@ -271,7 +276,9 @@ class VaultChestView(context: Context) : View(context) {
                         deny: Float, open: Float) {
         val top = by - bh
         val bot = by + bh * 0.36f
-        val rr = bw * 0.13f
+        // Скругление вдвое меньше: сундук - плотницкая работа, а не
+        // мыло. Полностью убрать нельзя - фаска у настоящего сундука есть.
+        val rr = bw * 0.055f
 
         // Ножки-скобы: сундук стоит, а не парит.
         fill.shader = null
@@ -327,8 +334,12 @@ class VaultChestView(context: Context) : View(context) {
             fill.shader = ironShader
             fill.alpha = 255
             c.drawRoundRect(bx - bw * 0.11f, top - bh * 0.02f, bx + bw * 0.11f, bot + bh * 0.02f,
-                bw * 0.11f, bw * 0.11f, fill)
+                bw * 0.05f, bw * 0.05f, fill)
             fill.shader = null
+            line.shader = null
+            line.color = INK; line.alpha = 235; line.strokeWidth = 1.6f * d
+            c.drawRoundRect(bx - bw * 0.11f, top - bh * 0.02f, bx + bw * 0.11f, bot + bh * 0.02f,
+                bw * 0.05f, bw * 0.05f, line)
             var k = 0
             while (k < 3) {
                 val ry = top + (bot - top) * (0.20f + 0.30f * k)
@@ -341,8 +352,14 @@ class VaultChestView(context: Context) : View(context) {
             b2++
         }
 
-        // Кант: тонкая тёплая линия по скруглению.
-        line.color = shade(IRON, 1.3f); line.alpha = 235; line.strokeWidth = 1.7f * d
+        // ОБВОДКА. Её отсутствие и делало картинку лепной: у мягкой
+        // растяжки нет края, и предмет теряет силуэт. Сначала тёмная
+        // линия по контуру - она возвращает форму, - и только поверх неё
+        // тонкий тёплый кант как отблеск на кромке.
+        line.shader = null
+        line.color = INK; line.alpha = 255; line.strokeWidth = 2.6f * d
+        c.drawRoundRect(box, rr, rr, line)
+        line.color = shade(IRON, 1.35f); line.alpha = 150; line.strokeWidth = 1.1f * d
         c.drawRoundRect(box, rr, rr, line)
 
         if (deny > 0f) {
@@ -373,10 +390,12 @@ class VaultChestView(context: Context) : View(context) {
         val faceTop = topY - faceH
         lidPath.reset()
         lidPath.moveTo(cx - lw, topY)
-        lidPath.cubicTo(cx - lw, faceTop + faceH * 0.30f,
-            cx - lw * 0.55f, faceTop - faceH * 0.16f, cx, faceTop - faceH * 0.18f)
-        lidPath.cubicTo(cx + lw * 0.55f, faceTop - faceH * 0.16f,
-            cx + lw, faceTop + faceH * 0.30f, cx + lw, topY)
+        // Купол приспущен: прежняя дуга поднималась выше собственной
+        // высоты и делала крышку подушкой.
+        lidPath.cubicTo(cx - lw, faceTop + faceH * 0.42f,
+            cx - lw * 0.60f, faceTop - faceH * 0.02f, cx, faceTop - faceH * 0.05f)
+        lidPath.cubicTo(cx + lw * 0.60f, faceTop - faceH * 0.02f,
+            cx + lw, faceTop + faceH * 0.42f, cx + lw, topY)
         lidPath.close()
 
         c.save()
@@ -399,8 +418,8 @@ class VaultChestView(context: Context) : View(context) {
             fill.shader = null
             if (crack > 0f) drawCracks(c, cx, topY, lw, faceH, crack)
             // Блик по куполу - мягкий, растяжкой.
-            soft.shader = RadialGradient(cx - lw * 0.35f, faceTop + faceH * 0.30f,
-                lw * 0.9f, 0x59FFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP)
+            soft.shader = RadialGradient(cx - lw * 0.38f, faceTop + faceH * 0.34f,
+                lw * 0.75f, 0x2EFFE8D6, 0x00FFFFFF, Shader.TileMode.CLAMP)
             soft.alpha = 255
             c.drawRect(cx - lw, faceTop - faceH, cx + lw, topY, soft)
             soft.shader = null
@@ -408,7 +427,9 @@ class VaultChestView(context: Context) : View(context) {
         c.restore()
 
         line.shader = null
-        line.color = shade(IRON, 1.2f); line.strokeWidth = 1.8f * d; line.alpha = 255
+        line.color = INK; line.strokeWidth = 2.6f * d; line.alpha = 255
+        c.drawPath(lidPath, line)
+        line.color = shade(IRON, 1.35f); line.strokeWidth = 1.0f * d; line.alpha = 140
         c.drawPath(lidPath, line)
         c.restore()
 
@@ -614,104 +635,197 @@ class VaultChestView(context: Context) : View(context) {
     /**
      * ЖИДКОСТЬ.
      *
-     * Сочится из шва, стекает языками, собирается в лужу. Раз в несколько
-     * секунд лужа СТЯГИВАЕТСЯ В ЛИЦО: прорези глаз и кривая ухмылка
-     * вырезаются ИЗ неё - выступ снизу, глаза цветом фона под лужей.
-     * Появилось, посмотрело, растеклось обратно.
+     * Прежняя версия не читалась как жидкость по трём причинам, и все три
+     * здесь закрыты.
      *
-     * Золотой ободок понизу - подсветка снизу: у плотной жидкости на свету
-     * всегда есть тёплая кромка, без неё пятно выглядит краской.
+     * 1. РОВНАЯ ТОЛЩИНА. Потёк шёл лентой одинаковой ширины. Настоящая
+     *    струя ТОЛЩЕ у истока, тоньше в середине и вздувается каплей на
+     *    конце - её держит поверхностное натяжение. Ширина теперь функция
+     *    от длины, с утолщением на носке.
+     *
+     * 2. ЛУЖА БЫЛА ОВАЛОМ. Овал - это фигура, а не разлив. Контур
+     *    собирается из точек по кругу, радиус которых гуляет двумя
+     *    гармониками и медленно течёт во времени: лужа неровная и живая,
+     *    и ни один кадр не повторяет предыдущий.
+     *
+     * 3. НЕ БЫЛО БЛИКА. Плотная жидкость на свету всегда даёт резкий
+     *    маленький блик и тёмную кромку вокруг. Ободок снизу золотой, по
+     *    верхней кромке - узкая светлая дуга, и в луже стоит одно яркое
+     *    пятно. Именно блик, а не цвет, говорит глазу «мокрое».
+     *
+     * Плюс: капля, долетев, оставляет расходящееся кольцо. Лицо всё так же
+     * ВЫРЕЗАНО из лужи, но теперь и оно повторяет неровный контур.
      */
     private fun drawOoze(c: Canvas, cx: Float, topY: Float, by: Float, bw: Float, bh: Float,
                          now: Long, open: Float, strain: Float, deny: Float) {
         if (open > 0.55f) return
         val amount = (1f - open * 1.8f).coerceIn(0f, 1f)
         val bot = by + bh * 0.36f
-        // Цикл лица: раз в PHIZ_MS оно проступает и уходит.
         val cyc = (now % FACE_MS).toFloat() / FACE_MS
         val faceK = if (cyc < 0.34f) sin((cyc / 0.34f * Math.PI).toFloat()) else 0f
-        // Каждое второе появление - зелёное: два нрава у одной жидкости.
         val greenTurn = ((now / FACE_MS) % 2L) == 1L
-        val gooCol = if (deny > 0f) 0xFF8E1220.toInt()
-        else if (greenTurn && faceK > 0.05f) blendC(0xFF6E1024.toInt(), 0xFF2E6B34.toInt(), faceK)
-        else 0xFF6E1024.toInt()
+        val gooCol = if (deny > 0f) 0xFF7E0C18.toInt()
+        else if (greenTurn && faceK > 0.05f) blendC(0xFF5A0A1C.toInt(), 0xFF23561F.toInt(), faceK)
+        else 0xFF5A0A1C.toInt()
+        val gooLit = blendC(gooCol, 0xFFFF6B6B.toInt(), 0.35f)
 
-        // Языки: три потёка разной длины, каждый со своим ходом.
-        goo.reset()
+        // --- потёки ---
         var i = 0
         while (i < 3) {
             val x = cx + bw * (-0.52f + 0.52f * i)
             val ph = now * 0.00035f + i * 0.7f
             val len = bh * (0.55f + 0.42f * (0.5f + 0.5f * sin(ph.toDouble()).toFloat())) * amount
-            val wdt = bw * (0.11f + 0.03f * i)
-            goo.moveTo(x - wdt, topY + bh * 0.02f)
-            goo.quadTo(x - wdt * 1.25f, topY + len * 0.55f, x - wdt * 0.55f, topY + len)
-            goo.quadTo(x, topY + len + wdt * 0.9f, x + wdt * 0.55f, topY + len)
-            goo.quadTo(x + wdt * 1.25f, topY + len * 0.55f, x + wdt, topY + bh * 0.02f)
+            val w0 = bw * (0.075f + 0.02f * i)          // у истока
+            goo.reset()
+            goo.moveTo(x - w0, topY + bh * 0.02f)
+            var s = 1
+            while (s <= 6) {
+                val f = s / 6f
+                // Сужение к середине и вздутие на носке.
+                val wf = w0 * (1f - 0.55f * f + 0.75f * f * f * f)
+                val yy = topY + len * f
+                goo.lineTo(x - wf, yy)
+                s++
+            }
+            goo.lineTo(x, topY + len + w0 * 0.9f)        // носок капли
+            s = 6
+            while (s >= 1) {
+                val f = s / 6f
+                val wf = w0 * (1f - 0.55f * f + 0.75f * f * f * f)
+                goo.lineTo(x + wf, topY + len * f)
+                s--
+            }
+            goo.lineTo(x + w0, topY + bh * 0.02f)
             goo.close()
-            // Сорвавшаяся капля: летит вниз и растворяется в луже.
+            fill.shader = null
+            fill.color = gooCol
+            fill.alpha = (250f * amount).toInt().coerceIn(0, 255)
+            c.drawPath(goo, fill)
+            // Блик вдоль струи: узкая светлая нить чуть левее оси.
+            line.shader = null
+            line.color = gooLit
+            line.alpha = (150f * amount).toInt().coerceIn(0, 255)
+            line.strokeWidth = w0 * 0.30f
+            c.drawLine(x - w0 * 0.35f, topY + bh * 0.06f, x - w0 * 0.2f, topY + len * 0.8f, line)
+
+            // Сорвавшаяся капля с вытянутым хвостом.
             var g = (now * 0.00045f + i * 0.33f) % 1f
             if (g < 0f) g += 1f
             val dy = topY + len + (bot - topY - len) * g * g
-            fill.shader = null
+            val dr = w0 * (0.62f - 0.18f * g)
             fill.color = gooCol
-            fill.alpha = (245f * amount * (1f - g * 0.25f)).toInt().coerceIn(0, 255)
-            c.drawCircle(x, dy, wdt * 0.42f * (1f - 0.25f * g), fill)
+            fill.alpha = (250f * amount).toInt().coerceIn(0, 255)
+            c.drawCircle(x, dy, dr, fill)
+            c.drawOval(x - dr * 0.55f, dy - dr * (1.4f + 3.6f * g), x + dr * 0.55f, dy, fill)
+            fill.color = gooLit
+            fill.alpha = (190f * amount).toInt().coerceIn(0, 255)
+            c.drawCircle(x - dr * 0.30f, dy - dr * 0.30f, dr * 0.28f, fill)
             i++
         }
+
+        // --- лужа неровным контуром ---
+        val poolW = bw * (0.92f - 0.16f * faceK)
+        val poolH = bh * (0.13f + 0.15f * faceK)
+        val poolY = bot + bh * 0.10f
+        goo.reset()
+        var a2 = 0
+        while (a2 <= 26) {
+            val th = a2 / 26f * 2f * Math.PI.toFloat()
+            // Две гармоники плюс медленный ход во времени: край разлива
+            // всё время перетекает, но никуда не убегает.
+            val wob = 1f + 0.10f * sin((th * 3f + now * 0.0007).toDouble()).toFloat() +
+                0.06f * sin((th * 5f - now * 0.0011).toDouble()).toFloat()
+            val px2 = cx + cos(th.toDouble()).toFloat() * poolW * wob
+            val py2 = poolY + sin(th.toDouble()).toFloat() * poolH * wob *
+                (if (sin(th.toDouble()) > 0) 0.55f else 1f)
+            if (a2 == 0) goo.moveTo(px2, py2) else goo.lineTo(px2, py2)
+            a2++
+        }
+        goo.close()
         fill.shader = null
         fill.color = gooCol
-        fill.alpha = (240f * amount).toInt().coerceIn(0, 255)
+        fill.alpha = (250f * amount).toInt().coerceIn(0, 255)
         c.drawPath(goo, fill)
+        // Тёмная кромка: у лужи есть толщина.
+        line.shader = null
+        line.color = INK
+        line.alpha = (200f * amount).toInt().coerceIn(0, 255)
+        line.strokeWidth = 1.5f * d
+        c.drawPath(goo, line)
 
-        // Лужа у подножия. При лице она подбирается и приподнимается.
-        val poolW = bw * (0.92f - 0.18f * faceK)
-        val poolH = bh * (0.13f + 0.16f * faceK)
-        val poolY = bot + bh * 0.10f
-        c.drawOval(cx - poolW, poolY - poolH, cx + poolW, poolY + poolH * 0.55f, fill)
+        // Кольца от упавшей капли: расходятся и гаснут.
+        var rp = 0
+        while (rp < 2) {
+            var g = (now * 0.00045f + rp * 0.5f) % 1f
+            if (g < 0f) g += 1f
+            if (g > 0.72f) {
+                val k = (g - 0.72f) / 0.28f
+                line.color = gooLit
+                line.alpha = (170f * (1f - k) * amount).toInt().coerceIn(0, 255)
+                line.strokeWidth = 1.4f * d
+                c.drawOval(cx - poolW * 0.5f * k - poolW * 0.1f, poolY - poolH * 0.5f * k,
+                    cx + poolW * 0.5f * k + poolW * 0.1f, poolY + poolH * 0.5f * k, line)
+            }
+            rp++
+        }
 
         if (faceK > 0.04f) {
-            // Глаза - прорези В жидкости: рисуем фоном, а не поверх.
+            // Глаза - прорези В жидкости: узкие клинья, а не капли.
             fill.color = 0xFF0B0709.toInt()
             fill.alpha = (255f * faceK).toInt().coerceIn(0, 255)
             var e = 0
             while (e < 2) {
-                val ex = cx + (if (e == 0) -1f else 1f) * poolW * 0.38f
+                val ex = cx + (if (e == 0) -1f else 1f) * poolW * 0.40f
+                val tilt = (if (e == 0) 1f else -1f) * poolH * 0.20f
                 itemPath.reset()
-                itemPath.moveTo(ex - poolW * 0.22f, poolY - poolH * 0.42f)
-                itemPath.quadTo(ex, poolY - poolH * (0.86f + 0.10f * faceK),
-                    ex + poolW * 0.22f, poolY - poolH * 0.30f)
-                itemPath.quadTo(ex, poolY - poolH * 0.24f,
-                    ex - poolW * 0.22f, poolY - poolH * 0.42f)
+                itemPath.moveTo(ex - poolW * 0.20f, poolY - poolH * 0.36f + tilt)
+                itemPath.lineTo(ex + poolW * 0.20f, poolY - poolH * 0.62f - tilt * 0.4f)
+                itemPath.lineTo(ex + poolW * 0.16f, poolY - poolH * 0.30f)
                 itemPath.close()
-                c.drawPath(itemPath, itemPaintFor(faceK))
+                c.drawPath(itemPath, fill)
                 e++
             }
-            // Ухмылка: дуга, приподнятая с одной стороны - ехидство.
-            line.shader = null
-            line.color = 0xFF0B0709.toInt()
-            line.alpha = (255f * faceK).toInt().coerceIn(0, 255)
-            line.strokeWidth = poolH * 0.30f
+            // Ухмылка: не линия, а вырез с зубцами - оттого и ехидная.
             itemPath.reset()
-            itemPath.moveTo(cx - poolW * 0.46f, poolY - poolH * 0.02f)
-            itemPath.quadTo(cx + poolW * 0.10f, poolY + poolH * 0.42f,
-                cx + poolW * 0.52f, poolY - poolH * 0.30f)
-            c.drawPath(itemPath, line)
+            itemPath.moveTo(cx - poolW * 0.46f, poolY - poolH * 0.04f)
+            itemPath.quadTo(cx + poolW * 0.08f, poolY + poolH * 0.46f,
+                cx + poolW * 0.54f, poolY - poolH * 0.34f)
+            var z = 4
+            while (z >= 0) {
+                val f = z / 4f
+                val zx = cx - poolW * 0.46f + poolW * f
+                val zy = poolY - poolH * (0.04f + 0.30f * f) +
+                    poolH * (if (z % 2 == 0) 0.10f else 0.24f)
+                itemPath.lineTo(zx, zy)
+                z--
+            }
+            itemPath.close()
+            c.drawPath(itemPath, fill)
         }
 
-        // Золотой ободок понизу: подсветка снизу.
-        line.shader = null
-        line.color = 0xFFFFC257.toInt()
-        line.alpha = (150f * amount * (0.6f + 0.4f * faceK)).toInt().coerceIn(0, 255)
-        line.strokeWidth = 1.6f * d
+        // Блик и золотая подсветка снизу - последними, поверх всего.
+        line.color = 0xFFFFD07A.toInt()
+        line.alpha = (170f * amount * (0.6f + 0.4f * faceK)).toInt().coerceIn(0, 255)
+        line.strokeWidth = 1.7f * d
         c.drawArc(cx - poolW, poolY - poolH, cx + poolW, poolY + poolH * 0.55f,
             10f, 160f, false, line)
-        soft.shader = RadialGradient(cx, poolY, poolW * 1.5f, 0x4DFFC257, 0x00000000,
+        line.color = 0xFFFFF0D6.toInt()
+        line.alpha = (120f * amount).toInt().coerceIn(0, 255)
+        line.strokeWidth = 1.3f * d
+        c.drawArc(cx - poolW * 0.8f, poolY - poolH * 1.05f, cx + poolW * 0.4f,
+            poolY + poolH * 0.1f, 200f, 90f, false, line)
+        fill.shader = null
+        fill.color = 0xFFFFF3E0.toInt()
+        fill.alpha = (150f * amount).toInt().coerceIn(0, 255)
+        c.drawOval(cx - poolW * 0.46f, poolY - poolH * 0.60f, cx - poolW * 0.18f,
+            poolY - poolH * 0.34f, fill)
+        soft.shader = RadialGradient(cx, poolY, poolW * 1.5f, 0x3DFFC257, 0x00000000,
             Shader.TileMode.CLAMP)
         soft.alpha = (200f * amount).toInt().coerceIn(0, 255)
         c.drawCircle(cx, poolY, poolW * 1.5f, soft)
         soft.shader = null
         fill.alpha = 255
+        line.alpha = 255
     }
 
     /** Кисть прорези глаза: отдельная функция ради читаемости вызова. */
@@ -863,8 +977,16 @@ class VaultChestView(context: Context) : View(context) {
         const val DRIFT = 5.5f
         /** Период появления лица в жидкости, мс. */
         const val FACE_MS = 2600L
-        /** Дерево багровое: сундук принадлежит тайнику, а не кладовке. */
-        val WOOD = 0xFF6E3A2A.toInt()
-        val IRON = 0xFF7A6A55.toInt()
+        /**
+         * Дерево тёмно-багровое, железо холодное.
+         *
+         * Прежний тон (0xFF6E3A2A) на светлой растяжке уходил в рыжий, и
+         * вместе с мягкими краями сундук читался как пластилин. Тон опущен
+         * и уведён в красное: тёмное держит форму, светлое её размывает.
+         */
+        val WOOD = 0xFF4A1E22.toInt()
+        val IRON = 0xFF5F5A5E.toInt()
+        /** Обводка: почти чёрная, единая для всех очертаний. */
+        val INK = 0xFF150609.toInt()
     }
 }

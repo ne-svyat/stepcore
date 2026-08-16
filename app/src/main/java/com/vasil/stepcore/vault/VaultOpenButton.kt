@@ -40,7 +40,7 @@ class VaultOpenButton(context: Context) : View(context) {
     private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textAlign = Paint.Align.CENTER
         typeface = android.graphics.Typeface.DEFAULT_BOLD
-        color = 0xFF17111F.toInt()
+        color = 0xFF1B1226.toInt()
     }
     private val arc = Path()
 
@@ -56,6 +56,7 @@ class VaultOpenButton(context: Context) : View(context) {
     private var pressK = 0f
     private var deniedAt = 0L
     private var shaderW = -1f
+    private var plateShader: LinearGradient? = null
 
     /** Надпись. Единственный источник правды о том, что на кнопке. */
     fun setLabel(s: String) {
@@ -132,12 +133,24 @@ class VaultOpenButton(context: Context) : View(context) {
         fill.alpha = (70 * (1f - press)).toInt().coerceIn(0, 255)
         canvas.drawRoundRect(l, t + 3f * d, r, b + 3f * d, rad, rad, fill)
 
+        // РАСТЯЖКА СОБИРАЕТСЯ РАЗ, А СТАВИТСЯ КАЖДЫЙ КАДР.
+        //
+        // Здесь была ошибка, из-за которой кнопка стала чёрной. Растяжку
+        // я и собирал, и назначал внутри `if (размер изменился)`. В первом
+        // кадре всё верно; дальше размер тот же, ветка не выполняется, а
+        // кисть к этому моменту уже сброшена в null и покрашена последним
+        // использованным цветом - чёрным цветом тени. Тёмный текст на
+        // тёмной пластине - прямое следствие.
+        //
+        // Правило: КЭШИРОВАТЬ можно объект, но НАЗНАЧАТЬ его надо всегда.
+        // Общая кисть - это состояние, и оно живёт ровно один вызов.
         if (shaderW != w) {
             shaderW = w
-            fill.shader = LinearGradient(0f, 0f, 0f, h,
-                intArrayOf(0xFFD9C7F5.toInt(), 0xFFB79BE8.toInt(), 0xFF8E74C4.toInt()),
-                floatArrayOf(0f, 0.55f, 1f), Shader.TileMode.CLAMP)
+            plateShader = LinearGradient(0f, 0f, 0f, h,
+                intArrayOf(0xFFE4D6FF.toInt(), 0xFFC4A9F2.toInt(), 0xFF9A80D0.toInt()),
+                floatArrayOf(0f, 0.52f, 1f), Shader.TileMode.CLAMP)
         }
+        fill.shader = plateShader
         fill.alpha = 255
         canvas.drawRoundRect(l, t, r, b, rad, rad, fill)
         fill.shader = null
