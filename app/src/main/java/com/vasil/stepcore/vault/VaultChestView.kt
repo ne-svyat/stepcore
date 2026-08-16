@@ -7,6 +7,7 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Shader
 import android.view.View
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.exp
 import kotlin.math.sin
@@ -163,7 +164,9 @@ class VaultChestView(context: Context) : View(context) {
         glowP.color = if (denyK > 0f) 0xFFFF3B3B.toInt() else 0xFFE8A33D.toInt()
         var g = 0
         while (g < 4) {
-            glowP.alpha = ((22 - g * 4) * (lightK + denyK * 1.4f)).toInt().coerceIn(0, 255)
+            // Ореол еле заметен: на тёмном фоне даже слабая заливка
+            // рисует видимый эллипс, и сундук оказывался в «блюдце».
+            glowP.alpha = ((11 - g * 2) * (lightK + denyK * 1.4f)).toInt().coerceIn(0, 255)
             canvas.drawOval(cx - bw * (1.25f + 0.4f * g), topY - lidH * (0.6f + 0.5f * g),
                 cx + bw * (1.25f + 0.4f * g), by + bh * 0.35f * (1f + 0.2f * g), glowP)
             g++
@@ -175,8 +178,10 @@ class VaultChestView(context: Context) : View(context) {
             glowP.color = 0xFFFFD98A.toInt()
             var i = 0
             while (i < 3) {
-                glowP.alpha = ((55 - i * 15) * k).toInt().coerceIn(0, 255)
-                val spread = bw * (0.5f + 0.55f * i) * (0.4f + 0.6f * k)
+                glowP.alpha = ((30 - i * 9) * k).toInt().coerceIn(0, 255)
+                // Уже и мягче прежнего: широкий конус читался как
+                // нарисованный треугольник, а не как свет.
+                val spread = bw * (0.28f + 0.30f * i) * (0.4f + 0.6f * k)
                 itemPath.reset()
                 itemPath.moveTo(cx - bw * 0.82f, topY)
                 itemPath.lineTo(cx + bw * 0.82f, topY)
@@ -358,84 +363,130 @@ class VaultChestView(context: Context) : View(context) {
         c.drawCircle(x + sx * 3.0f * d, y + sy * lh * 0.55f, 1.5f * d, fill)
     }
 
-    /** Крышка: имеет толщину, изнанку и петли; ходит на пружине. */
+    /**
+     * КРЫШКА ОТКРЫВАЕТСЯ РАКУРСОМ, А НЕ ПОВОРОТОМ ХОЛСТА.
+     *
+     * Что было не так. Крышку я разворачивал на 104 градуса вокруг
+     * передней кромки. В трёхмерном сундуке это верно, но мы смотрим
+     * СПЕРЕДИ и рисуем плоско: поворот плоской фигуры вокруг ГОРИЗОНТАЛЬНОЙ
+     * оси нельзя изобразить поворотом холста - холст вращает только вокруг
+     * оси, перпендикулярной экрану. Оттого крышка и уезжала через весь
+     * сундук наискось, как отдельная доска.
+     *
+     * Как правильно. При взгляде спереди открывающаяся крышка не едет вбок
+     * - она СЖИМАЕТСЯ по высоте (ракурс) и уходит вверх-назад. За 90
+     * градусов лицевая сторона схлопывается в линию, дальше показывается
+     * изнанка, растущая обратно. Считается через косинус угла - ровно так,
+     * как проекция и работает.
+     *
+     * Мелкие движения - подпрыгивание от набора, натуга, удар при отказе -
+     * остаются поворотом: там углы малые, и поворот их изображает верно.
+     */
     private fun drawLid(c: Canvas, cx: Float, topY: Float, bw: Float, lidH: Float,
                         open: Float, touch: Float, strain: Float, deny: Float) {
-        // Подпрыгивание от набора и натуга - тоже углы, только малые.
-        val jump = touch * 4.5f * spring(1f - touch, 1.6f, 2.2f)
-        val pull = strain * (2.2f + 1.4f * sin((System.currentTimeMillis() * 0.006).toDouble())
+        val jump = touch * 3.2f * spring(1f - touch, 1.6f, 2.2f)
+        val pull = strain * (1.6f + 1.0f * sin((System.currentTimeMillis() * 0.006).toDouble())
             .toFloat())
-        val slam = deny * 3.0f * spring(1f - deny, 3.2f, 1.6f)
-        val angle = -104f * open - jump - pull + slam
+        val slam = deny * 2.6f * spring(1f - deny, 3.2f, 1.6f)
+
+        // Угол раскрытия и его проекция. cos < 0 - смотрим на изнанку.
+        val phi = (108f * open) * Math.PI.toFloat() / 180f
+        val proj = cos(phi.toDouble()).toFloat()
+        val inside = proj < 0f
+        val faceH = lidH * abs(proj)
+        // Подъём и отход назад: чем шире открыта, тем выше кромка и тем
+        // уже крышка - дальний край всегда мельче.
+        val lift = lidH * 0.55f * sin(phi.toDouble()).toFloat()
+        val narrow = 1f - 0.10f * sin(phi.toDouble()).toFloat()
 
         c.save()
-        c.rotate(angle, cx, topY)
+        c.rotate(-jump - pull + slam, cx, topY)
+        c.translate(0f, -lift)
 
-        // Изнанка крышки: видна только когда откинулась.
-        if (open > 0.12f) {
-            fill.color = shade(WOOD, 0.52f); fill.alpha = 255
-            c.drawRect(cx - bw, topY - lidH * 0.92f, cx + bw, topY, fill)
-            line.color = shade(WOOD, 0.35f); line.strokeWidth = 1.2f * d; line.alpha = 220
-            var i = 0
-            while (i < 3) {
-                val gy = topY - lidH * (0.25f + 0.24f * i)
-                c.drawLine(cx - bw * 0.9f, gy, cx + bw * 0.9f, gy, line)
-                i++
-            }
-        }
+        val lw = bw * narrow
+        val faceTop = topY - faceH
 
-        // Лицевая сторона: купол из досок со светом слева.
+        // Купол крышки строится под текущий ракурс: дуга сплющивается
+        // вместе с ней, а не остаётся прежней.
         lidPath.reset()
-        lidPath.moveTo(cx - bw, topY)
-        lidPath.lineTo(cx - bw, topY - lidH * 0.34f)
-        lidPath.quadTo(cx, topY - lidH * 1.30f, cx + bw, topY - lidH * 0.34f)
-        lidPath.lineTo(cx + bw, topY)
+        lidPath.moveTo(cx - lw, topY)
+        lidPath.lineTo(cx - lw, faceTop + faceH * 0.66f)
+        lidPath.quadTo(cx, faceTop - faceH * 0.30f, cx + lw, faceTop + faceH * 0.66f)
+        lidPath.lineTo(cx + lw, topY)
         lidPath.close()
+
         c.save()
         c.clipPath(lidPath)
-        val planks = 4
-        var i = 0
-        while (i < planks) {
-            val x0 = cx - bw + 2 * bw * i / planks
-            val x1 = cx - bw + 2 * bw * (i + 1) / planks
-            fill.color = shade(WOOD, 1.22f - 0.30f * (i / (planks - 1f)))
+        if (inside) {
+            // Изнанка: тёмное дерево, поперечные рейки и полоса света с
+            // той стороны, где сейчас нутро.
+            fill.color = shade(WOOD, 0.50f); fill.alpha = 255
+            c.drawRect(cx - lw, faceTop - faceH, cx + lw, topY, fill)
+            line.color = shade(WOOD, 0.34f); line.alpha = 220; line.strokeWidth = 1.3f * d
+            var k = 0
+            while (k < 3) {
+                val gy = topY - faceH * (0.25f + 0.26f * k)
+                c.drawLine(cx - lw * 0.9f, gy, cx + lw * 0.9f, gy, line)
+                k++
+            }
+            fill.color = 0xFFFFC257.toInt(); fill.alpha = 60
+            c.drawRect(cx - lw, topY - faceH * 0.22f, cx + lw, topY, fill)
             fill.alpha = 255
-            c.drawRect(x0, topY - lidH * 1.4f, x1, topY, fill)
-            fill.color = shade(WOOD, 0.45f)
-            c.drawRect(x1 - 0.9f * d, topY - lidH * 1.4f, x1 + 0.9f * d, topY, fill)
-            i++
+        } else {
+            val planks = 4
+            var k = 0
+            while (k < planks) {
+                val x0 = cx - lw + 2 * lw * k / planks
+                val x1 = cx - lw + 2 * lw * (k + 1) / planks
+                fill.color = shade(WOOD, 1.22f - 0.30f * (k / (planks - 1f)))
+                fill.alpha = 255
+                c.drawRect(x0, faceTop - faceH, x1, topY, fill)
+                fill.color = shade(WOOD, 0.45f)
+                c.drawRect(x1 - 0.9f * d, faceTop - faceH, x1 + 0.9f * d, topY, fill)
+                k++
+            }
+            // Блик по дуге: сплющивается вместе с крышкой.
+            fill.color = 0xFFFFFFFF.toInt(); fill.alpha = 40
+            c.drawOval(cx - lw * 0.72f, faceTop - faceH * 0.10f, cx + lw * 0.16f,
+                faceTop + faceH * 0.45f, fill)
+            fill.alpha = 255
         }
-        // Блик по верхней дуге: округлость крышки.
-        fill.color = 0xFFFFFFFF.toInt(); fill.alpha = 40
-        c.drawOval(cx - bw * 0.72f, topY - lidH * 1.22f, cx + bw * 0.16f,
-            topY - lidH * 0.62f, fill)
-        fill.alpha = 255
         c.restore()
 
-        // Железо на крышке: те же два обруча, что и на коробе - целое.
-        i = 0
-        while (i < 2) {
-            val bx = cx + (if (i == 0) -1f else 1f) * bw * 0.55f
-            fill.color = shade(IRON, if (i == 0) 1.3f else 0.85f)
-            fill.alpha = 255
-            c.drawRect(bx - bw * 0.10f, topY - lidH * 1.02f, bx + bw * 0.10f, topY, fill)
-            fill.color = shade(IRON, 1.5f)
-            c.drawCircle(bx, topY - lidH * 0.62f, bw * 0.040f, fill)
-            i++
+        // Торец крышки: тонкая полоса, которая ВИДНА тем сильнее, чем
+        // ближе крышка к вертикали. Она и даёт толщину.
+        val edgeH = lidH * 0.16f * abs(sin(phi.toDouble()).toFloat())
+        if (edgeH > 0.5f * d) {
+            fill.color = shade(WOOD, 0.72f); fill.alpha = 255
+            c.drawRect(cx - lw, faceTop - faceH - edgeH, cx + lw, faceTop - faceH + 1f, fill)
+        }
+
+        // Железо крышки: те же обручи, тоже под ракурсом.
+        if (!inside) {
+            var k = 0
+            while (k < 2) {
+                val bx = cx + (if (k == 0) -1f else 1f) * lw * 0.55f
+                fill.color = shade(IRON, if (k == 0) 1.3f else 0.85f); fill.alpha = 255
+                c.drawRect(bx - lw * 0.10f, faceTop - faceH * 0.05f, bx + lw * 0.10f,
+                    topY, fill)
+                fill.color = shade(IRON, 1.5f)
+                c.drawCircle(bx, topY - faceH * 0.45f, lw * 0.040f, fill)
+                k++
+            }
         }
         line.color = shade(IRON, 1.2f); line.strokeWidth = 1.8f * d; line.alpha = 255
         c.drawPath(lidPath, line)
         c.restore()
 
-        // Петли остаются на кромке - крышка вращается ВОКРУГ них.
-        i = 0
-        while (i < 2) {
-            val hx = cx + (if (i == 0) -1f else 1f) * bw * 0.78f
+        // Петли остаются на кромке короба: крышка ходит вокруг них.
+        var k2 = 0
+        while (k2 < 2) {
+            val hx = cx + (if (k2 == 0) -1f else 1f) * bw * 0.78f
             fill.color = shade(IRON, 1.35f); fill.alpha = 255
             c.drawCircle(hx, topY, 3.4f * d, fill)
             fill.color = shade(IRON, 0.5f)
             c.drawCircle(hx, topY, 1.5f * d, fill)
-            i++
+            k2++
         }
     }
 

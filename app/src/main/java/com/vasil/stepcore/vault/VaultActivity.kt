@@ -141,7 +141,7 @@ class VaultActivity : AppCompatActivity() {
      */
     private var flashAnim: android.animation.ValueAnimator? = null
     private var entranceField: EditText? = null
-    private var entranceGo: Button? = null
+    private var entranceGo: VaultOpenButton? = null
     /** Сундук экрана входа. Живёт ровно один экран, как и всё здесь. */
     private var entranceChest: VaultChestView? = null
     private var entranceWarn: TextView? = null
@@ -553,7 +553,7 @@ class VaultActivity : AppCompatActivity() {
         entranceChest = chest
 
         val warn: TextView
-        val go: Button
+        val go: VaultOpenButton
         val field = secretFieldWithKeyboard("Пароль или секрет восстановления") {
             tryUnlockFromKeyboard()
         }
@@ -563,8 +563,29 @@ class VaultActivity : AppCompatActivity() {
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
         })
+        // Клавиша «Готово/Вперёд» СИСТЕМНОЙ клавиатуры обязана делать
+        // то же, что кнопка: раньше её нажатие не делало ничего, и
+        // приходилось целиться в кнопку. Порядок важен - imeOptions
+        // ставятся ПОСЛЕ inputType, иначе он их сбрасывает.
+        field.imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_GO
+        field.setImeActionLabel("Открыть",
+            android.view.inputmethod.EditorInfo.IME_ACTION_GO)
+        field.setOnEditorActionListener { _, actionId, ev ->
+            val hit = actionId == android.view.inputmethod.EditorInfo.IME_ACTION_GO ||
+                actionId == android.view.inputmethod.EditorInfo.IME_ACTION_DONE ||
+                actionId == android.view.inputmethod.EditorInfo.IME_ACTION_NEXT ||
+                actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEND ||
+                (ev != null && ev.keyCode == android.view.KeyEvent.KEYCODE_ENTER &&
+                    ev.action == android.view.KeyEvent.ACTION_DOWN)
+            if (hit) tryUnlockFromKeyboard()
+            hit
+        }
+
         warn = warnLabel()
-        go = button("Открыть")
+        go = VaultOpenButton(this)
+        root.addView(go, LinearLayout.LayoutParams(-1, dp(56)).also {
+            it.topMargin = dp(4); it.bottomMargin = dp(10)
+        })
         entranceGo = go
         entranceField = field
         entranceWarn = warn
@@ -586,21 +607,22 @@ class VaultActivity : AppCompatActivity() {
      */
     private fun tryUnlockFromKeyboard() {
         if (busy) return
-        // Проверка секрета идёт полторы секунды: сундук всё это время
-        // натужно тянет крышку. Открытие показывается только тогда,
-        // когда замок действительно поддался (см. unlock).
-        entranceChest?.straining()
         val field = entranceField ?: return
         val go = entranceGo ?: return
         val warn = entranceWarn ?: return
         val s = field.chars()
         if (s.isEmpty()) return
         warn.visibility = View.GONE
-        go.isEnabled = false
-        go.text = "Открываю…"
+        // Натуга начинается ТОЛЬКО когда попытка действительно пошла.
+        // Раньше вызов стоял выше пустой проверки, и сундук тянул крышку
+        // при пустом поле - показывал работу, которой нет.
+        entranceChest?.straining()
+        go.setBusy(true)
+        go.setLabel("Открываю…")
         unlock(s) {
-            go.isEnabled = true
-            go.text = "Открыть"
+            go.setBusy(false)
+            go.setLabel("Открыть")
+            go.denied()
             field.setText("")
             // Раскладка пересобирается ПОСЛЕ каждой неудачи: если за
             // неверной попыткой подсмотрели, повтор по той же раскладке
