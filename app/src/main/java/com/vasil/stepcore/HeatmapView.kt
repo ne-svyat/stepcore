@@ -55,7 +55,37 @@ class HeatmapView @JvmOverloads constructor(
         style = Paint.Style.STROKE; strokeWidth = 1f * d
     }
 
+    /**
+     * ПУТИ В ПОЛЯХ, А НЕ В КАДРЕ.
+     *
+     * Карта рисует до 371 клетки, и на каждую создавалось от одного до
+     * трёх объектов Path - двадцать раз в секунду. Это порядка двадцати
+     * тысяч объектов в секунду с одного экрана: сборщик мусора просыпается
+     * постоянно, и подёргивание, которое видно на Аналитике, - оттуда.
+     * Комментарий в шапке обещал «стоит как один средний виджет»; на деле
+     * стоило дороже всего в приложении.
+     *
+     * Пути переиспользуются. Их четыре, потому что в одной клетке
+     * одновременно живут контур, ореол и штриховка.
+     */
+    private val pCell = Path()
+    private val pHalo = Path()
+    private val pHatch = Path()
+
+    /**
+     * Появление карты волной. Год не возникает целиком: клетки проступают
+     * от первой недели к последней, и по ним прокатывается волна. Это не
+     * только красиво - за полсекунды глаз успевает понять, что карта
+     * читается СЛЕВА НАПРАВО по неделям, а не сверху вниз.
+     */
+    private var bornAt = 0L
+
     private val onTick: () -> Unit = { invalidate() }
+
+    private companion object {
+        /** Появление карты, мс. */
+        const val REVEAL_MS = 620f
+    }
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
@@ -71,6 +101,7 @@ class HeatmapView @JvmOverloads constructor(
         days = list
         weeks = weeksCount
         onDayTap = tap
+        bornAt = System.currentTimeMillis()
         requestLayout(); invalidate()
     }
 
@@ -98,14 +129,24 @@ class HeatmapView @JvmOverloads constructor(
 
     override fun onDraw(canvas: Canvas) {
         if (days.isEmpty()) return
+        if (bornAt == 0L) bornAt = System.currentTimeMillis()
+        val grow = ((System.currentTimeMillis() - bornAt).toFloat() / REVEAL_MS)
+            .coerceIn(0f, 1f)
         val ph = BoilClock.phase
         // Пульс общий для всех сильных дней: они дышат в такт, как огни.
         val glowPulse = 0.55f + 0.45f *
             (0.5f + 0.5f * kotlin.math.sin((ph * 2.1f).toDouble()).toFloat())
 
+        val cols = (days.size + 6) / 7
         for ((i, day) in days.withIndex()) {
             val col = i / 7
             val row = i % 7
+            // Волна идёт по неделям; внутри недели дни трогаются почти
+            // одновременно - иначе рябит.
+            val wave = ((grow * 1.35f - col.toFloat() / cols.coerceAtLeast(1)) / 0.35f)
+                .coerceIn(0f, 1f)
+            if (wave <= 0.01f) continue
+            val rise = (1f - wave) * cell * 0.55f
             var x = gap + col * (cell + gap)
             val y = gap + row * (cell + gap)
             val w = Wobble(7000L + i * 31L + BoilClock.frame)
@@ -115,9 +156,10 @@ class HeatmapView @JvmOverloads constructor(
                 strokePaint.color = levelColors[0]
                 strokePaint.alpha = 90
                 strokePaint.strokeWidth = 1f * d
-                val p = Path()
-                Doodle.roundRect(p, x, y, cell, cell, 2f * d, 0.8f, w)
-                canvas.drawPath(p, strokePaint)
+                strokePaint.alpha = (90 * wave).toInt().coerceIn(0, 255)
+                pCell.reset()
+                Doodle.roundRect(pCell, x, y + rise, cell, cell, 2f * d, 0.8f, w)
+                canvas.drawPath(pCell, strokePaint)
                 continue
             }
 
@@ -135,26 +177,30 @@ class HeatmapView @JvmOverloads constructor(
                 strokePaint.color = color
                 strokePaint.alpha = (110 * glowPulse).toInt()
                 strokePaint.strokeWidth = 2.5f * d
-                val halo = Path()
-                Doodle.roundRect(halo, x - 2f * d, y - 2f * d,
+                strokePaint.alpha = (strokePaint.alpha * wave).toInt().coerceIn(0, 255)
+                pHalo.reset()
+                Doodle.roundRect(pHalo, x - 2f * d, y - 2f * d + rise,
                     cell + 4f * d, cell + 4f * d, 3f * d, 1.2f, w)
-                canvas.drawPath(halo, strokePaint)
+                canvas.drawPath(pHalo, strokePaint)
             }
 
             // Заливка - ШТРИХОВКОЙ, а не сплошной: ровный прямоугольник рядом
             // с дрожащим контуром выдал бы машину.
             hatchPaint.color = color
             hatchPaint.alpha = if (day.level == 5) (200 * glowPulse).toInt() else 170
-            val fillPath = Path()
-            Doodle.hatch(fillPath, x, y, x + cell, y + cell, 3.5f * d, 55f, 1f * d, w)
-            canvas.drawPath(fillPath, hatchPaint)
+            hatchPaint.alpha = (hatchPaint.alpha * wave).toInt().coerceIn(0, 255)
+            pHatch.reset()
+            Doodle.hatch(pHatch, x, y + rise, x + cell, y + cell + rise,
+                3.5f * d, 55f, 1f * d, w)
+            canvas.drawPath(pHatch, hatchPaint)
 
             strokePaint.color = color
             strokePaint.alpha = 255
             strokePaint.strokeWidth = if (day.level >= 4) 1.8f * d else 1.3f * d
-            val box = Path()
-            Doodle.roundRect(box, x, y, cell, cell, 2f * d, 1f, w)
-            canvas.drawPath(box, strokePaint)
+            strokePaint.alpha = (255 * wave).toInt().coerceIn(0, 255)
+            pCell.reset()
+            Doodle.roundRect(pCell, x, y + rise, cell, cell, 2f * d, 1f, w)
+            canvas.drawPath(pCell, strokePaint)
         }
     }
 }

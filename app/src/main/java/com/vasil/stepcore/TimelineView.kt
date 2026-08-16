@@ -114,11 +114,20 @@ class TimelineView @JvmOverloads constructor(
         textAlign = Paint.Align.CENTER
     }
     private val rect = RectF()
+    // Пути столбов - в полях: вода и огонь рисовались тремя новыми Path
+    // на каждый столб в каждом кадре.
+    private val pBody = Path()
+    private val pSurf = Path()
+    private val pWalls = Path()
+    private val pTongues = Path()
+    /** Рост столбов при показе данных. */
+    private var bornAt = 0L
 
     fun setSegments(list: List<Seg>, labelEveryNth: Int = 1) {
         segs = list
         maxTotal = (list.maxOfOrNull { it.walk + it.run } ?: 1).coerceAtLeast(1)
         labelEvery = labelEveryNth.coerceAtLeast(1)
+        bornAt = System.currentTimeMillis()
         requestLayout(); invalidate()
     }
 
@@ -162,6 +171,13 @@ class TimelineView @JvmOverloads constructor(
 
     override fun onDraw(canvas: Canvas) {
         if (segs.isEmpty()) return
+        if (bornAt == 0L) bornAt = System.currentTimeMillis()
+        // СТОЛБЫ РАСТУТ СНИЗУ, ВОЛНОЙ СЛЕВА НАПРАВО.
+        // Готовая диаграмма, возникшая целиком, не даёт понять, что она
+        // про время. Рост слева направо говорит направление оси раньше,
+        // чем человек прочтёт подписи.
+        val grow = ((System.currentTimeMillis() - bornAt).toFloat() / REVEAL_MS)
+            .coerceIn(0f, 1f)
         val chartH = height - labelH - topPad
         val radius = 4f * d
         segs.forEachIndexed { i, seg ->
@@ -173,7 +189,12 @@ class TimelineView @JvmOverloads constructor(
                 rect.set(left, y - 3f * d, right, y)
                 canvas.drawRoundRect(rect, radius, radius, emptyPaint)
             } else {
-                val h = (total.toFloat() / maxTotal) * chartH
+                val wave = ((grow * 1.4f - i.toFloat() / segs.size.coerceAtLeast(1)) / 0.4f)
+                    .coerceIn(0f, 1f)
+                // Замедление в конце: столб не втыкается в свою высоту.
+                val ease = 1f - (1f - wave) * (1f - wave)
+                if (ease <= 0.01f) return@forEachIndexed
+                val h = (total.toFloat() / maxTotal) * chartH * ease
                 val bottom = height - labelH
                 val top = bottom - h
                 val runH = h * seg.run / total
@@ -199,11 +220,13 @@ class TimelineView @JvmOverloads constructor(
                           bottom: Float, idx: Int) {
         val ph = BoilClock.phase
         val w = Wobble(1000L + idx * 17L + BoilClock.frame)
-        val body = Path()
+        val body = pBody
+        body.reset()
         Doodle.hatch(body, left, top + 3f * d, right, bottom, 6f * d, 62f, 1.5f * d, w)
         c.drawPath(body, waterHatch)
 
-        val surf = Path()
+        val surf = pSurf
+        surf.reset()
         for (k in 0..12) {
             val u = k / 12f
             val x = left + (right - left) * u
@@ -211,7 +234,8 @@ class TimelineView @JvmOverloads constructor(
                 kotlin.math.sin((u * Math.PI * 2.2 + ph * 2.4).toDouble()).toFloat() + w.j(0.6f)
             if (k == 0) surf.moveTo(x, y) else surf.lineTo(x, y)
         }
-        val walls = Path()
+        val walls = pWalls
+        walls.reset()
         Doodle.line(walls, left, top, left, bottom, 1.0f, 8, w)
         Doodle.line(walls, right, top, right, bottom, 1.0f, 8, w)
         Doodle.line(walls, left, bottom, right, bottom, 0.8f, 5, w)
@@ -236,11 +260,13 @@ class TimelineView @JvmOverloads constructor(
                          bottom: Float, idx: Int) {
         val ph = BoilClock.phase
         val w = Wobble(2000L + idx * 23L + BoilClock.frame)
-        val body = Path()
+        val body = pBody
+        body.reset()
         Doodle.hatch(body, left, top + 2f * d, right, bottom, 6f * d, -60f, 1.5f * d, w)
         c.drawPath(body, fireHatch)
 
-        val tongues = Path()
+        val tongues = pTongues
+        tongues.reset()
         tongues.moveTo(left, bottom)
         val n = 5
         for (k in 0..n) {
@@ -255,10 +281,16 @@ class TimelineView @JvmOverloads constructor(
         tongues.lineTo(right, bottom)
         c.drawPath(tongues, fireEdge)
 
-        val walls = Path()
+        val walls = pWalls
+        walls.reset()
         Doodle.line(walls, left, top + 2f * d, left, bottom, 1.0f, 6, w)
         Doodle.line(walls, right, top + 2f * d, right, bottom, 1.0f, 6, w)
         c.drawPath(walls, fireEdge)
+    }
+
+    private companion object {
+        /** Рост столбов, мс. */
+        const val REVEAL_MS = 560f
     }
 
     private fun compact(n: Int): String =

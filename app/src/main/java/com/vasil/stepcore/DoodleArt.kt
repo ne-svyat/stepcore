@@ -1391,7 +1391,18 @@ object DoodleUi {
      * привязана к окну - отписка в onViewDetached, поэтому утечки нет и
      * механизм не крутится ради мёртвой View.
      */
+    /**
+     * Повторный вызов на той же View больше НЕ добавляет вторую подписку.
+     *
+     * Экраны пересобираются (removeAllViews и заново), и на переиспользуемой
+     * View pulse мог быть вызван дважды. Каждый вызов вешал свой слушатель
+     * и свою подписку: элемент начинал дышать вдвое сильнее (две лямбды
+     * пишут alpha по очереди), а такт получал лишних подписчиков. Метка на
+     * View - самый дешёвый способ помнить, что мы здесь уже были.
+     */
     fun pulse(v: View) {
+        if (v.getTag(R.id.tag_pulse_bound) == true) return
+        v.setTag(R.id.tag_pulse_bound, true)
         val tick: () -> Unit = {
             val k = 0.5f + 0.5f * kotlin.math.sin((BoilClock.phase * 2.2f).toDouble()).toFloat()
             v.alpha = 0.70f + 0.30f * k

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Метки на View.
+
+  setTag(int, Any) требует РЕСУРСНЫЙ идентификатор: с произвольным числом
+  Android бросает IllegalArgumentException прямо в рантайме. Поэтому ключ
+  объявлен здесь, а не выдуман константой в коде.
+-->
+<resources>
+    <item name="tag_pulse_bound" type="id" />
+</resources>
