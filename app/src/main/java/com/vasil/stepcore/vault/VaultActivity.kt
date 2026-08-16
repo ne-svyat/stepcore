@@ -586,7 +586,10 @@ class VaultActivity : AppCompatActivity() {
      */
     private fun tryUnlockFromKeyboard() {
         if (busy) return
-        entranceChest?.opening()
+        // Проверка секрета идёт полторы секунды: сундук всё это время
+        // натужно тянет крышку. Открытие показывается только тогда,
+        // когда замок действительно поддался (см. unlock).
+        entranceChest?.straining()
         val field = entranceField ?: return
         val go = entranceGo ?: return
         val warn = entranceWarn ?: return
@@ -633,6 +636,13 @@ class VaultActivity : AppCompatActivity() {
             }
             busy = false
             if (key != null) {
+                // Сундук успевает распахнуться до ухода с экрана: без
+                // этой паузы номер открытия не увидел бы никто.
+                val chest = entranceChest
+                if (chest != null) {
+                    chest.opening()
+                    kotlinx.coroutines.delay(620L)
+                }
                 openSession(key)
                 showNotes()
             } else onFail()
