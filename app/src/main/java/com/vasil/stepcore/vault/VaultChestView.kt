@@ -5,6 +5,8 @@ import android.graphics.Canvas
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.RadialGradient
+import android.graphics.RectF
 import android.graphics.Shader
 import android.view.View
 import kotlin.math.abs
@@ -15,38 +17,41 @@ import kotlin.math.sin
 /**
  * СУНДУК ТАЙНИКА.
  *
- * Прежняя редакция была набором прямоугольников: короб, крышка-дуга,
- * кружок замка. Формы без материала и движение без веса - оттого и
- * дёшево. Здесь переделано и то, и другое.
+ * Третья редакция. Что чинилось и почему.
  *
- * МАТЕРИАЛ. Сундук собран из досок: каждая со своим тоном, между ними
- * тёмные швы, поверх идут волокна. Железо отдельным слоем: два обруча с
- * заклёпками, угловые накладки, петли, замочная плата с дужкой. Свет
- * падает слева сверху - оттуда светлые грани, справа тени. Крышка имеет
- * толщину и внутреннюю сторону: когда откидывается, видно изнанку и
- * пустое нутро, а не голый фон.
+ * 1. СВЕТ БЫЛ ФОРМАМИ. Ореол собирался из вложенных эллипсов, столб света
+ *    - из треугольников. На тёмном фоне у каждой такой фигуры видна
+ *    кромка, и свет читался как нарисованная геометрия. Теперь весь свет
+ *    идёт РАСТЯЖКАМИ (RadialGradient и LinearGradient): у растяжки нет
+ *    края, поэтому нет и формы - только свечение.
  *
- * ДВИЖЕНИЕ. Ни одного линейного «от 0 до 1»:
- *  - крышка ходит на ПРУЖИНЕ с затуханием (перелёт и возврат), поэтому
- *    открывается тяжело и садится мягко;
- *  - предметы летят по НАСТОЯЩЕЙ баллистике: своя начальная скорость,
- *    ускорение вниз, сопротивление воздуха по горизонтали, своя угловая
- *    скорость. Ни один не повторяет другой;
- *  - отказ - затухающие колебания короба, а не рывок в сторону;
- *  - искры от дужки летят с гравитацией и гаснут.
+ * 2. КРЫШКА В ПОЛЁТЕ БЫЛА ПЛОСКОЙ. Обломки рисовались многоугольниками
+ *    высотой в треть - в полёте это читалось как сплющенная доска. Теперь
+ *    у половин купол, толщина двумя слоями, обугленный разлом, и они
+ *    улетают быстро, с большим вращением, оставляя за собой смазанный
+ *    след. Плюс срыв стал СОБЫТИЕМ: ударная волна кольцом, вспышка,
+ *    щепки и рой углей.
  *
- * СОСТОЯНИЯ (у каждого свой смысл, а не просто другой цвет):
- *  CLOSED   - покой: дыхание скважины, пыль, редкий щелчок язычка;
- *  TOUCHED  - набирают пароль: крышка подпрыгивает и садится пружиной;
- *  STRAINING- проверяется секрет: крышку тянет вверх, щель светится
- *             сильнее, пыль засасывает внутрь. Это честный отклик на
- *             полторы секунды scrypt, а не безмолвное ожидание;
- *  DENIED   - не подошло: крышка бьёт по коробу, искры, красная вспышка;
- *  OPENING  - подошло: дужка отлетает, крышка распахивается, изнутри
- *             бьёт свет и вылетают свитки, письма и записки.
+ * 3. ГЕОМЕТРИЯ БЫЛА УГЛОВАТОЙ. Прямые углы заменены дугами: купол крышки,
+ *    скруглённый короб на ножках, полукруглые торцы обручей, арочная
+ *    замочная плата. Углы сундука сняты фасками.
  *
- * Границы: вьюха живёт в пакете vault и ничего не знает о ядре шагомера.
- * Кадры: полная частота только пока идёт номер, в покое - редко.
+ * 4. ГЛУБИНЫ НЕ БЫЛО. Сцена медленно плывёт по двум осям с разными
+ *    периодами (фигура Лиссажу), и слои смещаются НЕОДИНАКОВО: дальний
+ *    свет меньше, сундук больше, летящее - сильнее всех. Это параллакс:
+ *    он и создаёт ощущение объёма, которого не даст ни одна тень.
+ *
+ * 5. СУНДУК СТАЛ БАГРОВЫМ, И ИЗ НЕГО ТЕЧЁТ. Из шва под крышкой сочится
+ *    густая жидкость, стекает по лицевой стороне каплями и собирается в
+ *    лужу. Снизу её подсвечивает золотом - тёплый ободок по краю, как у
+ *    настоящей плотной жидкости на свету. Раз в несколько секунд лужа
+ *    собирается в ЛИЦО - две прорези глаз и кривая ухмылка - и снова
+ *    растекается. Лицо не рисуется поверх лужи, оно проступает ИЗ неё:
+ *    иначе это была бы наклейка.
+ *
+ * Границы: пакет vault, ничего из ядра шагомера. Аллокаций в кадре нет,
+ * растяжки собираются один раз на размер. Кадры: полная частота только
+ * пока идёт номер.
  */
 class VaultChestView(context: Context) : View(context) {
 
@@ -63,20 +68,26 @@ class VaultChestView(context: Context) : View(context) {
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
     }
-    private val glowP = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val soft = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val lidPath = Path()
     private val itemPath = Path()
-    private var ironW = -1f
+    private val goo = Path()
+    private val box = RectF()
+
+    // Растяжки собираются один раз на размер: в кадре только отрисовка.
+    private var shaderKey = -1f
+    private var haloShader: RadialGradient? = null
+    private var shaftShader: LinearGradient? = null
+    private var woodShader: LinearGradient? = null
+    private var ironShader: LinearGradient? = null
 
     // ------------------------------------------------------------- состояния
 
-    /** Набирают пароль. Можно звать часто - пружина сама справится. */
     fun touched() {
         touchedAt = System.currentTimeMillis()
         if (mood == Mood.CLOSED) invalidate()
     }
 
-    /** Секрет проверяется: крышку тянет, но замок держит. */
     fun straining() {
         mood = Mood.STRAINING
         moodAt = System.currentTimeMillis()
@@ -97,21 +108,12 @@ class VaultChestView(context: Context) : View(context) {
 
     // ------------------------------------------------------------- механика
 
-    /**
-     * Пружина с затуханием: подходит и для подпрыгивающей крышки, и для
-     * дрожащего короба. Один закон на все упругие движения - иначе
-     * каждое движение живёт по своей выдумке и они не сходятся.
-     *
-     * @param t доля времени 0..1, @param freq колебаний за этот отрезок
-     */
+    /** Пружина с затуханием: один закон на все упругие движения. */
     private fun spring(t: Float, freq: Float, damp: Float): Float {
-        if (t <= 0f) return 0f
-        if (t >= 1f) return 0f
-        return (exp(-damp * t.toDouble()) *
-            sin(t * freq * 2.0 * Math.PI)).toFloat()
+        if (t <= 0f || t >= 1f) return 0f
+        return (exp(-damp * t.toDouble()) * sin(t * freq * 2.0 * Math.PI)).toFloat()
     }
 
-    /** Устойчивый шум: один и тот же предмет летит одинаково каждый раз. */
     private fun rnd(i: Int): Float {
         var z = (i * 6364136223846793005L) + 1442695040888963407L
         z = (z xor (z ushr 33)) * -0x7ee3623a03d3c83fL
@@ -125,6 +127,23 @@ class VaultChestView(context: Context) : View(context) {
         return (0xFF shl 24) or (r shl 16) or (g shl 8) or b
     }
 
+    private fun buildShaders(w: Float, h: Float, bw: Float, bh: Float, topY: Float) {
+        if (shaderKey == w) return
+        shaderKey = w
+        haloShader = RadialGradient(w / 2f, topY, maxOf(w, h) * 0.62f,
+            intArrayOf(0x66E8A33D, 0x33B4632A, 0x00000000),
+            floatArrayOf(0f, 0.45f, 1f), Shader.TileMode.CLAMP)
+        shaftShader = LinearGradient(0f, topY - h * 0.62f, 0f, topY,
+            intArrayOf(0x00FFD98A, 0x3DFFD98A, 0x8CFFE7B2.toInt()),
+            floatArrayOf(0f, 0.55f, 1f), Shader.TileMode.CLAMP)
+        woodShader = LinearGradient(w / 2f - bw, 0f, w / 2f + bw, 0f,
+            intArrayOf(shade(WOOD, 1.30f), shade(WOOD, 1.02f), shade(WOOD, 0.62f)),
+            floatArrayOf(0f, 0.42f, 1f), Shader.TileMode.CLAMP)
+        ironShader = LinearGradient(0f, 0f, 0f, bh * 0.5f,
+            intArrayOf(shade(IRON, 1.45f), shade(IRON, 0.85f), shade(IRON, 1.15f)),
+            floatArrayOf(0f, 0.5f, 1f), Shader.TileMode.MIRROR)
+    }
+
     override fun onDraw(canvas: Canvas) {
         val w = width.toFloat()
         val h = height.toFloat()
@@ -132,311 +151,238 @@ class VaultChestView(context: Context) : View(context) {
         val now = System.currentTimeMillis()
         val t = (now - moodAt).toFloat()
 
-        // --- фазы состояний ---
         val openRaw = if (mood == Mood.OPENING) (t / OPEN_MS).coerceIn(0f, 1f) else 0f
-        // Крышка идёт с перелётом: тяжёлая створка не останавливается
-        // ровно там, где надо.
         val open = if (openRaw <= 0f) 0f else
-            (1f - exp(-4.2 * openRaw.toDouble()).toFloat()) +
-                0.10f * spring(openRaw, 1.1f, 4.5f)
+            (1f - exp(-4.2 * openRaw.toDouble()).toFloat()) + 0.10f * spring(openRaw, 1.1f, 4.5f)
         val denyK = if (mood == Mood.DENIED) (1f - t / DENY_MS).coerceIn(0f, 1f) else 0f
         if (mood == Mood.DENIED && denyK <= 0f) mood = Mood.CLOSED
-        val strain = if (mood == Mood.STRAINING) ((t / 300f).coerceAtMost(1f)) else 0f
+        val strain = if (mood == Mood.STRAINING) (t / 300f).coerceAtMost(1f) else 0f
         val touch = (1f - (now - touchedAt).toFloat() / TOUCH_MS).coerceIn(0f, 1f)
 
-        // Геометрия. Сундук стоит чуть ниже центра: над ним место для
-        // того, что вылетает.
         val cx = w / 2f
-        val bw = minOf(w * 0.30f, h * 0.62f)
-        val bh = bw * 0.62f
-        val by = h * 0.78f
-        val lidH = bw * 0.46f
+        val bw = minOf(w * 0.30f, h * 0.60f)
+        val bh = bw * 0.66f
+        val by = h * 0.76f
+        val lidH = bw * 0.52f
         val topY = by - bh
+        buildShaders(w, h, bw, bh, topY)
 
-        // Дрожь короба при отказе - затухающие колебания, не рывок.
-        val shake = denyK * 7f * d * spring(1f - denyK, 3.2f, 1.4f)
+        // --- ПАРАЛЛАКС. Медленный дрейф по двум осям с несоразмерными
+        // периодами: путь не замыкается, повтор не читается. Каждый слой
+        // получает свою долю - в этом весь объём.
+        val px = sin(now * 0.00021).toFloat()
+        val py = sin(now * 0.00034 + 1.1).toFloat()
+        val drift = DRIFT * d
+
         canvas.save()
-        canvas.translate(shake, 0f)
+        canvas.translate(px * drift * 0.35f, py * drift * 0.35f)
 
-        // --- свет: сначала ореол под сундуком, он всегда позади ---
+        // --- СВЕТ РАСТЯЖКОЙ, А НЕ ФИГУРОЙ ---
         val breath = 0.5f + 0.5f * sin(now * 0.0013).toFloat()
-        val lightK = 0.25f + 0.20f * breath + strain * 0.55f + open * 1.2f
-        glowP.color = if (denyK > 0f) 0xFFFF3B3B.toInt() else 0xFFE8A33D.toInt()
-        var g = 0
-        while (g < 4) {
-            // Ореол еле заметен: на тёмном фоне даже слабая заливка
-            // рисует видимый эллипс, и сундук оказывался в «блюдце».
-            glowP.alpha = ((11 - g * 2) * (lightK + denyK * 1.4f)).toInt().coerceIn(0, 255)
-            canvas.drawOval(cx - bw * (1.25f + 0.4f * g), topY - lidH * (0.6f + 0.5f * g),
-                cx + bw * (1.25f + 0.4f * g), by + bh * 0.35f * (1f + 0.2f * g), glowP)
-            g++
+        val lightK = (0.28f + 0.18f * breath + strain * 0.5f + open * 1.1f).coerceAtMost(2f)
+        soft.shader = haloShader
+        soft.alpha = (110f * lightK).toInt().coerceIn(0, 255)
+        canvas.drawRect(0f, 0f, w, h, soft)
+        soft.shader = null
+        if (denyK > 0f) {
+            soft.color = 0xFFFF3B3B.toInt()
+            soft.alpha = (60f * denyK).toInt().coerceIn(0, 255)
+            canvas.drawCircle(cx, topY, bw * 2.2f, soft)
         }
 
-        // --- столб света из щели: виден, когда крышка идёт вверх ---
+        canvas.save()
+        canvas.translate(px * drift * 0.5f, py * drift * 0.5f)
+
+        // Столб света из-под крышки: растяжка, гаснущая кверху.
         if (open > 0.02f || strain > 0.02f) {
-            val k = (open * 0.9f + strain * 0.25f).coerceAtMost(1f)
-            glowP.color = 0xFFFFD98A.toInt()
-            var i = 0
-            while (i < 3) {
-                glowP.alpha = ((30 - i * 9) * k).toInt().coerceIn(0, 255)
-                // Уже и мягче прежнего: широкий конус читался как
-                // нарисованный треугольник, а не как свет.
-                val spread = bw * (0.28f + 0.30f * i) * (0.4f + 0.6f * k)
-                itemPath.reset()
-                itemPath.moveTo(cx - bw * 0.82f, topY)
-                itemPath.lineTo(cx + bw * 0.82f, topY)
-                itemPath.lineTo(cx + spread * 1.6f, topY - h * 0.55f * k)
-                itemPath.lineTo(cx - spread * 1.6f, topY - h * 0.55f * k)
-                itemPath.close()
-                canvas.drawPath(itemPath, glowP)
-                i++
-            }
+            val k = (open * 0.95f + strain * 0.22f).coerceAtMost(1f)
+            soft.shader = shaftShader
+            soft.alpha = (150f * k).toInt().coerceIn(0, 255)
+            val spread = bw * (0.75f + 0.55f * k)
+            itemPath.reset()
+            itemPath.moveTo(cx - bw * 0.86f, topY)
+            itemPath.lineTo(cx + bw * 0.86f, topY)
+            itemPath.quadTo(cx + spread * 1.5f, topY - h * 0.30f,
+                cx + spread * 1.1f, topY - h * 0.62f)
+            itemPath.quadTo(cx, topY - h * 0.74f, cx - spread * 1.1f, topY - h * 0.62f)
+            itemPath.quadTo(cx - spread * 1.5f, topY - h * 0.30f, cx - bw * 0.86f, topY)
+            itemPath.close()
+            canvas.drawPath(itemPath, soft)
+            soft.shader = null
         }
 
-        // --- содержимое вылетает: настоящая баллистика ---
-        if (open > 0f) {
-            drawFlyingItems(canvas, cx, topY, bw, h, openRaw)
-        }
-
-        // --- нутро сундука: видно, когда крышка поднялась ---
-        if (open > 0.05f) {
-            fill.color = 0xFF120C06.toInt(); fill.alpha = 255
-            canvas.drawRect(cx - bw * 0.92f, topY - bh * 0.10f * open,
-                cx + bw * 0.92f, topY + bh * 0.32f, fill)
-            // Свет изнутри ложится на заднюю стенку.
-            fill.color = 0xFFFFC257.toInt()
-            fill.alpha = (110f * open).toInt().coerceIn(0, 255)
-            canvas.drawRect(cx - bw * 0.86f, topY, cx + bw * 0.86f, topY + bh * 0.16f, fill)
-            fill.alpha = 255
-        }
-
-        drawBox(canvas, cx, by, bw, bh, denyK)
-        // ФИНАЛ ОТКРЫТИЯ: КРЫШКУ СРЫВАЕТ.
-        //
-        // Крышка, аккуратно доехавшая до упора, - это мебель. Тайник
-        // открывается иначе: сначала по доскам ползут раскалённые
-        // трещины, потом дерево не выдерживает и крышку срывает с петель.
-        // Она улетает вверх-назад со своим вращением, за ней летят щепки.
-        //
-        // Порог сорван на 0.72 раскрытия: к этому мигу крышка уже поднята
-        // достаточно, чтобы срыв читался как продолжение движения, а не
-        // как подмена картинки.
         val crack = ((open - 0.42f) / 0.30f).coerceIn(0f, 1f)
         val burst = ((open - 0.72f) / 0.28f).coerceIn(0f, 1f)
-        if (burst <= 0f) {
-            drawLid(canvas, cx, topY, bw, lidH, open, touch, strain, denyK, crack)
-        } else {
-            drawTornLid(canvas, cx, topY, bw, lidH, burst)
-        }
-        if (open < 0.35f) drawLock(canvas, cx, topY, by, bw, bh, open, strain, denyK, breath)
 
-        // --- искры от дужки при отказе: с весом, гаснут на лету ---
-        if (denyK > 0f) {
-            var i = 0
-            while (i < 7) {
-                val k = (1f - denyK) * (0.7f + 0.5f * rnd(i))
-                val a = -2.5f + rnd(i + 11) * 2.0f
-                val sx = cx + cos(a.toDouble()).toFloat() * bw * 0.9f * k
-                val sy = topY + bh * 0.1f + sin(a.toDouble()).toFloat() * bw * 0.7f * k +
-                    bw * 1.6f * k * k
-                fill.color = if (i % 2 == 0) 0xFFFFD79A.toInt() else 0xFFFF6B4B.toInt()
-                fill.alpha = (240f * denyK * (1f - k)).toInt().coerceIn(0, 255)
-                canvas.drawCircle(sx, sy, (1.9f - 1.1f * k) * d, fill)
-                i++
-            }
-            fill.alpha = 255
-        }
-
-        // --- пыль: в покое всплывает, при натуге затягивается в щель ---
-        var i = 0
-        while (i < 8) {
-            val ph = now * 0.0006f * (0.7f + 0.2f * (i % 4)) + rnd(i + 40) * 6.3f
-            val bob = (sin(ph.toDouble()).toFloat() + 1f) * 0.5f
-            val dx0 = cx + (rnd(i + 50) - 0.5f) * bw * 2.6f
-            val dy0 = topY - lidH * 0.4f - h * 0.16f * bob
-            // Натуга: пылинку тянет к щели над замком.
-            val dx = dx0 + (cx - dx0) * strain * 0.55f
-            val dy = dy0 + (topY - dy0) * strain * 0.45f
-            fill.color = 0xFFE8A33D.toInt()
-            fill.alpha = (105f * (0.4f + 0.6f * sin((ph * 1.7f).toDouble()).toFloat()) *
-                (1f - open * 0.7f)).toInt().coerceIn(0, 255)
-            canvas.drawCircle(dx, dy, (1.1f + 0.5f * bob) * d, fill)
-            i++
-        }
-        fill.alpha = 255
-
+        // Летящее смещается сильнее всего: оно ближе к смотрящему.
+        canvas.save()
+        canvas.translate(px * drift * 0.9f, py * drift * 0.9f)
+        if (open > 0f) drawFlyingItems(canvas, cx, topY, bw, openRaw)
+        if (burst > 0f) drawTornLid(canvas, cx, topY, bw, lidH, burst)
         canvas.restore()
 
-        val busy = (mood == Mood.OPENING && openRaw < 1f) || denyK > 0f ||
-            touch > 0f || mood == Mood.STRAINING
-        if (busy) postInvalidateOnAnimation() else postInvalidateDelayed(140)
+        if (open > 0.05f) drawInside(canvas, cx, topY, bw, bh, open)
+
+        drawBox(canvas, cx, by, bw, bh, denyK, open)
+        if (burst <= 0f) drawLid(canvas, cx, topY, bw, lidH, open, touch, strain, denyK, crack)
+        if (open < 0.35f) drawLock(canvas, cx, topY, bw, bh, open, strain, denyK, breath)
+
+        // Жидкость поверх лицевой стороны, но под пылью и вспышкой.
+        drawOoze(canvas, cx, topY, by, bw, bh, now, open, strain, denyK)
+
+        // Ударная волна и вспышка срыва - самое переднее и самое короткое.
+        if (burst > 0f && burst < 0.55f) {
+            val k = burst / 0.55f
+            line.shader = null
+            line.color = 0xFFFFE7B2.toInt()
+            line.alpha = (200f * (1f - k)).toInt().coerceIn(0, 255)
+            line.strokeWidth = (5f - 4f * k) * d
+            canvas.drawCircle(cx, topY, bw * (0.4f + 2.6f * k), line)
+            soft.color = 0xFFFFF3D6.toInt()
+            soft.alpha = (120f * (1f - k) * (1f - k)).toInt().coerceIn(0, 255)
+            canvas.drawCircle(cx, topY, bw * (0.9f + 1.2f * k), soft)
+        }
+
+        drawDust(canvas, cx, topY, bw, h, strain, open, now)
+        canvas.restore()
+        canvas.restore()
+
+        val busy = (mood == Mood.OPENING && openRaw < 1f) || denyK > 0f || touch > 0f ||
+            mood == Mood.STRAINING
+        // В покое кадры редкие, но не стоячие: дрейф и жидкость живут всегда.
+        if (busy) postInvalidateOnAnimation() else postInvalidateDelayed(90)
     }
 
     // ------------------------------------------------------------- части
 
-    /** Короб: доски со швами и волокном, железо, угловые накладки. */
-    private fun drawBox(c: Canvas, cx: Float, by: Float, bw: Float, bh: Float, deny: Float) {
-        val left = cx - bw
-        val right = cx + bw
-        val top = by - bh
-        val bot = by + bh * 0.34f
+    private fun drawInside(c: Canvas, cx: Float, topY: Float, bw: Float, bh: Float,
+                           open: Float) {
+        fill.shader = null
+        fill.color = 0xFF150A08.toInt(); fill.alpha = 255
+        box.set(cx - bw * 0.94f, topY - bh * 0.06f * open, cx + bw * 0.94f, topY + bh * 0.36f)
+        c.drawRoundRect(box, bw * 0.10f, bw * 0.10f, fill)
+        soft.color = 0xFFFFC257.toInt()
+        soft.alpha = (120f * open).toInt().coerceIn(0, 255)
+        c.drawOval(cx - bw * 0.86f, topY - bh * 0.10f, cx + bw * 0.86f, topY + bh * 0.22f, soft)
+    }
 
-        // Доски: каждая своим тоном, свет слева.
-        val planks = 5
-        var i = 0
-        while (i < planks) {
-            val x0 = left + (right - left) * i / planks
-            val x1 = left + (right - left) * (i + 1) / planks
-            val lightK = 1.18f - 0.34f * (i / (planks - 1f))
-            fill.color = shade(WOOD, lightK)
+    /** Короб: скруглённый, на ножках, с фасками и коваными обручами. */
+    private fun drawBox(c: Canvas, cx: Float, by: Float, bw: Float, bh: Float,
+                        deny: Float, open: Float) {
+        val top = by - bh
+        val bot = by + bh * 0.36f
+        val rr = bw * 0.13f
+
+        // Ножки-скобы: сундук стоит, а не парит.
+        fill.shader = null
+        fill.color = shade(IRON, 0.85f); fill.alpha = 255
+        c.drawRoundRect(cx - bw * 0.86f, bot - bh * 0.06f, cx - bw * 0.52f, bot + bh * 0.13f,
+            bh * 0.07f, bh * 0.07f, fill)
+        c.drawRoundRect(cx + bw * 0.52f, bot - bh * 0.06f, cx + bw * 0.86f, bot + bh * 0.13f,
+            bh * 0.07f, bh * 0.07f, fill)
+
+        // Тело: одна растяжка на всю ширину - свет слева, тень справа.
+        fill.shader = woodShader
+        box.set(cx - bw, top, cx + bw, bot)
+        c.drawRoundRect(box, rr, rr, fill)
+        fill.shader = null
+
+        c.save()
+        itemPath.reset()
+        itemPath.addRoundRect(box, rr, rr, Path.Direction.CW)
+        c.clipPath(itemPath)
+        // Доски: не линии поверх, а тёмные швы между полосами.
+        var i = 1
+        while (i < 5) {
+            val x = cx - bw + 2 * bw * i / 5f
+            fill.color = shade(WOOD, 0.42f); fill.alpha = 190
+            c.drawRect(x - 1.1f * d, top, x + 1.1f * d, bot, fill)
+            i++
+        }
+        // Волокно дугами - дерево, а не фанера.
+        line.shader = null
+        line.color = shade(WOOD, 0.72f); line.alpha = 150; line.strokeWidth = 1.1f * d
+        i = 0
+        while (i < 7) {
+            val gy = top + (bot - top) * (0.12f + 0.13f * i)
+            itemPath.reset()
+            itemPath.moveTo(cx - bw, gy)
+            itemPath.quadTo(cx + bw * (rnd(i) - 0.5f), gy + bh * 0.06f * (rnd(i + 9) - 0.5f),
+                cx + bw, gy + bh * 0.02f)
+            c.drawPath(itemPath, line)
+            i++
+        }
+        // Нижняя тень внутри короба - объём без чёрной полосы.
+        soft.shader = LinearGradient(0f, bot - bh * 0.42f, 0f, bot,
+            0x00000000, 0x73000000, Shader.TileMode.CLAMP)
+        soft.alpha = 255
+        c.drawRect(cx - bw, bot - bh * 0.42f, cx + bw, bot, soft)
+        soft.shader = null
+        c.restore()
+
+        // Обручи с полукруглыми торцами и заклёпками.
+        var b2 = 0
+        while (b2 < 2) {
+            val bx = cx + (if (b2 == 0) -1f else 1f) * bw * 0.56f
+            fill.shader = ironShader
             fill.alpha = 255
-            c.drawRect(x0, top, x1, bot, fill)
-            // Шов между досками - тёмная щель, а не линия поверх.
-            fill.color = shade(WOOD, 0.45f)
-            c.drawRect(x1 - 0.9f * d, top, x1 + 0.9f * d, bot, fill)
-            // Волокно: две-три дуги на доску.
-            line.color = shade(WOOD, lightK * 0.72f)
-            line.alpha = 190
-            line.strokeWidth = 1.1f * d
+            c.drawRoundRect(bx - bw * 0.11f, top - bh * 0.02f, bx + bw * 0.11f, bot + bh * 0.02f,
+                bw * 0.11f, bw * 0.11f, fill)
+            fill.shader = null
             var k = 0
             while (k < 3) {
-                val gy = top + (bot - top) * (0.22f + 0.28f * k) + rnd(i * 7 + k) * bh * 0.10f
-                itemPath.reset()
-                itemPath.moveTo(x0 + 1.5f * d, gy)
-                itemPath.quadTo((x0 + x1) / 2f, gy + bh * (0.06f * (rnd(i + k) - 0.5f)),
-                    x1 - 1.5f * d, gy + bh * 0.02f)
-                c.drawPath(itemPath, line)
+                val ry = top + (bot - top) * (0.20f + 0.30f * k)
+                fill.color = shade(IRON, 0.45f)
+                c.drawCircle(bx, ry + 0.9f * d, bw * 0.042f, fill)
+                fill.color = shade(IRON, 1.5f)
+                c.drawCircle(bx - bw * 0.010f, ry - 0.5f * d, bw * 0.036f, fill)
                 k++
             }
-            i++
+            b2++
         }
 
-        // Тень внутри у нижней кромки: короб стоит, а не висит.
-        fill.color = 0xFF000000.toInt(); fill.alpha = 70
-        c.drawRect(left, bot - bh * 0.14f, right, bot, fill)
-        fill.alpha = 255
+        // Кант: тонкая тёплая линия по скруглению.
+        line.color = shade(IRON, 1.3f); line.alpha = 235; line.strokeWidth = 1.7f * d
+        c.drawRoundRect(box, rr, rr, line)
 
-        // Железо: два обруча с заклёпками.
-        i = 0
-        while (i < 2) {
-            val bx = cx + (if (i == 0) -1f else 1f) * bw * 0.55f
-            drawIronBand(c, bx, top, bot, bw * 0.10f)
-            i++
-        }
-        // Угловые накладки.
-        drawCorner(c, left, top, bw * 0.26f, bh * 0.34f, 1f, 1f)
-        drawCorner(c, right, top, bw * 0.26f, bh * 0.34f, -1f, 1f)
-        drawCorner(c, left, bot, bw * 0.26f, bh * 0.34f, 1f, -1f)
-        drawCorner(c, right, bot, bw * 0.26f, bh * 0.34f, -1f, -1f)
-
-        // Кант короба.
-        line.color = shade(IRON, 1.25f); line.alpha = 255; line.strokeWidth = 1.8f * d
-        c.drawRect(left, top, right, bot, line)
         if (deny > 0f) {
-            fill.color = 0xFFFF3B3B.toInt()
-            fill.alpha = (70f * deny).toInt().coerceIn(0, 255)
-            c.drawRect(left, top, right, bot, fill)
+            fill.color = 0xFFFF3B3B.toInt(); fill.alpha = (75f * deny).toInt().coerceIn(0, 255)
+            c.drawRoundRect(box, rr, rr, fill)
             fill.alpha = 255
         }
     }
 
-    /** Полоса железа с заклёпками: градиент даёт округлость. */
-    private fun drawIronBand(c: Canvas, x: Float, top: Float, bot: Float, halfW: Float) {
-        if (ironW != halfW) {
-            ironW = halfW
-            fill.shader = LinearGradient(-halfW, 0f, halfW, 0f,
-                intArrayOf(shade(IRON, 0.55f), shade(IRON, 1.35f), shade(IRON, 0.70f)),
-                floatArrayOf(0f, 0.38f, 1f), Shader.TileMode.CLAMP)
-        }
-        c.save()
-        c.translate(x, 0f)
-        fill.alpha = 255
-        c.drawRect(-halfW, top, halfW, bot, fill)
-        c.restore()
-        fill.shader = null
-        // Заклёпки: светлая шапка и тень снизу.
-        var i = 0
-        while (i < 3) {
-            val ry = top + (bot - top) * (0.18f + 0.32f * i)
-            fill.color = shade(IRON, 0.45f)
-            c.drawCircle(x, ry + 0.8f * d, halfW * 0.42f, fill)
-            fill.color = shade(IRON, 1.45f)
-            c.drawCircle(x - halfW * 0.10f, ry - 0.4f * d, halfW * 0.36f, fill)
-            i++
-        }
-    }
-
-    /** Угловая накладка: две полосы, сходящиеся в углу. */
-    private fun drawCorner(c: Canvas, x: Float, y: Float, lw: Float, lh: Float,
-                           sx: Float, sy: Float) {
-        fill.color = shade(IRON, 1.15f); fill.alpha = 255
-        c.drawRect(minOf(x, x + sx * lw), minOf(y, y + sy * 3.2f * d),
-            maxOf(x, x + sx * lw), maxOf(y, y + sy * 3.2f * d), fill)
-        c.drawRect(minOf(x, x + sx * 3.2f * d), minOf(y, y + sy * lh),
-            maxOf(x, x + sx * 3.2f * d), maxOf(y, y + sy * lh), fill)
-        fill.color = shade(IRON, 1.5f)
-        c.drawCircle(x + sx * lw * 0.55f, y + sy * 3.0f * d, 1.5f * d, fill)
-        c.drawCircle(x + sx * 3.0f * d, y + sy * lh * 0.55f, 1.5f * d, fill)
-    }
-
-    /**
-     * КРЫШКА ОТКРЫВАЕТСЯ РАКУРСОМ, А НЕ ПОВОРОТОМ ХОЛСТА.
-     *
-     * Что было не так. Крышку я разворачивал на 104 градуса вокруг
-     * передней кромки. В трёхмерном сундуке это верно, но мы смотрим
-     * СПЕРЕДИ и рисуем плоско: поворот плоской фигуры вокруг ГОРИЗОНТАЛЬНОЙ
-     * оси нельзя изобразить поворотом холста - холст вращает только вокруг
-     * оси, перпендикулярной экрану. Оттого крышка и уезжала через весь
-     * сундук наискось, как отдельная доска.
-     *
-     * Как правильно. При взгляде спереди открывающаяся крышка не едет вбок
-     * - она СЖИМАЕТСЯ по высоте (ракурс) и уходит вверх-назад. За 90
-     * градусов лицевая сторона схлопывается в линию, дальше показывается
-     * изнанка, растущая обратно. Считается через косинус угла - ровно так,
-     * как проекция и работает.
-     *
-     * Мелкие движения - подпрыгивание от набора, натуга, удар при отказе -
-     * остаются поворотом: там углы малые, и поворот их изображает верно.
-     */
+    /** Крышка: купол, ракурс через косинус, трещины перед срывом. */
     private fun drawLid(c: Canvas, cx: Float, topY: Float, bw: Float, lidH: Float,
-                        open: Float, touch: Float, strain: Float, deny: Float,
-                        crack: Float) {
+                        open: Float, touch: Float, strain: Float, deny: Float, crack: Float) {
         val jump = touch * 3.2f * spring(1f - touch, 1.6f, 2.2f)
-        val pull = strain * (1.6f + 1.0f * sin((System.currentTimeMillis() * 0.006).toDouble())
-            .toFloat())
+        val pull = strain * (1.6f + 1.0f * sin((System.currentTimeMillis() * 0.006)).toFloat())
         val slam = deny * 2.6f * spring(1f - deny, 3.2f, 1.6f)
 
-        // Угол раскрытия и его проекция. cos < 0 - смотрим на изнанку.
         val phi = (108f * open) * Math.PI.toFloat() / 180f
         val proj = cos(phi.toDouble()).toFloat()
         val inside = proj < 0f
         val faceH = lidH * abs(proj)
-        // Подъём и отход назад: чем шире открыта, тем выше кромка и тем
-        // уже крышка - дальний край всегда мельче.
         val lift = lidH * 0.55f * sin(phi.toDouble()).toFloat()
-        val narrow = 1f - 0.10f * sin(phi.toDouble()).toFloat()
+        val lw = bw * (1f - 0.10f * sin(phi.toDouble()).toFloat())
 
         c.save()
         c.rotate(-jump - pull + slam, cx, topY)
         c.translate(0f, -lift)
 
-        val lw = bw * narrow
         val faceTop = topY - faceH
-
-        // Купол крышки строится под текущий ракурс: дуга сплющивается
-        // вместе с ней, а не остаётся прежней.
         lidPath.reset()
         lidPath.moveTo(cx - lw, topY)
-        lidPath.lineTo(cx - lw, faceTop + faceH * 0.66f)
-        lidPath.quadTo(cx, faceTop - faceH * 0.30f, cx + lw, faceTop + faceH * 0.66f)
-        lidPath.lineTo(cx + lw, topY)
+        lidPath.cubicTo(cx - lw, faceTop + faceH * 0.30f,
+            cx - lw * 0.55f, faceTop - faceH * 0.16f, cx, faceTop - faceH * 0.18f)
+        lidPath.cubicTo(cx + lw * 0.55f, faceTop - faceH * 0.16f,
+            cx + lw, faceTop + faceH * 0.30f, cx + lw, topY)
         lidPath.close()
 
         c.save()
         c.clipPath(lidPath)
         if (inside) {
-            // Изнанка: тёмное дерево, поперечные рейки и полоса света с
-            // той стороны, где сейчас нутро.
+            fill.shader = null
             fill.color = shade(WOOD, 0.50f); fill.alpha = 255
             c.drawRect(cx - lw, faceTop - faceH, cx + lw, topY, fill)
             line.color = shade(WOOD, 0.34f); line.alpha = 220; line.strokeWidth = 1.3f * d
@@ -446,167 +392,125 @@ class VaultChestView(context: Context) : View(context) {
                 c.drawLine(cx - lw * 0.9f, gy, cx + lw * 0.9f, gy, line)
                 k++
             }
-            fill.color = 0xFFFFC257.toInt(); fill.alpha = 60
-            c.drawRect(cx - lw, topY - faceH * 0.22f, cx + lw, topY, fill)
-            fill.alpha = 255
         } else {
-            val planks = 4
-            var k = 0
-            while (k < planks) {
-                val x0 = cx - lw + 2 * lw * k / planks
-                val x1 = cx - lw + 2 * lw * (k + 1) / planks
-                fill.color = shade(WOOD, 1.22f - 0.30f * (k / (planks - 1f)))
-                fill.alpha = 255
-                c.drawRect(x0, faceTop - faceH, x1, topY, fill)
-                fill.color = shade(WOOD, 0.45f)
-                c.drawRect(x1 - 0.9f * d, faceTop - faceH, x1 + 0.9f * d, topY, fill)
-                k++
-            }
-            // ТРЕЩИНЫ. Идут от середины к краям и разгораются: сначала
-            // тёмный разлом, в нём - свет, который вот-вот вырвется.
-            if (crack > 0f) {
-                var q = 0
-                while (q < 3) {
-                    val y0 = topY - faceH * (0.25f + 0.28f * q)
-                    val reach = lw * crack * (0.75f + 0.25f * rnd(q + 60))
-                    itemPath.reset()
-                    itemPath.moveTo(cx, y0)
-                    var st = 1
-                    while (st <= 4) {
-                        val f2 = st / 4f
-                        val dirq = if (q % 2 == 0) 1f else -1f
-                        itemPath.lineTo(cx + dirq * reach * f2,
-                            y0 + faceH * 0.10f * (rnd(q * 5 + st) - 0.5f))
-                        st++
-                    }
-                    line.color = 0xFF1A0E06.toInt()
-                    line.alpha = (235f * crack).toInt().coerceIn(0, 255)
-                    line.strokeWidth = 3.4f * d * crack
-                    c.drawPath(itemPath, line)
-                    line.color = 0xFFFFB03A.toInt()
-                    line.alpha = (255f * crack * crack).toInt().coerceIn(0, 255)
-                    line.strokeWidth = 1.5f * d * crack
-                    c.drawPath(itemPath, line)
-                    q++
-                }
-            }
-
-            // Блик по дуге: сплющивается вместе с крышкой.
-            fill.color = 0xFFFFFFFF.toInt(); fill.alpha = 40
-            c.drawOval(cx - lw * 0.72f, faceTop - faceH * 0.10f, cx + lw * 0.16f,
-                faceTop + faceH * 0.45f, fill)
+            fill.shader = woodShader
             fill.alpha = 255
+            c.drawRect(cx - lw, faceTop - faceH, cx + lw, topY, fill)
+            fill.shader = null
+            if (crack > 0f) drawCracks(c, cx, topY, lw, faceH, crack)
+            // Блик по куполу - мягкий, растяжкой.
+            soft.shader = RadialGradient(cx - lw * 0.35f, faceTop + faceH * 0.30f,
+                lw * 0.9f, 0x59FFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP)
+            soft.alpha = 255
+            c.drawRect(cx - lw, faceTop - faceH, cx + lw, topY, soft)
+            soft.shader = null
         }
         c.restore()
 
-        // Торец крышки: тонкая полоса, которая ВИДНА тем сильнее, чем
-        // ближе крышка к вертикали. Она и даёт толщину.
-        val edgeH = lidH * 0.16f * abs(sin(phi.toDouble()).toFloat())
-        if (edgeH > 0.5f * d) {
-            fill.color = shade(WOOD, 0.72f); fill.alpha = 255
-            c.drawRect(cx - lw, faceTop - faceH - edgeH, cx + lw, faceTop - faceH + 1f, fill)
-        }
-
-        // Железо крышки: те же обручи, тоже под ракурсом.
-        if (!inside) {
-            var k = 0
-            while (k < 2) {
-                val bx = cx + (if (k == 0) -1f else 1f) * lw * 0.55f
-                fill.color = shade(IRON, if (k == 0) 1.3f else 0.85f); fill.alpha = 255
-                c.drawRect(bx - lw * 0.10f, faceTop - faceH * 0.05f, bx + lw * 0.10f,
-                    topY, fill)
-                fill.color = shade(IRON, 1.5f)
-                c.drawCircle(bx, topY - faceH * 0.45f, lw * 0.040f, fill)
-                k++
-            }
-        }
+        line.shader = null
         line.color = shade(IRON, 1.2f); line.strokeWidth = 1.8f * d; line.alpha = 255
         c.drawPath(lidPath, line)
         c.restore()
 
-        // Петли остаются на кромке короба: крышка ходит вокруг них.
+        // Петли остаются на кромке короба.
         var k2 = 0
         while (k2 < 2) {
-            val hx = cx + (if (k2 == 0) -1f else 1f) * bw * 0.78f
+            val hx = cx + (if (k2 == 0) -1f else 1f) * bw * 0.80f
+            fill.shader = null
             fill.color = shade(IRON, 1.35f); fill.alpha = 255
-            c.drawCircle(hx, topY, 3.4f * d, fill)
+            c.drawCircle(hx, topY, 3.6f * d, fill)
             fill.color = shade(IRON, 0.5f)
-            c.drawCircle(hx, topY, 1.5f * d, fill)
+            c.drawCircle(hx, topY, 1.6f * d, fill)
             k2++
         }
     }
 
+    private fun drawCracks(c: Canvas, cx: Float, topY: Float, lw: Float, faceH: Float,
+                           crack: Float) {
+        var q = 0
+        while (q < 4) {
+            val y0 = topY - faceH * (0.22f + 0.22f * q)
+            val dirq = if (q % 2 == 0) 1f else -1f
+            val reach = lw * crack * (0.7f + 0.3f * rnd(q + 60))
+            itemPath.reset()
+            itemPath.moveTo(cx, y0)
+            var st = 1
+            while (st <= 5) {
+                val f2 = st / 5f
+                itemPath.quadTo(
+                    cx + dirq * reach * (f2 - 0.1f), y0 + faceH * 0.09f * (rnd(q * 5 + st) - 0.5f),
+                    cx + dirq * reach * f2, y0 + faceH * 0.12f * (rnd(q * 7 + st) - 0.5f))
+                st++
+            }
+            line.shader = null
+            line.color = 0xFF1A0E06.toInt()
+            line.alpha = (235f * crack).toInt().coerceIn(0, 255)
+            line.strokeWidth = 3.6f * d * crack
+            c.drawPath(itemPath, line)
+            line.color = 0xFFFFB03A.toInt()
+            line.alpha = (255f * crack * crack).toInt().coerceIn(0, 255)
+            line.strokeWidth = 1.5f * d * crack
+            c.drawPath(itemPath, line)
+            q++
+        }
+    }
+
     /**
-     * СОРВАННАЯ КРЫШКА.
-     *
-     * Летит по той же баллистике, что и содержимое: своя скорость вверх и
-     * назад, ускорение вниз, своё вращение. Разваливается надвое по
-     * средней трещине - целая доска в полёте выглядела бы декорацией.
-     * За ней летят щепки и гаснущие угли из разломов.
+     * Сорванная крышка. Половины сохраняют КУПОЛ и толщину, летят быстро,
+     * с большим вращением и смазанным следом позади.
      */
     private fun drawTornLid(c: Canvas, cx: Float, topY: Float, bw: Float, lidH: Float,
                             burst: Float) {
-        val tsec = burst * 0.9f
+        val tsec = burst * 1.05f
         val fade = (1f - burst * burst).coerceIn(0f, 1f)
+        if (fade <= 0.01f) return
 
         var half = 0
         while (half < 2) {
             val dir = if (half == 0) -1f else 1f
-            val vx = dir * bw * 2.4f
-            val vy = -bw * 6.2f
+            val vx = dir * bw * 3.1f
+            val vy = -bw * 7.4f
             val x = cx + vx * tsec
             val y = topY - lidH * 0.5f + vy * tsec + 0.5f * GRAV * bw * tsec * tsec
-            c.save()
-            c.translate(x, y)
-            c.rotate(dir * 210f * tsec)
-            // Половина крышки: обломанный край рваный, а не отрезанный.
-            lidPath.reset()
-            lidPath.moveTo(0f, lidH * 0.30f)
-            lidPath.lineTo(dir * bw * 0.98f, lidH * 0.24f)
-            lidPath.lineTo(dir * bw * 0.90f, -lidH * 0.30f)
-            var k = 3
-            while (k >= 0) {
-                lidPath.lineTo(dir * bw * (0.06f + 0.06f * k) * (if (k % 2 == 0) 1f else 0.4f),
-                    -lidH * (0.30f - 0.14f * (3 - k)))
-                k--
+
+            // След: три бледных призрака по прошлым положениям. Смаз даёт
+            // скорость лучше, чем любое ускорение цифр.
+            var g = 3
+            while (g >= 1) {
+                val tb = (tsec - g * 0.035f).coerceAtLeast(0f)
+                val gx = cx + vx * tb
+                val gy = topY - lidH * 0.5f + vy * tb + 0.5f * GRAV * bw * tb * tb
+                drawLidHalf(c, gx, gy, dir, bw, lidH, dir * 260f * tb,
+                    fade * (0.10f + 0.06f * (3 - g)))
+                g--
             }
-            lidPath.close()
-            fill.color = shade(WOOD, 1.06f)
-            fill.alpha = (255f * fade).toInt().coerceIn(0, 255)
-            c.drawPath(lidPath, fill)
-            // Обугленная кромка разлома.
-            line.color = 0xFF1A0E06.toInt()
-            line.alpha = (230f * fade).toInt().coerceIn(0, 255)
-            line.strokeWidth = 2.4f * d
-            c.drawPath(lidPath, line)
-            fill.color = shade(IRON, 1.2f)
-            fill.alpha = (255f * fade).toInt().coerceIn(0, 255)
-            c.drawRect(dir * bw * 0.42f, -lidH * 0.28f, dir * bw * 0.62f, lidH * 0.26f, fill)
-            c.restore()
+            drawLidHalf(c, x, y, dir, bw, lidH, dir * 260f * tsec, fade)
             half++
         }
 
-        // Щепки и угли: мелочь летит быстрее и гаснет раньше.
+        // Щепки и угли: рой, а не горсть.
         var i = 0
-        while (i < 12) {
-            val t2 = tsec * (0.7f + 0.6f * rnd(i + 80))
-            val ang = -2.7f + rnd(i + 90) * 1.9f
-            val v = bw * (5.5f + 5.0f * rnd(i + 100))
+        while (i < 18) {
+            val t2 = tsec * (0.6f + 0.8f * rnd(i + 80))
+            val ang = -2.85f + rnd(i + 90) * 2.2f
+            val v = bw * (6.0f + 6.5f * rnd(i + 100))
             val x = cx + cos(ang.toDouble()).toFloat() * v * t2
             val y = topY - lidH * 0.4f + sin(ang.toDouble()).toFloat() * v * t2 +
                 0.5f * GRAV * bw * t2 * t2
-            val f2 = (1f - burst) * (1f - 0.5f * rnd(i + 110))
+            val f2 = (1f - burst) * (1f - 0.45f * rnd(i + 110))
+            fill.shader = null
             if (i % 3 == 0) {
-                fill.color = 0xFFFFB03A.toInt()
+                fill.color = if (i % 6 == 0) 0xFFFFF0C0.toInt() else 0xFFFFB03A.toInt()
                 fill.alpha = (250f * f2).toInt().coerceIn(0, 255)
-                c.drawCircle(x, y, (2.2f - 1.2f * burst) * d, fill)
+                c.drawCircle(x, y, (2.4f - 1.3f * burst) * d, fill)
             } else {
                 c.save()
                 c.translate(x, y)
-                c.rotate(rnd(i + 120) * 360f + burst * 420f)
+                c.rotate(rnd(i + 120) * 360f + burst * 520f)
                 fill.color = shade(WOOD, 0.95f)
                 fill.alpha = (240f * f2).toInt().coerceIn(0, 255)
-                c.drawRect(-bw * 0.09f, -bw * 0.022f, bw * 0.09f, bw * 0.022f, fill)
+                c.drawRoundRect(-bw * 0.10f, -bw * 0.024f, bw * 0.10f, bw * 0.024f,
+                    bw * 0.024f, bw * 0.024f, fill)
                 c.restore()
             }
             i++
@@ -615,85 +519,258 @@ class VaultChestView(context: Context) : View(context) {
         line.alpha = 255
     }
 
-    /** Замочная плата с дужкой: дужка отлетает при открытии. */
-    private fun drawLock(c: Canvas, cx: Float, topY: Float, by: Float, bw: Float, bh: Float,
-                         open: Float, strain: Float, deny: Float, breath: Float) {
-        val ly = topY + bh * 0.42f
-        val pw = bw * 0.20f
-        val ph = bh * 0.52f
-        // Плата.
-        fill.color = shade(IRON, 1.05f); fill.alpha = 255
-        c.drawRoundRect(cx - pw, ly - ph * 0.55f, cx + pw, ly + ph * 0.55f,
-            3f * d, 3f * d, fill)
-        fill.color = shade(IRON, 1.45f)
-        c.drawRoundRect(cx - pw, ly - ph * 0.55f, cx + pw * 0.25f, ly + ph * 0.10f,
-            3f * d, 3f * d, fill)
-        // Дужка: при открытии отлетает и падает.
+    /** Одна половина сорванной крышки: купол, толщина, обугленный разлом. */
+    private fun drawLidHalf(c: Canvas, x: Float, y: Float, dir: Float, bw: Float,
+                            lidH: Float, rot: Float, alpha: Float) {
         c.save()
-        val swing = -70f * (open / 0.35f).coerceAtMost(1f)
-        c.rotate(swing, cx - pw * 0.7f, ly - ph * 0.55f)
-        line.color = shade(IRON, 1.3f); line.strokeWidth = 2.6f * d; line.alpha = 255
-        c.drawArc(cx - pw * 0.75f, ly - ph * 1.15f, cx + pw * 0.75f, ly - ph * 0.15f,
+        c.translate(x, y)
+        c.rotate(rot)
+        lidPath.reset()
+        lidPath.moveTo(0f, lidH * 0.34f)
+        lidPath.cubicTo(dir * bw * 0.30f, lidH * 0.40f,
+            dir * bw * 0.86f, lidH * 0.22f, dir * bw * 0.98f, -lidH * 0.06f)
+        lidPath.cubicTo(dir * bw * 0.92f, -lidH * 0.44f,
+            dir * bw * 0.42f, -lidH * 0.62f, 0f, -lidH * 0.52f)
+        // Разлом: ломаная, а не прямой срез.
+        var k = 0
+        while (k < 4) {
+            lidPath.lineTo(dir * bw * 0.055f * (if (k % 2 == 0) 1f else -1f),
+                -lidH * (0.52f - 0.215f * (k + 1)))
+            k++
+        }
+        lidPath.close()
+        // Толщина: тёмный дубль со смещением под лицевой стороной.
+        fill.shader = null
+        fill.color = shade(WOOD, 0.55f)
+        fill.alpha = (255f * alpha).toInt().coerceIn(0, 255)
+        c.save(); c.translate(-dir * 2.5f * d, 3f * d); c.drawPath(lidPath, fill); c.restore()
+        fill.color = shade(WOOD, 1.08f)
+        fill.alpha = (255f * alpha).toInt().coerceIn(0, 255)
+        c.drawPath(lidPath, fill)
+        line.shader = null
+        line.color = 0xFF1A0E06.toInt()
+        line.alpha = (235f * alpha).toInt().coerceIn(0, 255)
+        line.strokeWidth = 2.4f * d
+        c.drawPath(lidPath, line)
+        // Уцелевший обруч на половине.
+        fill.color = shade(IRON, 1.15f)
+        fill.alpha = (255f * alpha).toInt().coerceIn(0, 255)
+        c.drawRoundRect(dir * bw * 0.40f, -lidH * 0.42f, dir * bw * 0.62f, lidH * 0.26f,
+            bw * 0.05f, bw * 0.05f, fill)
+        c.restore()
+    }
+
+    /** Замочная плата: арка, дужка, скважина. Ни одного прямого угла. */
+    private fun drawLock(c: Canvas, cx: Float, topY: Float, bw: Float, bh: Float,
+                         open: Float, strain: Float, deny: Float, breath: Float) {
+        val ly = topY + bh * 0.44f
+        val pw = bw * 0.21f
+        val ph = bh * 0.54f
+        fill.shader = ironShader; fill.alpha = 255
+        itemPath.reset()
+        itemPath.moveTo(cx - pw, ly + ph * 0.55f)
+        itemPath.lineTo(cx - pw, ly - ph * 0.20f)
+        itemPath.quadTo(cx, ly - ph * 0.95f, cx + pw, ly - ph * 0.20f)
+        itemPath.lineTo(cx + pw, ly + ph * 0.55f)
+        itemPath.close()
+        c.drawPath(itemPath, fill)
+        fill.shader = null
+        line.shader = null
+        line.color = shade(IRON, 1.45f); line.alpha = 255; line.strokeWidth = 1.4f * d
+        c.drawPath(itemPath, line)
+
+        // Дужка: отходит при открытии.
+        c.save()
+        c.rotate(-70f * (open / 0.35f).coerceAtMost(1f), cx - pw * 0.7f, ly - ph * 0.55f)
+        line.color = shade(IRON, 1.3f); line.strokeWidth = 2.8f * d
+        c.drawArc(cx - pw * 0.78f, ly - ph * 1.18f, cx + pw * 0.78f, ly - ph * 0.18f,
             185f, 170f, false, line)
         c.restore()
-        // Скважина: дышит светом, при натуге разгорается и дрожит.
+
+        // Скважина: свечение растяжкой, силуэт - каплей, не прямоугольником.
         val kg = 0.45f + 0.55f * breath + strain * 0.6f
-        fill.color = if (deny > 0f) 0xFFFF3B3B.toInt() else 0xFFFFC257.toInt()
-        fill.alpha = ((90f + 150f * kg) * (1f - open * 3f).coerceIn(0f, 1f))
+        val jitter = strain * 0.9f * d * sin((System.currentTimeMillis() * 0.02)).toFloat()
+        soft.shader = RadialGradient(cx + jitter, ly, pw * 1.9f,
+            if (deny > 0f) 0x99FF3B3B.toInt() else 0x99FFC257.toInt(), 0x00000000,
+            Shader.TileMode.CLAMP)
+        soft.alpha = (200f * kg.coerceAtMost(1.6f)).toInt().coerceIn(0, 255)
+        c.drawCircle(cx + jitter, ly, pw * 1.9f, soft)
+        soft.shader = null
+        fill.color = if (deny > 0f) 0xFFFF6B6B.toInt() else 0xFFFFD07A.toInt()
+        fill.alpha = ((150f + 105f * breath) * (1f - open * 3f).coerceIn(0f, 1f))
             .toInt().coerceIn(0, 255)
-        val jitter = strain * 0.8f * d *
-            sin((System.currentTimeMillis() * 0.02).toDouble()).toFloat()
-        c.drawCircle(cx + jitter, ly - ph * 0.05f, pw * 0.34f, fill)
+        c.drawCircle(cx + jitter, ly - ph * 0.06f, pw * 0.33f, fill)
         itemPath.reset()
-        itemPath.moveTo(cx - pw * 0.16f + jitter, ly - ph * 0.05f)
-        itemPath.lineTo(cx + pw * 0.16f + jitter, ly - ph * 0.05f)
-        itemPath.lineTo(cx + pw * 0.10f + jitter, ly + ph * 0.34f)
-        itemPath.lineTo(cx - pw * 0.10f + jitter, ly + ph * 0.34f)
+        itemPath.moveTo(cx - pw * 0.16f + jitter, ly - ph * 0.02f)
+        itemPath.quadTo(cx + jitter, ly + ph * 0.10f, cx + pw * 0.16f + jitter, ly - ph * 0.02f)
+        itemPath.quadTo(cx + pw * 0.09f + jitter, ly + ph * 0.34f, cx + jitter, ly + ph * 0.36f)
+        itemPath.quadTo(cx - pw * 0.09f + jitter, ly + ph * 0.34f,
+            cx - pw * 0.16f + jitter, ly - ph * 0.02f)
         itemPath.close()
         c.drawPath(itemPath, fill)
         fill.alpha = 255
     }
 
     /**
-     * Вылетающее содержимое.
+     * ЖИДКОСТЬ.
      *
-     * Физика настоящая и у каждого предмета своя: угол и сила броска,
-     * ускорение вниз, сопротивление воздуха по горизонтали, угловая
-     * скорость. Поэтому один вылетает свечкой и падает обратно, другой
-     * уходит вбок и кувыркается - как и бывает, когда из сундука
-     * вырывается то, что в нём лежало.
+     * Сочится из шва, стекает языками, собирается в лужу. Раз в несколько
+     * секунд лужа СТЯГИВАЕТСЯ В ЛИЦО: прорези глаз и кривая ухмылка
+     * вырезаются ИЗ неё - выступ снизу, глаза цветом фона под лужей.
+     * Появилось, посмотрело, растеклось обратно.
+     *
+     * Золотой ободок понизу - подсветка снизу: у плотной жидкости на свету
+     * всегда есть тёплая кромка, без неё пятно выглядит краской.
      */
-    private fun drawFlyingItems(c: Canvas, cx: Float, topY: Float, bw: Float, h: Float,
-                                openRaw: Float) {
+    private fun drawOoze(c: Canvas, cx: Float, topY: Float, by: Float, bw: Float, bh: Float,
+                         now: Long, open: Float, strain: Float, deny: Float) {
+        if (open > 0.55f) return
+        val amount = (1f - open * 1.8f).coerceIn(0f, 1f)
+        val bot = by + bh * 0.36f
+        // Цикл лица: раз в PHIZ_MS оно проступает и уходит.
+        val cyc = (now % FACE_MS).toFloat() / FACE_MS
+        val faceK = if (cyc < 0.34f) sin((cyc / 0.34f * Math.PI).toFloat()) else 0f
+        // Каждое второе появление - зелёное: два нрава у одной жидкости.
+        val greenTurn = ((now / FACE_MS) % 2L) == 1L
+        val gooCol = if (deny > 0f) 0xFF8E1220.toInt()
+        else if (greenTurn && faceK > 0.05f) blendC(0xFF6E1024.toInt(), 0xFF2E6B34.toInt(), faceK)
+        else 0xFF6E1024.toInt()
+
+        // Языки: три потёка разной длины, каждый со своим ходом.
+        goo.reset()
+        var i = 0
+        while (i < 3) {
+            val x = cx + bw * (-0.52f + 0.52f * i)
+            val ph = now * 0.00035f + i * 0.7f
+            val len = bh * (0.55f + 0.42f * (0.5f + 0.5f * sin(ph.toDouble()).toFloat())) * amount
+            val wdt = bw * (0.11f + 0.03f * i)
+            goo.moveTo(x - wdt, topY + bh * 0.02f)
+            goo.quadTo(x - wdt * 1.25f, topY + len * 0.55f, x - wdt * 0.55f, topY + len)
+            goo.quadTo(x, topY + len + wdt * 0.9f, x + wdt * 0.55f, topY + len)
+            goo.quadTo(x + wdt * 1.25f, topY + len * 0.55f, x + wdt, topY + bh * 0.02f)
+            goo.close()
+            // Сорвавшаяся капля: летит вниз и растворяется в луже.
+            var g = (now * 0.00045f + i * 0.33f) % 1f
+            if (g < 0f) g += 1f
+            val dy = topY + len + (bot - topY - len) * g * g
+            fill.shader = null
+            fill.color = gooCol
+            fill.alpha = (245f * amount * (1f - g * 0.25f)).toInt().coerceIn(0, 255)
+            c.drawCircle(x, dy, wdt * 0.42f * (1f - 0.25f * g), fill)
+            i++
+        }
+        fill.shader = null
+        fill.color = gooCol
+        fill.alpha = (240f * amount).toInt().coerceIn(0, 255)
+        c.drawPath(goo, fill)
+
+        // Лужа у подножия. При лице она подбирается и приподнимается.
+        val poolW = bw * (0.92f - 0.18f * faceK)
+        val poolH = bh * (0.13f + 0.16f * faceK)
+        val poolY = bot + bh * 0.10f
+        c.drawOval(cx - poolW, poolY - poolH, cx + poolW, poolY + poolH * 0.55f, fill)
+
+        if (faceK > 0.04f) {
+            // Глаза - прорези В жидкости: рисуем фоном, а не поверх.
+            fill.color = 0xFF0B0709.toInt()
+            fill.alpha = (255f * faceK).toInt().coerceIn(0, 255)
+            var e = 0
+            while (e < 2) {
+                val ex = cx + (if (e == 0) -1f else 1f) * poolW * 0.38f
+                itemPath.reset()
+                itemPath.moveTo(ex - poolW * 0.22f, poolY - poolH * 0.42f)
+                itemPath.quadTo(ex, poolY - poolH * (0.86f + 0.10f * faceK),
+                    ex + poolW * 0.22f, poolY - poolH * 0.30f)
+                itemPath.quadTo(ex, poolY - poolH * 0.24f,
+                    ex - poolW * 0.22f, poolY - poolH * 0.42f)
+                itemPath.close()
+                c.drawPath(itemPath, itemPaintFor(faceK))
+                e++
+            }
+            // Ухмылка: дуга, приподнятая с одной стороны - ехидство.
+            line.shader = null
+            line.color = 0xFF0B0709.toInt()
+            line.alpha = (255f * faceK).toInt().coerceIn(0, 255)
+            line.strokeWidth = poolH * 0.30f
+            itemPath.reset()
+            itemPath.moveTo(cx - poolW * 0.46f, poolY - poolH * 0.02f)
+            itemPath.quadTo(cx + poolW * 0.10f, poolY + poolH * 0.42f,
+                cx + poolW * 0.52f, poolY - poolH * 0.30f)
+            c.drawPath(itemPath, line)
+        }
+
+        // Золотой ободок понизу: подсветка снизу.
+        line.shader = null
+        line.color = 0xFFFFC257.toInt()
+        line.alpha = (150f * amount * (0.6f + 0.4f * faceK)).toInt().coerceIn(0, 255)
+        line.strokeWidth = 1.6f * d
+        c.drawArc(cx - poolW, poolY - poolH, cx + poolW, poolY + poolH * 0.55f,
+            10f, 160f, false, line)
+        soft.shader = RadialGradient(cx, poolY, poolW * 1.5f, 0x4DFFC257, 0x00000000,
+            Shader.TileMode.CLAMP)
+        soft.alpha = (200f * amount).toInt().coerceIn(0, 255)
+        c.drawCircle(cx, poolY, poolW * 1.5f, soft)
+        soft.shader = null
+        fill.alpha = 255
+    }
+
+    /** Кисть прорези глаза: отдельная функция ради читаемости вызова. */
+    private fun itemPaintFor(faceK: Float): Paint {
+        fill.shader = null
+        fill.color = 0xFF0B0709.toInt()
+        fill.alpha = (255f * faceK).toInt().coerceIn(0, 255)
+        return fill
+    }
+
+    private fun blendC(a: Int, b: Int, t: Float): Int {
+        val k = t.coerceIn(0f, 1f)
+        val r = ((a shr 16 and 0xFF) + ((b shr 16 and 0xFF) - (a shr 16 and 0xFF)) * k).toInt()
+        val g = ((a shr 8 and 0xFF) + ((b shr 8 and 0xFF) - (a shr 8 and 0xFF)) * k).toInt()
+        val bl = ((a and 0xFF) + ((b and 0xFF) - (a and 0xFF)) * k).toInt()
+        return (0xFF shl 24) or (r shl 16) or (g shl 8) or bl
+    }
+
+    private fun drawDust(c: Canvas, cx: Float, topY: Float, bw: Float, h: Float,
+                         strain: Float, open: Float, now: Long) {
+        var i = 0
+        while (i < 8) {
+            val ph = now * 0.0006f * (0.7f + 0.2f * (i % 4)) + rnd(i + 40) * 6.3f
+            val bob = (sin(ph.toDouble()).toFloat() + 1f) * 0.5f
+            val dx0 = cx + (rnd(i + 50) - 0.5f) * bw * 2.6f
+            val dy0 = topY - bw * 0.25f - h * 0.16f * bob
+            val dx = dx0 + (cx - dx0) * strain * 0.55f
+            val dy = dy0 + (topY - dy0) * strain * 0.45f
+            fill.shader = null
+            fill.color = 0xFFE8A33D.toInt()
+            fill.alpha = (100f * (0.4f + 0.6f * sin((ph * 1.7f).toDouble()).toFloat()) *
+                (1f - open * 0.7f)).toInt().coerceIn(0, 255)
+            c.drawCircle(dx, dy, (1.1f + 0.5f * bob) * d, fill)
+            i++
+        }
+        fill.alpha = 255
+    }
+
+    /** Вылетающее содержимое: та же баллистика, что и у обломков. */
+    private fun drawFlyingItems(c: Canvas, cx: Float, topY: Float, bw: Float, openRaw: Float) {
         var i = 0
         while (i < 9) {
-            // Разлёт не одновременный: сначала верхние, потом со дна.
             val delay = i * 0.045f
             val tt = ((openRaw - delay) / (1f - delay)).coerceIn(0f, 1f)
             if (tt <= 0f) { i++; continue }
             val tsec = tt * (OPEN_MS / 1000f) * 2.6f
-
-            val ang = -1.9f + rnd(i) * 1.4f            // радианы, вверх
-            val v0 = bw * (5.2f + 3.4f * rnd(i + 3))   // px/с
+            val ang = -1.9f + rnd(i) * 1.4f
+            val v0 = bw * (5.2f + 3.4f * rnd(i + 3))
             val vx0 = cos(ang.toDouble()).toFloat() * v0
             val vy0 = sin(ang.toDouble()).toFloat() * v0
-            // Сопротивление воздуха: горизонталь гаснет, вертикаль нет -
-            // лист бумаги теряет ход вбок быстрее, чем падает.
-            // Затухание скорости по горизонтали: путь = v0*(1-e^-kt)/k.
-            // Всё считаем во Float: смешение Float и Double здесь дало бы
-            // Double там, где холст ждёт Float.
             val drag = (1f - exp((-DRAG * tsec).toDouble()).toFloat()) / DRAG
             val x = cx + vx0 * drag
             val y = topY - bw * 0.15f + vy0 * tsec + 0.5f * GRAV * bw * tsec * tsec
-
             val fade = (1f - tt * tt).coerceIn(0f, 1f)
             if (fade <= 0.02f) { i++; continue }
-            val spin = (rnd(i + 7) - 0.5f) * 900f * tsec
-            val sz = bw * (0.20f + 0.10f * rnd(i + 5))
-
             c.save()
             c.translate(x, y)
-            c.rotate(spin)
+            c.rotate((rnd(i + 7) - 0.5f) * 900f * tsec)
+            val sz = bw * (0.20f + 0.10f * rnd(i + 5))
             when (i % 3) {
                 0 -> drawScroll(c, sz, fade)
                 1 -> drawLetter(c, sz, fade)
@@ -708,16 +785,17 @@ class VaultChestView(context: Context) : View(context) {
 
     private fun drawScroll(c: Canvas, sz: Float, fade: Float) {
         val a = (245f * fade).toInt().coerceIn(0, 255)
-        // Полотно с тенью снизу - у листа есть толщина.
+        fill.shader = null
         fill.color = 0xFF9A8A66.toInt(); fill.alpha = (a * 0.5f).toInt()
-        c.drawRect(-sz * 0.70f, -sz * 0.26f + 1.2f * d, sz * 0.70f, sz * 0.30f + 1.2f * d, fill)
+        c.drawRoundRect(-sz * 0.70f, -sz * 0.26f + 1.2f * d, sz * 0.70f, sz * 0.30f + 1.2f * d,
+            sz * 0.08f, sz * 0.08f, fill)
         fill.color = 0xFFEADFC2.toInt(); fill.alpha = a
-        c.drawRect(-sz * 0.70f, -sz * 0.28f, sz * 0.70f, sz * 0.28f, fill)
-        line.color = 0xFF8A7A56.toInt(); line.alpha = (a * 0.7f).toInt()
-        line.strokeWidth = 1.1f * d
+        c.drawRoundRect(-sz * 0.70f, -sz * 0.28f, sz * 0.70f, sz * 0.28f,
+            sz * 0.08f, sz * 0.08f, fill)
+        line.shader = null
+        line.color = 0xFF8A7A56.toInt(); line.alpha = (a * 0.7f).toInt(); line.strokeWidth = 1.1f * d
         c.drawLine(-sz * 0.5f, -sz * 0.10f, sz * 0.42f, -sz * 0.08f, line)
         c.drawLine(-sz * 0.5f, sz * 0.08f, sz * 0.28f, sz * 0.10f, line)
-        // Валики с торцевыми кольцами.
         var k = 0
         while (k < 2) {
             val bx = if (k == 0) -sz * 0.82f else sz * 0.82f
@@ -733,21 +811,22 @@ class VaultChestView(context: Context) : View(context) {
 
     private fun drawLetter(c: Canvas, sz: Float, fade: Float) {
         val a = (245f * fade).toInt().coerceIn(0, 255)
+        fill.shader = null
         fill.color = 0xFF9A8A66.toInt(); fill.alpha = (a * 0.5f).toInt()
-        c.drawRect(-sz * 0.66f, -sz * 0.42f + 1.2f * d, sz * 0.66f, sz * 0.46f + 1.2f * d, fill)
+        c.drawRoundRect(-sz * 0.66f, -sz * 0.42f + 1.2f * d, sz * 0.66f, sz * 0.46f + 1.2f * d,
+            sz * 0.06f, sz * 0.06f, fill)
         fill.color = 0xFFF4EEDE.toInt(); fill.alpha = a
-        c.drawRect(-sz * 0.66f, -sz * 0.44f, sz * 0.66f, sz * 0.44f, fill)
-        // Клапан конверта.
+        c.drawRoundRect(-sz * 0.66f, -sz * 0.44f, sz * 0.66f, sz * 0.44f,
+            sz * 0.06f, sz * 0.06f, fill)
         itemPath.reset()
         itemPath.moveTo(-sz * 0.66f, -sz * 0.44f)
-        itemPath.lineTo(0f, sz * 0.02f)
-        itemPath.lineTo(sz * 0.66f, -sz * 0.44f)
+        itemPath.quadTo(0f, sz * 0.10f, sz * 0.66f, -sz * 0.44f)
         itemPath.close()
         fill.color = 0xFFE6DCC4.toInt(); fill.alpha = a
         c.drawPath(itemPath, fill)
+        line.shader = null
         line.color = 0xFF9A8A66.toInt(); line.alpha = a; line.strokeWidth = 1.2f * d
         c.drawPath(itemPath, line)
-        // Сургучная печать - красная точка, за которую цепляется глаз.
         fill.color = 0xFFB3242C.toInt(); fill.alpha = a
         c.drawCircle(0f, sz * 0.02f, sz * 0.13f, fill)
         fill.color = 0xFF7C161C.toInt(); fill.alpha = a
@@ -758,24 +837,17 @@ class VaultChestView(context: Context) : View(context) {
         val a = (240f * fade).toInt().coerceIn(0, 255)
         itemPath.reset()
         itemPath.moveTo(-sz * 0.56f, -sz * 0.48f)
-        itemPath.lineTo(sz * 0.58f, -sz * 0.40f)
-        itemPath.lineTo(sz * 0.46f, sz * 0.50f)
-        itemPath.lineTo(-sz * 0.62f, sz * 0.38f)
+        itemPath.quadTo(0f, -sz * 0.56f, sz * 0.58f, -sz * 0.40f)
+        itemPath.quadTo(sz * 0.52f, 0f, sz * 0.46f, sz * 0.50f)
+        itemPath.quadTo(0f, sz * 0.58f, -sz * 0.62f, sz * 0.38f)
         itemPath.close()
+        fill.shader = null
         fill.color = 0xFF9A8A66.toInt(); fill.alpha = (a * 0.45f).toInt()
         c.save(); c.translate(1.2f * d, 1.2f * d); c.drawPath(itemPath, fill); c.restore()
         fill.color = 0xFFEAE4D4.toInt(); fill.alpha = a
         c.drawPath(itemPath, fill)
-        // Рваный край: зубцы по левой стороне.
-        fill.color = 0xFFDAD2BE.toInt(); fill.alpha = a
-        var k = 0
-        while (k < 4) {
-            val yy = -sz * 0.40f + sz * 0.24f * k
-            c.drawCircle(-sz * 0.58f, yy, sz * 0.055f, fill)
-            k++
-        }
-        line.color = 0xFF8A8474.toInt(); line.alpha = (a * 0.8f).toInt()
-        line.strokeWidth = 1.1f * d
+        line.shader = null
+        line.color = 0xFF8A8474.toInt(); line.alpha = (a * 0.8f).toInt(); line.strokeWidth = 1.1f * d
         c.drawLine(-sz * 0.34f, -sz * 0.14f, sz * 0.30f, -sz * 0.08f, line)
         c.drawLine(-sz * 0.34f, sz * 0.06f, sz * 0.16f, sz * 0.12f, line)
         c.drawLine(-sz * 0.34f, sz * 0.24f, sz * 0.02f, sz * 0.28f, line)
@@ -785,11 +857,14 @@ class VaultChestView(context: Context) : View(context) {
         const val OPEN_MS = 1100f
         const val DENY_MS = 620f
         const val TOUCH_MS = 420f
-        /** Ускорение свободного падения в долях ширины сундука за с². */
         const val GRAV = 11.5f
-        /** Сопротивление воздуха по горизонтали, 1/с. */
         const val DRAG = 2.1f
-        val WOOD = 0xFF6B4A28.toInt()
+        /** Размах дрейфа сцены, dp. Больше - укачивает, меньше - не видно. */
+        const val DRIFT = 5.5f
+        /** Период появления лица в жидкости, мс. */
+        const val FACE_MS = 2600L
+        /** Дерево багровое: сундук принадлежит тайнику, а не кладовке. */
+        val WOOD = 0xFF6E3A2A.toInt()
         val IRON = 0xFF7A6A55.toInt()
     }
 }

@@ -143,26 +143,43 @@ class VaultOpenButton(context: Context) : View(context) {
         fill.shader = null
 
         if (press > 0f) {
-            fill.color = 0xFF000000.toInt(); fill.alpha = (46 * press).toInt()
+            // Вдавливание темнеет НЕРАВНОМЕРНО: сильнее там, где палец.
+            // Ровная заливка поверх кнопки выглядит плёнкой.
+            fill.shader = android.graphics.RadialGradient((l + r) / 2f, (t + b) / 2f,
+                (r - l) * 0.7f, 0x66000000, 0x14000000, Shader.TileMode.CLAMP)
+            fill.alpha = (255 * press).toInt().coerceIn(0, 255)
             canvas.drawRoundRect(l, t, r, b, rad, rad, fill)
+            fill.shader = null
+            fill.alpha = 255
         }
         if (deny > 0f) {
             fill.color = 0xFFFF3B3B.toInt(); fill.alpha = (110 * deny).toInt()
             canvas.drawRoundRect(l, t, r, b, rad, rad, fill)
         }
 
-        // Блик по железу: узкая полоса раз в несколько секунд.
+        // БЛИК РАСТЯЖКОЙ, А НЕ ПОЛОСОЙ.
+        //
+        // Прежде блик был прямоугольником с ровными краями: по кнопке
+        // ехал светлый брусок, и это читалось именно как брусок. У
+        // растяжки края нет - есть только свет, гаснущий в обе стороны.
+        // Он же слегка наклонён: вертикальный блик по горизонтальной
+        // кнопке выглядит приклеенным.
         val sweep = ((now % 5200L) / 5200f)
-        if (sweep < 0.30f) {
-            val k = sweep / 0.30f
-            val gx = l + (r - l + w * 0.4f) * k - w * 0.2f
+        if (sweep < 0.34f) {
+            val k = sweep / 0.34f
+            val gx = l + (r - l + w * 0.5f) * k - w * 0.25f
+            val band = w * 0.20f
             canvas.save()
             arc.reset()
             arc.addRoundRect(l, t, r, b, rad, rad, Path.Direction.CW)
             canvas.clipPath(arc)
-            fill.color = 0xFFFFFFFF.toInt()
-            fill.alpha = (70f * sin((k * Math.PI).toFloat())).toInt().coerceIn(0, 255)
-            canvas.drawRect(gx - w * 0.06f, t, gx + w * 0.06f, b, fill)
+            fill.shader = LinearGradient(gx - band, t, gx + band, b,
+                intArrayOf(0x00FFFFFF, 0x59FFFFFF, 0x00FFFFFF),
+                floatArrayOf(0f, 0.5f, 1f), Shader.TileMode.CLAMP)
+            fill.alpha = (255f * sin((k * Math.PI).toFloat())).toInt().coerceIn(0, 255)
+            canvas.drawRect(l, t, r, b, fill)
+            fill.shader = null
+            fill.alpha = 255
             canvas.restore()
         }
 
@@ -202,10 +219,16 @@ class VaultOpenButton(context: Context) : View(context) {
             val head = len * p
             arc.reset()
             pm.getSegment(head - seg, head, arc, true)
-            line.color = 0xFF17111F.toInt()
-            line.alpha = 190
-            line.strokeWidth = 2.6f * d
-            canvas.drawPath(arc, line)
+            // Хвост дуги гаснет: три прохода уменьшающейся толщины и
+            // прозрачности вместо одного ровного обрубка.
+            var q = 0
+            while (q < 3) {
+                line.color = 0xFF17111F.toInt()
+                line.alpha = (190 - q * 55).coerceIn(0, 255)
+                line.strokeWidth = (2.9f - q * 0.7f) * d
+                canvas.drawPath(arc, line)
+                q++
+            }
         }
 
         canvas.restore()

@@ -90,6 +90,14 @@ class VaultLatticeView(context: Context) : View(context) {
         val morph = if (morphAt == 0L) 1f
         else ((now - morphAt).toFloat() / MORPH_MS).coerceIn(0f, 1f)
 
+        // ДАЛЬНИЙ СЛОЙ ДВИЖЕТСЯ МЕНЬШЕ. Сундук плывёт на 5.5dp, решётка -
+        // на 2: разница хода и есть ощущение расстояния между ними.
+        // Периоды взяты те же, что у сундука, иначе слои разъедутся и
+        // вместо глубины получится дрожь.
+        canvas.save()
+        canvas.translate(sin(now * 0.00021).toFloat() * 2f * d,
+            sin(now * 0.00034 + 1.1).toFloat() * 2f * d)
+
         // Дыхание: узор чуть светлеет и гаснет сам по себе.
         val breath = 0.5f + 0.5f * sin(now * 0.0007).toFloat()
 
@@ -115,7 +123,8 @@ class VaultLatticeView(context: Context) : View(context) {
             ry++
         }
 
-        if (morph < 1f) postInvalidateOnAnimation() else postInvalidateDelayed(180)
+        canvas.restore()
+        if (morph < 1f) postInvalidateOnAnimation() else postInvalidateDelayed(110)
     }
 
     /**
