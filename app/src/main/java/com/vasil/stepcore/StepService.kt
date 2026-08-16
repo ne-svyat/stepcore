@@ -97,6 +97,30 @@ class StepService : Service(), SensorEventListener {
     private var renewalsAtEnter = 0
     private var transportEnterWallMs = 0L
 
+    /**
+     * v395. Метка транспорта ОТЛОЖЕНА до подтверждения.
+     *
+     * Журнал 16.08 (14:12-14:22, обычная ходьба с телефоном в руке): 28
+     * входов в транспорт за десять минут, все ложные. Каждый закрылся
+     * одинаково — «чип насчитал 18-20 шагов, человек идёт», то есть верный
+     * ответ был доступен уже через несколько секунд, а метка успевала
+     * мелькнуть на экране и в журнале.
+     *
+     * Разделяющий признак идеален и измерен: у настоящего транспорта чип за
+     * эпизод даёт РОВНО 0 шагов (9 эпизодов из журналов 13-16.08), у ложного
+     * 18-20 (28 эпизодов). Пересечения нет.
+     *
+     * Но «чип за эпизод» известен только в конце, поэтому запретить ВХОД
+     * нельзя — детектор заморожен и решает сам. Отложена только ПОКАЗ метки:
+     * если за TRANSPORT_CONFIRM_MS чип промолчал, метка объявляется; если
+     * чип пошёл — эпизод закрывается тихо, как ложный.
+     *
+     * Счёт шагов не затронут: под меткой его и так ведёт чип.
+     */
+    private var transportPendingSince = 0L
+    private var transportPendingText: String? = null
+    private var transportHwAtPending = -1L
+
     // Окно расхождения детектор/чип (V8.15, диагностика перед V9).
     // Живой факт 07.07: печать на экране дала детектору +200 при чипе +50.
     // Критерий расхождения обоснован, не подобран: реальная ходьба за
@@ -1436,6 +1460,7 @@ class StepService : Service(), SensorEventListener {
                     val lost = shakeHold.onShakeEnded()
                     logEvent("Тряска кончилась: отброшено $lost шагов чипа")
                 }
+                settleTransportPending(SystemClock.elapsedRealtime())
                 if (!screenOff && detector.mode == StepDetector.Mode.TRANSPORT) {
                     // Guard 2: чип идёт под меткой транспорта = человек идёт
                     transportChipAccum += delta
@@ -1716,6 +1741,15 @@ class StepService : Service(), SensorEventListener {
         val now = System.currentTimeMillis()
 
         // V8.10: итог транспорт-эпизода — длительность, продления, счёт чипа
+        if (lastLoggedMode == "TRANSPORT" && m != "TRANSPORT" && transportPendingText != null) {
+            // Эпизод кончился раньше подтверждения — метки не было, и строки
+            // «Транспорт закончился» тоже быть не должно: иначе журнал сообщал
+            // бы о конце того, что никогда не начиналось.
+            transportPendingText = null
+            transportPendingSince = 0L
+            transportHwAtPending = -1
+            hwAtTransportEnter = -1
+        }
         if (lastLoggedMode == "TRANSPORT" && m != "TRANSPORT" && hwAtTransportEnter >= 0) {
             val chipDelta = if (hwLastTotal >= 0) hwLastTotal - hwAtTransportEnter else -1L
             val renews = detector.transportRenewals - renewalsAtEnter
@@ -1740,7 +1774,7 @@ class StepService : Service(), SensorEventListener {
         if (m != lastLoggedMode) {
             lastLoggedMode = m
             StepsState.mode.value = m
-            logEvent(
+            logEventUnlessEmpty(
                 when (m) {
                     "RUN" -> "Бег"
                     "WALK" -> "Ходьба"
@@ -1748,14 +1782,58 @@ class StepService : Service(), SensorEventListener {
                         hwAtTransportEnter = hwLastTotal
                         renewalsAtEnter = detector.transportRenewals
                         transportEnterWallMs = now
-                        "Транспорт (метка, счёт ведёт чип) [вход №${detector.transportEntries}, " +
-                            "инт ${detector.lastTransportMeanMs.toInt()} мс, " +
-                            "CV ${"%.2f".format(detector.lastTransportCv)}, " +
-                            "чистота ${(detector.cleanliness * 100).toInt()}%]"
+                        // Метку не объявляем сразу — ждём, промолчит ли чип.
+                        transportPendingSince = now
+                        transportHwAtPending = hwLastTotal
+                        transportPendingText =
+                            "Транспорт (метка, счёт ведёт чип) [вход №${detector.transportEntries}, " +
+                                "инт ${detector.lastTransportMeanMs.toInt()} мс, " +
+                                "CV ${"%.2f".format(detector.lastTransportCv)}, " +
+                                "чистота ${(detector.cleanliness * 100).toInt()}%]"
+                        ""
                     }
                     else -> m
                 }
             )
+        }
+    }
+
+    /** Пустая строка = метка отложена и объявится позже (или не объявится). */
+    private fun logEventUnlessEmpty(text: String) {
+        if (text.isNotEmpty()) logEvent(text)
+    }
+
+    /**
+     * Решение по отложенной метке транспорта. Вызывается из воронки прихода
+     * дельты чипа — точки, через которую проходят все пути.
+     *
+     * Гарантия стоит в воронке, а не в обработчиках: это тот же урок, что
+     * закрыл историю с гашением клавиатуры.
+     */
+    private fun settleTransportPending(now: Long) {
+        val text = transportPendingText ?: return
+        val moved = hwLastTotal >= 0 && transportHwAtPending >= 0 &&
+            hwLastTotal - transportHwAtPending >= TRANSPORT_REJECT_STEPS
+        if (moved) {
+            // Чип пошёл — это была ходьба. Метка не объявляется вовсе.
+            // Разницу считаем ДО обнуления полей, иначе в журнал уйдёт число,
+            // посчитанное от -1.
+            val gained = hwLastTotal - transportHwAtPending
+            transportPendingText = null
+            transportPendingSince = 0L
+            transportHwAtPending = -1
+            if (StepsState.decisionLog.value) {
+                logEvent("[реш] транспорт отклонён: чип дал " + gained +
+                    " шагов — человек идёт")
+            }
+            return
+        }
+        if (now - transportPendingSince >= TRANSPORT_CONFIRM_MS) {
+            // Чип промолчал достаточно долго — метка заслужена.
+            logEvent(text)
+            transportPendingText = null
+            transportPendingSince = 0L
+            transportHwAtPending = -1
         }
     }
 
@@ -2608,6 +2686,25 @@ class StepService : Service(), SensorEventListener {
         /** Бюджет окон сырья: RAW_PER_WINDOW штук на RAW_BUDGET_MS. */
         const val RAW_PER_WINDOW = 4
         const val RAW_BUDGET_MS = 300_000L
+        /**
+         * Минимальная задержка перед объявлением метки транспорта.
+         *
+         * Судит НЕ время, а чип: у настоящего транспорта чип за эпизод даёт
+         * ровно 0 шагов (9 эпизодов), у ложного 18-20 (28 эпизодов). Одна
+         * длительность разделить не может — ложные закрывались за 0-10 с,
+         * настоящие длились 5-71 с, и диапазоны пересекаются.
+         *
+         * Поэтому 11 с — это лишь время, за которое чип успевает отдать хотя
+         * бы одну дельту (период выдачи ~10003 мс). Дождавшись её, решение
+         * принимает уже сама дельта, а не секундомер.
+         */
+        const val TRANSPORT_CONFIRM_MS = 11_000L
+
+        /** Столько шагов от чипа достаточно, чтобы объявить вход ложным.
+         *  У настоящего транспорта чип за эпизод даёт РОВНО 0 (9 эпизодов),
+         *  у ложного 18-20 (28 эпизодов). Порог с большим запасом. */
+        const val TRANSPORT_REJECT_STEPS = 5L
+
         const val ACTION_DIAG_START = "diag_start"
         const val ACTION_DIAG_STOP = "diag_stop"
         /** v188: печать сверки с чипом по требованию, без остановки счёта. */
