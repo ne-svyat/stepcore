@@ -560,18 +560,35 @@ class MotiveScrollView @JvmOverloads constructor(
             }
         }
 
-        // ================= ПОМЕХА В ПУСТОТЕ =================
-        // Между гибелью и рождением остаётся сам сигнал: узкая полоса
-        // помехи там, где сейчас свёрнут свиток.
+        // ================= СВЁРНУТЫЙ СВИТОК =================
+        // Здесь была ГОРИЗОНТАЛЬНАЯ ПОЛОСА помехи со светлой чертой
+        // посередине. Замысел был «сигнал в пустоте», а читалась она как
+        // посторонняя светлая полоска, которую свиток потом закрывает
+        // собой: лишний предмет на экране, ничего не значащий.
+        //
+        // Правильный ответ был рядом и он проще: между гибелью и
+        // рождением свиток не исчезает - он СВЁРНУТ. Значит и рисовать
+        // надо свёрнутый свиток: два валика, сомкнутые торцами, с тёплым
+        // светом в шве. Ничего объяснять не нужно, всё видно.
         if (openC <= 0.01f && glitchK > 0.01f) {
             val cy = (top + bottom) / 2f
-            val half = h * (0.03f + 0.20f * glitchK)
-            drawGlitch(canvas, midX - h * 0.34f, cy - half, midX + h * 0.34f, cy + half,
-                h, glitchK, now)
-            fxLine.color = TINT_CYAN
+            val rw = rollW * 0.46f
+            val half = (bottom - top) * 0.5f * (0.55f + 0.45f * glitchK)
+            fx.color = 0xFF4A3418.toInt()
+            fx.alpha = (255f * glitchK).toInt().coerceIn(0, 255)
+            canvas.drawRoundRect(midX - rw, cy - half, midX + rw, cy + half, rw, rw, fx)
+            // Свет в шве: свиток ещё держит то, что на нём написано.
+            fxLine.color = 0xFFFFD98A.toInt()
             fxLine.alpha = (200f * glitchK).toInt().coerceIn(0, 255)
-            fxLine.strokeWidth = 1.6f * d
-            canvas.drawLine(midX - h * 0.34f, cy, midX + h * 0.34f, cy, fxLine)
+            fxLine.strokeWidth = 1.4f * d
+            canvas.drawLine(midX, cy - half * 0.82f, midX, cy + half * 0.82f, fxLine)
+            fx.color = 0xFFC79B5C.toInt()
+            fx.alpha = (220f * glitchK).toInt().coerceIn(0, 255)
+            canvas.drawOval(midX - rw * 1.15f, cy - half - rw * 0.55f,
+                midX + rw * 1.15f, cy - half + rw * 0.35f, fx)
+            canvas.drawOval(midX - rw * 1.15f, cy + half - rw * 0.35f,
+                midX + rw * 1.15f, cy + half + rw * 0.55f, fx)
+            fx.alpha = 255
         }
 
         // ================= ВАЛИКИ =================

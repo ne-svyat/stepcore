@@ -142,6 +142,8 @@ class VaultActivity : AppCompatActivity() {
     private var flashAnim: android.animation.ValueAnimator? = null
     private var entranceField: EditText? = null
     private var entranceGo: Button? = null
+    /** Сундук экрана входа. Живёт ровно один экран, как и всё здесь. */
+    private var entranceChest: VaultChestView? = null
     private var entranceWarn: TextView? = null
     private var repo: VaultRepo? = null
 
@@ -545,11 +547,22 @@ class VaultActivity : AppCompatActivity() {
         root.removeAllViews()
         title("Тайник")
 
+        // Сундук над полем: экран обещает то, чем тайник и является.
+        val chest = VaultChestView(this)
+        root.addView(chest, LinearLayout.LayoutParams(-1, dp(160)))
+        entranceChest = chest
+
         val warn: TextView
         val go: Button
         val field = secretFieldWithKeyboard("Пароль или секрет восстановления") {
             tryUnlockFromKeyboard()
         }
+        // Набор пароля виден сундуку: крышка вздрагивает под пальцами.
+        field.addTextChangedListener(object : android.text.TextWatcher {
+            override fun afterTextChanged(s: android.text.Editable?) = chest.touched()
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+        })
         warn = warnLabel()
         go = button("Открыть")
         entranceGo = go
@@ -573,6 +586,7 @@ class VaultActivity : AppCompatActivity() {
      */
     private fun tryUnlockFromKeyboard() {
         if (busy) return
+        entranceChest?.opening()
         val field = entranceField ?: return
         val go = entranceGo ?: return
         val warn = entranceWarn ?: return
@@ -593,6 +607,8 @@ class VaultActivity : AppCompatActivity() {
             // испорчен. Разные ответы выдали бы состояние тайника.
             warn.text = "Не подходит"
             warn.visibility = View.VISIBLE
+            // Крышка захлопывается обратно и сундук отказывает.
+            entranceChest?.denied()
         }
     }
 
