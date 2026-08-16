@@ -155,6 +155,32 @@ class TimelineActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * ОТКРЫВАТЬСЯ НА ТЕКУЩЕМ ПЕРИОДЕ.
+     *
+     * Диаграмма строится слева направо от старого к новому, а прокрутка
+     * при открытии стояла в нуле - то есть на самом далёком прошлом.
+     * Человек заходит посмотреть, как у него ДЕЛА, и первым делом видит
+     * пустой позапрошлый месяц, после чего обязан пролистать до конца.
+     * Это не украшение, это ошибка исходной точки.
+     *
+     * Прокрутка ставится в конец, но НЕ впритык: последний столбец - это
+     * незаконченный период (сегодня/эта неделя/этот месяц), и рядом с ним
+     * должен быть виден хотя бы один предыдущий, иначе не с чем сравнить.
+     *
+     * post нужен потому, что ширина холста известна только после
+     * измерения: сразу после setSegments прокручивать ещё некуда.
+     */
+    private fun focusOnNow() {
+        val scroll = findViewById<android.widget.HorizontalScrollView>(R.id.timelineScroll)
+            ?: return
+        scroll.post {
+            val inner = scroll.getChildAt(0) ?: return@post
+            val target = inner.width - scroll.width
+            if (target > 0) scroll.scrollTo(target, 0)
+        }
+    }
+
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
     /**
@@ -398,6 +424,7 @@ class TimelineActivity : AppCompatActivity() {
 
             timeline.setSegments(segs, labelEvery)
             lastSegs = segs
+            focusOnNow()
             val maxV = timeline.maxSegTotal
             axisMax.text = if (maxV >= 1000) "%.1fk".format(maxV / 1000f) else maxV.toString()
             axisMid.text = if (maxV >= 2000) "%.1fk".format(maxV / 2000f)

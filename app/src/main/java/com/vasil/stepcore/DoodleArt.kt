@@ -823,6 +823,12 @@ class DoodleBorderDrawable(
     private var tickSkip = 0
     private var pathLen = 0f
     private var bornAt = 0L
+    /**
+     * Сколько плита должна пробыть скрытой, чтобы её появление сыграло
+     * заново. Меньше - повторные зажигания при каждом возврате фокуса;
+     * больше - настоящее возвращение на вкладку пройдёт без номера.
+     */
+    private val reigniteMs = 900L
     /** Задержка зажигания этой плиты, мс: разнобой вместо общего щелчка. */
     private val igniteDelay = (((seed * 40503L) ushr 27) % 140L)
     private val veilPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
@@ -965,15 +971,40 @@ class DoodleBorderDrawable(
      * честный жизненный цикл для Drawable. Подписка только на видимое:
      * невидимая карточка не заставляет таймер крутиться.
      */
+    /** Когда плиту скрыли. Ноль - она видима. */
+    private var hiddenAt = 0L
+
+    /**
+     * ЗАЖИГАНИЕ ПОВТОРЯЛОСЬ ТАМ, ГДЕ ПОКАЗА НЕ БЫЛО.
+     *
+     * Симптом: уходишь с вкладки и возвращаешься - и по плите ещё раз
+     * прокатывается наливание, как будто её нарисовали второй раз поверх
+     * первой.
+     *
+     * Причина в том, что `setVisible(true)` приходит НЕ ТОЛЬКО при
+     * настоящем появлении. Его шлёт система при любом возврате фокуса
+     * окну: закрылся диалог, ушла шторка, вернулись с другого экрана к
+     * ЖИВОЙ вкладке. Плита при этом никуда не пропадала - а мы сбрасывали
+     * счётчик и играли номер заново. Второе зажигание поверх уже
+     * нарисованной плиты и читается как лишняя рамка.
+     *
+     * Правило: номер появления играется, если плита БЫЛА СПРЯТАНА
+     * заметное время. Мигание фокуса на доли секунды показом не считается.
+     */
     override fun setVisible(visible: Boolean, restart: Boolean): Boolean {
         val changed = super.setVisible(visible, restart)
-        if (visible && !subscribed) {
-            // Плита показалась заново - наливается заново. Иначе окно,
-            // открытое второй раз, просто появлялось бы.
-            bornAt = 0L
-            BoilClock.register(onTick); subscribed = true
-        } else if (!visible && subscribed) {
-            BoilClock.unregister(onTick); subscribed = false
+        val now = android.os.SystemClock.uptimeMillis()
+        if (visible) {
+            if (hiddenAt != 0L && now - hiddenAt > reigniteMs) bornAt = 0L
+            hiddenAt = 0L
+            if (!subscribed) {
+                BoilClock.register(onTick); subscribed = true
+            }
+        } else {
+            if (hiddenAt == 0L) hiddenAt = now
+            if (subscribed) {
+                BoilClock.unregister(onTick); subscribed = false
+            }
         }
         return changed
     }
