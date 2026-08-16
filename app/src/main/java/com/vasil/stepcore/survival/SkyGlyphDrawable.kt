@@ -12,9 +12,20 @@ import android.graphics.drawable.Drawable
  *
  * Рисуется от руки — с сеяным дрожанием линии (SplitMix-подобный генератор),
  * поэтому два одинаковых по погоде дня выглядят чуть по-разному, но КАЖДЫЙ
- * день всегда выглядит одинаково: дрожание детерминировано номером дня,
- * а не временем отрисовки. Иначе значок дёргался бы при каждой перерисовке
- * списка.
+ * день всегда выглядит одинаково.
+ *
+ * ⚠ ЗДЕСЬ БЫЛА ОШИБКА, И ОНА СТОИЛА РОВНО ТОГО, ЧЕГО БОЯЛСЯ ЭТОТ ЖЕ
+ * КОММЕНТАРИЙ. Состояние генератора заводилось ОДИН РАЗ, при создании
+ * значка, и каждый вызов draw продолжал последовательность с того места,
+ * где кончил прошлый. То есть при второй отрисовке того же значка все
+ * дрожания были ДРУГИМИ. Пока журнал рисовался один раз, этого не было
+ * видно; на прокрутке, при возврате на экран и при любой перерисовке
+ * значок незаметно перерисовывался заново — та самая «дрожь при
+ * перерисовке», которую комментарий обещал не допускать.
+ *
+ * Урок общий: генератор, сеянный в конструкторе, детерминирован ровно
+ * до первого повторного использования. Сеять надо в НАЧАЛЕ каждой
+ * отрисовки — тогда обещание выполняется буквально.
  *
  * Статичен: ни таймеров, ни подписок. В журнале сотня таких значков —
  * анимировать их означало бы сотню подписчиков на общий механизм.
@@ -41,7 +52,12 @@ class SkyGlyphDrawable(
         style = Paint.Style.FILL
         color = this@SkyGlyphDrawable.color
     }
-    private var state = seed * -0x61c8864680b583ebL + 0x9E3779B9L
+    private var state = 0L
+
+    /** Заводит генератор от номера дня. Зовётся в начале КАЖДОЙ отрисовки. */
+    private fun reseed() {
+        state = seed * -0x61c8864680b583ebL + 0x9E3779B9L
+    }
 
     override fun getIntrinsicWidth(): Int = px.toInt()
     override fun getIntrinsicHeight(): Int = px.toInt()
@@ -53,8 +69,16 @@ class SkyGlyphDrawable(
         return (u - 0.5f) * 2f * amp * density
     }
 
+    /**
+     * Путь один на весь значок: линии, кольцо и облако рисуются строго по
+     * очереди, ни один не нужен дважды. Сотня значков в журнале создавала
+     * бы под тысячу объектов на каждую сборку списка.
+     */
+    private val path = Path()
+
     private fun line(c: Canvas, x1: Float, y1: Float, x2: Float, y2: Float, amp: Float = 0.7f) {
-        val p = Path()
+        val p = path
+        p.reset()
         p.moveTo(x1 + j(amp), y1 + j(amp))
         val mx = (x1 + x2) / 2f; val my = (y1 + y2) / 2f
         p.quadTo(mx + j(amp * 1.6f), my + j(amp * 1.6f), x2 + j(amp), y2 + j(amp))
@@ -62,7 +86,8 @@ class SkyGlyphDrawable(
     }
 
     private fun ring(c: Canvas, cx: Float, cy: Float, r: Float) {
-        val p = Path()
+        val p = path
+        p.reset()
         var a = 0.0
         val steps = 14
         while (a < 2 * Math.PI + 0.01) {
@@ -78,7 +103,8 @@ class SkyGlyphDrawable(
 
     private fun cloudShape(c: Canvas, cx: Float, cy: Float, w: Float) {
         val h = w * 0.42f
-        val p = Path()
+        val p = path
+        p.reset()
         p.moveTo(cx - w / 2 + j(0.6f), cy + h / 2 + j(0.6f))
         p.quadTo(cx - w * 0.62f + j(1f), cy - h * 0.2f, cx - w * 0.22f + j(0.8f), cy - h * 0.45f)
         p.quadTo(cx - w * 0.05f + j(1f), cy - h * 1.05f, cx + w * 0.20f + j(0.8f), cy - h * 0.5f)
@@ -89,6 +115,7 @@ class SkyGlyphDrawable(
     }
 
     override fun draw(canvas: Canvas) {
+        reseed()
         val b = bounds
         val cx = b.exactCenterX()
         val cy = b.exactCenterY()
@@ -124,12 +151,15 @@ class SkyGlyphDrawable(
             else -> cloudShape(canvas, cx, cy - px * 0.06f, px * 0.62f)
         }
 
-        // Осадки
+        // Осадки. Наклон капель согласован с ветром: в бурю дождь не
+        // может падать отвесно, и раньше он падал - это читалось как
+        // ошибка рисунка, хотя данные были верные.
+        val slant = px * 0.05f * (1f + wind)
         if (precip in 1..2) {
             val n = if (precip == 2) 4 else 3
             for (i in 0 until n) {
                 val x = cx - px * 0.20f + i * px * 0.13f
-                line(canvas, x, cy + px * 0.16f, x - px * 0.05f, cy + px * 0.36f, 0.6f)
+                line(canvas, x, cy + px * 0.16f, x - slant, cy + px * 0.36f, 0.6f)
             }
         } else if (precip >= 3) {
             val n = if (precip == 4) 4 else 3
