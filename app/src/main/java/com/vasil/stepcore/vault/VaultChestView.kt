@@ -211,7 +211,23 @@ class VaultChestView(context: Context) : View(context) {
         }
 
         drawBox(canvas, cx, by, bw, bh, denyK)
-        drawLid(canvas, cx, topY, bw, lidH, open, touch, strain, denyK)
+        // ФИНАЛ ОТКРЫТИЯ: КРЫШКУ СРЫВАЕТ.
+        //
+        // Крышка, аккуратно доехавшая до упора, - это мебель. Тайник
+        // открывается иначе: сначала по доскам ползут раскалённые
+        // трещины, потом дерево не выдерживает и крышку срывает с петель.
+        // Она улетает вверх-назад со своим вращением, за ней летят щепки.
+        //
+        // Порог сорван на 0.72 раскрытия: к этому мигу крышка уже поднята
+        // достаточно, чтобы срыв читался как продолжение движения, а не
+        // как подмена картинки.
+        val crack = ((open - 0.42f) / 0.30f).coerceIn(0f, 1f)
+        val burst = ((open - 0.72f) / 0.28f).coerceIn(0f, 1f)
+        if (burst <= 0f) {
+            drawLid(canvas, cx, topY, bw, lidH, open, touch, strain, denyK, crack)
+        } else {
+            drawTornLid(canvas, cx, topY, bw, lidH, burst)
+        }
         if (open < 0.35f) drawLock(canvas, cx, topY, by, bw, bh, open, strain, denyK, breath)
 
         // --- искры от дужки при отказе: с весом, гаснут на лету ---
@@ -383,7 +399,8 @@ class VaultChestView(context: Context) : View(context) {
      * остаются поворотом: там углы малые, и поворот их изображает верно.
      */
     private fun drawLid(c: Canvas, cx: Float, topY: Float, bw: Float, lidH: Float,
-                        open: Float, touch: Float, strain: Float, deny: Float) {
+                        open: Float, touch: Float, strain: Float, deny: Float,
+                        crack: Float) {
         val jump = touch * 3.2f * spring(1f - touch, 1.6f, 2.2f)
         val pull = strain * (1.6f + 1.0f * sin((System.currentTimeMillis() * 0.006).toDouble())
             .toFloat())
@@ -445,6 +462,35 @@ class VaultChestView(context: Context) : View(context) {
                 c.drawRect(x1 - 0.9f * d, faceTop - faceH, x1 + 0.9f * d, topY, fill)
                 k++
             }
+            // ТРЕЩИНЫ. Идут от середины к краям и разгораются: сначала
+            // тёмный разлом, в нём - свет, который вот-вот вырвется.
+            if (crack > 0f) {
+                var q = 0
+                while (q < 3) {
+                    val y0 = topY - faceH * (0.25f + 0.28f * q)
+                    val reach = lw * crack * (0.75f + 0.25f * rnd(q + 60))
+                    itemPath.reset()
+                    itemPath.moveTo(cx, y0)
+                    var st = 1
+                    while (st <= 4) {
+                        val f2 = st / 4f
+                        val dirq = if (q % 2 == 0) 1f else -1f
+                        itemPath.lineTo(cx + dirq * reach * f2,
+                            y0 + faceH * 0.10f * (rnd(q * 5 + st) - 0.5f))
+                        st++
+                    }
+                    line.color = 0xFF1A0E06.toInt()
+                    line.alpha = (235f * crack).toInt().coerceIn(0, 255)
+                    line.strokeWidth = 3.4f * d * crack
+                    c.drawPath(itemPath, line)
+                    line.color = 0xFFFFB03A.toInt()
+                    line.alpha = (255f * crack * crack).toInt().coerceIn(0, 255)
+                    line.strokeWidth = 1.5f * d * crack
+                    c.drawPath(itemPath, line)
+                    q++
+                }
+            }
+
             // Блик по дуге: сплющивается вместе с крышкой.
             fill.color = 0xFFFFFFFF.toInt(); fill.alpha = 40
             c.drawOval(cx - lw * 0.72f, faceTop - faceH * 0.10f, cx + lw * 0.16f,
@@ -488,6 +534,85 @@ class VaultChestView(context: Context) : View(context) {
             c.drawCircle(hx, topY, 1.5f * d, fill)
             k2++
         }
+    }
+
+    /**
+     * СОРВАННАЯ КРЫШКА.
+     *
+     * Летит по той же баллистике, что и содержимое: своя скорость вверх и
+     * назад, ускорение вниз, своё вращение. Разваливается надвое по
+     * средней трещине - целая доска в полёте выглядела бы декорацией.
+     * За ней летят щепки и гаснущие угли из разломов.
+     */
+    private fun drawTornLid(c: Canvas, cx: Float, topY: Float, bw: Float, lidH: Float,
+                            burst: Float) {
+        val tsec = burst * 0.9f
+        val fade = (1f - burst * burst).coerceIn(0f, 1f)
+
+        var half = 0
+        while (half < 2) {
+            val dir = if (half == 0) -1f else 1f
+            val vx = dir * bw * 2.4f
+            val vy = -bw * 6.2f
+            val x = cx + vx * tsec
+            val y = topY - lidH * 0.5f + vy * tsec + 0.5f * GRAV * bw * tsec * tsec
+            c.save()
+            c.translate(x, y)
+            c.rotate(dir * 210f * tsec)
+            // Половина крышки: обломанный край рваный, а не отрезанный.
+            lidPath.reset()
+            lidPath.moveTo(0f, lidH * 0.30f)
+            lidPath.lineTo(dir * bw * 0.98f, lidH * 0.24f)
+            lidPath.lineTo(dir * bw * 0.90f, -lidH * 0.30f)
+            var k = 3
+            while (k >= 0) {
+                lidPath.lineTo(dir * bw * (0.06f + 0.06f * k) * (if (k % 2 == 0) 1f else 0.4f),
+                    -lidH * (0.30f - 0.14f * (3 - k)))
+                k--
+            }
+            lidPath.close()
+            fill.color = shade(WOOD, 1.06f)
+            fill.alpha = (255f * fade).toInt().coerceIn(0, 255)
+            c.drawPath(lidPath, fill)
+            // Обугленная кромка разлома.
+            line.color = 0xFF1A0E06.toInt()
+            line.alpha = (230f * fade).toInt().coerceIn(0, 255)
+            line.strokeWidth = 2.4f * d
+            c.drawPath(lidPath, line)
+            fill.color = shade(IRON, 1.2f)
+            fill.alpha = (255f * fade).toInt().coerceIn(0, 255)
+            c.drawRect(dir * bw * 0.42f, -lidH * 0.28f, dir * bw * 0.62f, lidH * 0.26f, fill)
+            c.restore()
+            half++
+        }
+
+        // Щепки и угли: мелочь летит быстрее и гаснет раньше.
+        var i = 0
+        while (i < 12) {
+            val t2 = tsec * (0.7f + 0.6f * rnd(i + 80))
+            val ang = -2.7f + rnd(i + 90) * 1.9f
+            val v = bw * (5.5f + 5.0f * rnd(i + 100))
+            val x = cx + cos(ang.toDouble()).toFloat() * v * t2
+            val y = topY - lidH * 0.4f + sin(ang.toDouble()).toFloat() * v * t2 +
+                0.5f * GRAV * bw * t2 * t2
+            val f2 = (1f - burst) * (1f - 0.5f * rnd(i + 110))
+            if (i % 3 == 0) {
+                fill.color = 0xFFFFB03A.toInt()
+                fill.alpha = (250f * f2).toInt().coerceIn(0, 255)
+                c.drawCircle(x, y, (2.2f - 1.2f * burst) * d, fill)
+            } else {
+                c.save()
+                c.translate(x, y)
+                c.rotate(rnd(i + 120) * 360f + burst * 420f)
+                fill.color = shade(WOOD, 0.95f)
+                fill.alpha = (240f * f2).toInt().coerceIn(0, 255)
+                c.drawRect(-bw * 0.09f, -bw * 0.022f, bw * 0.09f, bw * 0.022f, fill)
+                c.restore()
+            }
+            i++
+        }
+        fill.alpha = 255
+        line.alpha = 255
     }
 
     /** Замочная плата с дужкой: дужка отлетает при открытии. */

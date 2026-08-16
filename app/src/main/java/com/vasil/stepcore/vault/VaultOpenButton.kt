@@ -45,6 +45,13 @@ class VaultOpenButton(context: Context) : View(context) {
     private val arc = Path()
 
     private var label = "Открыть"
+    /**
+     * Прежняя надпись и время смены: текст не подменяется рывком, а
+     * УХОДИТ и на его место ПРИХОДИТ новый. Подмена в один кадр читается
+     * как сбой отрисовки, особенно на кнопке, которую в этот миг нажали.
+     */
+    private var prevLabel = ""
+    private var labelAt = 0L
     private var busy = false
     private var pressK = 0f
     private var deniedAt = 0L
@@ -53,7 +60,9 @@ class VaultOpenButton(context: Context) : View(context) {
     /** Надпись. Единственный источник правды о том, что на кнопке. */
     fun setLabel(s: String) {
         if (label == s) return
+        prevLabel = label
         label = s
+        labelAt = System.currentTimeMillis()
         invalidate()
     }
 
@@ -89,6 +98,11 @@ class VaultOpenButton(context: Context) : View(context) {
     }
 
     override fun performClick(): Boolean = super.performClick()
+
+    private companion object {
+        /** Смена надписи, мс. Короче - рывок, длиннее - кнопка тормозит. */
+        const val LABEL_MS = 240f
+    }
 
     override fun onDraw(canvas: Canvas) {
         val w = width.toFloat()
@@ -159,11 +173,22 @@ class VaultOpenButton(context: Context) : View(context) {
         line.strokeWidth = 1.6f * d
         canvas.drawRoundRect(l, t, r, b, rad, rad, line)
 
-        // Надпись.
+        // Надпись: прежняя уходит вверх и тает, новая приходит снизу.
+        // Обе рисуются в одном кадре, поэтому кнопка не мигает пустотой.
         text.textSize = h * 0.30f
-        text.alpha = 255
         val fm = text.fontMetrics
-        canvas.drawText(label, (l + r) / 2f, (t + b) / 2f - (fm.ascent + fm.descent) / 2f, text)
+        val baseY = (t + b) / 2f - (fm.ascent + fm.descent) / 2f
+        val swap = if (labelAt == 0L) 1f
+        else ((now - labelAt).toFloat() / LABEL_MS).coerceIn(0f, 1f)
+        // Замедление к концу: буквы садятся мягко, а не тормозят стеной.
+        val ease = 1f - (1f - swap) * (1f - swap)
+        if (swap < 1f && prevLabel.isNotEmpty()) {
+            text.alpha = (255f * (1f - swap)).toInt().coerceIn(0, 255)
+            canvas.drawText(prevLabel, (l + r) / 2f, baseY - h * 0.30f * ease, text)
+        }
+        text.alpha = (255f * ease).toInt().coerceIn(0, 255)
+        canvas.drawText(label, (l + r) / 2f, baseY + h * 0.30f * (1f - ease), text)
+        text.alpha = 255
 
         // Работа: дуга бежит по канту. Видно, что замок проверяется.
         if (busy) {
@@ -185,7 +210,8 @@ class VaultOpenButton(context: Context) : View(context) {
 
         canvas.restore()
 
-        if (busy || deny > 0f || press > 0f) postInvalidateOnAnimation()
+        val swapping = labelAt != 0L && (now - labelAt) < LABEL_MS
+        if (busy || deny > 0f || press > 0f || swapping) postInvalidateOnAnimation()
         else postInvalidateDelayed(120)
     }
 }

@@ -144,6 +144,8 @@ class VaultActivity : AppCompatActivity() {
     private var entranceGo: VaultOpenButton? = null
     /** Сундук экрана входа. Живёт ровно один экран, как и всё здесь. */
     private var entranceChest: VaultChestView? = null
+    /** Решётка за сундуком. Живёт ровно один экран, как и всё здесь. */
+    private var entranceLattice: VaultLatticeView? = null
     private var entranceWarn: TextView? = null
     private var repo: VaultRepo? = null
 
@@ -548,9 +550,16 @@ class VaultActivity : AppCompatActivity() {
         title("Тайник")
 
         // Сундук над полем: экран обещает то, чем тайник и является.
+        // Решётка лежит ПОД ним в общей рамке: она фон, а не сосед по
+        // столбцу - иначе отняла бы у сундука высоту.
         val chest = VaultChestView(this)
-        root.addView(chest, LinearLayout.LayoutParams(-1, dp(160)))
+        val lattice = VaultLatticeView(this)
+        val stage = FrameLayout(this)
+        stage.addView(lattice, FrameLayout.LayoutParams(-1, -1))
+        stage.addView(chest, FrameLayout.LayoutParams(-1, -1))
+        root.addView(stage, LinearLayout.LayoutParams(-1, dp(170)))
         entranceChest = chest
+        entranceLattice = lattice
 
         val warn: TextView
         val go: VaultOpenButton
@@ -559,7 +568,13 @@ class VaultActivity : AppCompatActivity() {
         }
         // Набор пароля виден сундуку: крышка вздрагивает под пальцами.
         field.addTextChangedListener(object : android.text.TextWatcher {
-            override fun afterTextChanged(s: android.text.Editable?) = chest.touched()
+            override fun afterTextChanged(s: android.text.Editable?) {
+                chest.touched()
+                // Узор перекладывается под набор. Длина - единственное,
+                // что ему сообщается: сам набранный текст решётке знать
+                // незачем, а по узору его восстановить нельзя.
+                lattice.setTyped(s?.length ?: 0)
+            }
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
         })
