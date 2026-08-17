@@ -64,6 +64,12 @@ class HistoryActivity : AppCompatActivity() {
     private companion object {
         const val EXTRA_BACKUP = "open_backup"
 
+        // v425. Операционный предел копирования для переноса журнала с телефона.
+        // Режем ПО СТРОКАМ и не кладём в буфер кусок длиннее 19 000 символов.
+        // Это не порог механики и ни на какие решения StepCore не влияет.
+        const val COPY_CHUNK_MAX = 19_000
+        const val COPY_HEADER_RESERVE = 128
+
         /** Ключи калибровки, которые обязаны переживать переустановку.
          *  Всё это измерено ногами и задним числом не восстанавливается. */
         val Q = 34.toChar()
@@ -442,7 +448,7 @@ class HistoryActivity : AppCompatActivity() {
         copySelBtn = findViewById(R.id.copySelectedButton)
         updateSelLabel()
         copySelBtn!!.setOnClickListener {
-            copyLine(selectedLines.sorted().joinToString("\n"))
+            copySmart("StepCore — выбранное", selectedLines.sorted())
         }
         findViewById<Button>(R.id.copyButton).setOnClickListener { copyVisible() }
         findViewById<Button>(R.id.exportCsvButton).setOnClickListener {
@@ -722,6 +728,10 @@ class HistoryActivity : AppCompatActivity() {
                     evBox.removeAllViews()
                     val (from, to) = hourRangeMs(date, hc.hour)
                     val events = AppDb.get(this@HistoryActivity).dao().eventsInRange(from, to)
+                    evBox.addView(Button(this@HistoryActivity).apply {
+                        text = "⧉ Копировать час"
+                        setOnClickListener { copyHour(date, hourLabel, events) }
+                    })
                     events.reversed().forEach { e -> evBox.addView(makeEventRow(date, e)) }
                 }
             } else {
@@ -766,11 +776,23 @@ class HistoryActivity : AppCompatActivity() {
     private fun copyWholeDay(day: DayRecord, headerLine: String) {
         lifecycleScope.launch {
             val events = AppDb.get(this@HistoryActivity).dao().eventsOfDay(day.date)
-            val text = "$headerLine\n" + events.joinToString("\n") { e ->
-                "${timeFmt.format(Date(e.timeMs))}  ${e.text}"
+            val lines = ArrayList<String>(events.size + 1)
+            lines.add(headerLine)
+            events.forEach { e ->
+                lines.add("${day.date} ${timeFmt.format(Date(e.timeMs))}  ${e.text}")
             }
-            copyLine(text)
+            copySmart("StepCore ${day.date}", lines)
         }
+    }
+
+    /** v425. Час копируется одним тапом; если велик — приложение само режет его. */
+    private fun copyHour(date: String, hourLabel: String, events: List<EventRecord>) {
+        val lines = ArrayList<String>(events.size + 1)
+        lines.add("$date $hourLabel")
+        events.forEach { e ->
+            lines.add("$date ${timeFmt.format(Date(e.timeMs))}  ${e.text}")
+        }
+        copySmart("StepCore $date $hourLabel", lines)
     }
 
     private fun updateSelLabel() {
@@ -781,30 +803,111 @@ class HistoryActivity : AppCompatActivity() {
         }
     }
 
+    /** Положить ровно один кусок в системный буфер. */
+    private fun putClipboard(text: String) {
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        cm.setPrimaryClip(ClipData.newPlainText("StepCore", text))
+    }
+
     /** Тап по строке журнала кладёт её одну в буфер обмена. */
     private fun copyLine(line: String) {
-        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        cm.setPrimaryClip(ClipData.newPlainText("StepCore", line))
+        putClipboard(line)
         toast("Строка скопирована")
+    }
+
+    /**
+     * v425. Большой текст режется на части <= COPY_CHUNK_MAX.
+     *
+     * Главное правило: обычную строку события не режем между частями.
+     * Только если ОДНА строка сама длиннее допустимого куска (будущий сырой
+     * дамп), тогда именно её приходится делить по символам.
+     */
+    private fun buildCopyChunks(title: String, lines: List<String>): List<String> {
+        val payloadMax = COPY_CHUNK_MAX - COPY_HEADER_RESERVE
+        check(payloadMax > 0)
+        val payloads = ArrayList<String>()
+        var cur = StringBuilder()
+
+        fun flush() {
+            if (cur.isEmpty()) return
+            payloads.add(cur.toString())
+            cur = StringBuilder()
+        }
+
+        for (line in lines) {
+            if (line.length > payloadMax) {
+                flush()
+                var at = 0
+                while (at < line.length) {
+                    val to = minOf(at + payloadMax, line.length)
+                    payloads.add(line.substring(at, to))
+                    at = to
+                }
+                continue
+            }
+            val extra = line.length + if (cur.isEmpty()) 0 else 1
+            if (cur.isNotEmpty() && cur.length + extra > payloadMax) flush()
+            if (cur.isNotEmpty()) cur.append('\n')
+            cur.append(line)
+        }
+        flush()
+        if (payloads.isEmpty()) payloads.add("")
+
+        val n = payloads.size
+        return payloads.mapIndexed { i, body ->
+            val head = "$title · часть ${i + 1}/$n\n"
+            check(head.length <= COPY_HEADER_RESERVE) {
+                "Слишком длинный заголовок копии: ${head.length}"
+            }
+            val out = head + body
+            check(out.length <= COPY_CHUNK_MAX) {
+                "Кусок вышел за предел: ${out.length}"
+            }
+            out
+        }
+    }
+
+    /**
+     * Короткое копируется сразу. Большое показывает список частей с их
+     * реальным размером: никаких ручных чекбоксов на сотне событий.
+     */
+    private fun copySmart(title: String, lines: List<String>) {
+        val plain = lines.joinToString("\n")
+        if (plain.length <= COPY_CHUNK_MAX) {
+            putClipboard(plain)
+            toast("Скопировано: ${plain.length} симв.")
+            return
+        }
+
+        val chunks = buildCopyChunks(title, lines)
+        val labels = chunks.mapIndexed { i, c ->
+            "Часть ${i + 1}/${chunks.size} · ${c.length} симв."
+        }.toTypedArray()
+
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("$title · ${chunks.size} частей · ≤$COPY_CHUNK_MAX")
+            .setItems(labels) { _, which ->
+                putClipboard(chunks[which])
+                toast("Скопирована часть ${which + 1}/${chunks.size}")
+            }
+            .setNegativeButton("Закрыть", null)
+            .show()
     }
 
     /** Копия видимого периода: дни + журнал событий каждого дня. */
     private fun copyVisible() {
         lifecycleScope.launch {
             val dao = AppDb.get(this@HistoryActivity).dao()
-            val text = buildString {
-                appendLine("StepCore — история")
-                visibleDays.forEach { d ->
-                    appendLine()
-                    appendLine("${d.date}  ${d.walkSteps + d.runSteps} шагов (ходьба ${d.walkSteps}, бег ${d.runSteps})")
-                    dao.eventsOfDay(d.date).forEach { e ->
-                        appendLine("  ${timeFmt.format(Date(e.timeMs))}  ${e.text}")
-                    }
+            val lines = ArrayList<String>()
+            lines.add("StepCore — история")
+            visibleDays.forEach { d ->
+                lines.add("")
+                lines.add("${d.date}  ${d.walkSteps + d.runSteps} шагов (ходьба ${d.walkSteps}, бег ${d.runSteps})")
+                dao.eventsOfDay(d.date).forEach { e ->
+                    lines.add("${d.date} ${timeFmt.format(Date(e.timeMs))}  ${e.text}")
                 }
             }
-            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            cm.setPrimaryClip(ClipData.newPlainText("StepCore", text))
-            toast("Скопировано с событиями")
+            copySmart("StepCore — история", lines)
         }
     }
 
