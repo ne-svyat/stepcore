@@ -122,6 +122,11 @@ class StepService : Service(), SensorEventListener {
     private var energyProbeDidSignScene = -1L
     private var energyProbeDidWakeScene = -1L
 
+    // v436: WAKE, пришедший во время активного SIGN probe, больше не
+    // теряет второе физическое окно. После END SIGN/окно стартует SETTLED.
+    // Значение = sceneId, для которой отложен второй probe; -1 = нет.
+    private var energyProbeDeferredSettledScene = -1L
+
     // v435: Scene Evidence Shadow.
     // Храним максимум по одному SIGN и WAKE Summary на screen-off сцену.
     // Это только связь двух измерений во времени. Никаких решений.
@@ -309,10 +314,23 @@ class StepService : Service(), SensorEventListener {
         if (!energyShadowEnabled || !screenOff) return
 
         if (kind == "WAKE") {
+            // Если сейчас идёт SIGN probe, markWake попадёт в его Summary.
             energyProbe.markWake(arrivalMs)
             if (energyProbeDidWakeScene == energySceneId) return
             energyProbeDidWakeScene = energySceneId
-            if (energyProbeActive) return
+
+            if (energyProbeActive) {
+                // v436: раньше здесь был просто return, и второе окно
+                // безвозвратно терялось. Теперь оно снимается сразу после
+                // штатного конца SIGN. Это бюджет измерения, не решение.
+                energyProbeDeferredSettledScene = energySceneId
+                val trace = energyTrace(arrivalMs)
+                logEvent(
+                    "[проба] " + trace +
+                        " · DEFER SETTLED · wake пришёл внутри активного probe"
+                )
+                return
+            }
         } else if (kind == "SIGN") {
             if (energyProbeDidSignScene == energySceneId) return
             energyProbeDidSignScene = energySceneId
@@ -397,6 +415,7 @@ class StepService : Service(), SensorEventListener {
         energySceneSettled = null
         energySceneFirstProbe = null
         energySceneEvidenceLogged = false
+        energyProbeDeferredSettledScene = -1L
     }
 
     private fun energySceneLogSingle(
@@ -431,8 +450,9 @@ class StepService : Service(), SensorEventListener {
         fun d(v: Double, n: Int = 2): String =
             String.format(f, "%." + n + "f", v)
 
-        val order = when (energySceneFirstProbe) {
-            "WAKE" -> "WAKE→SIGN"
+        val order = when {
+            energySceneFirstProbe == "WAKE" -> "WAKE→SIGN"
+            settled.trigger == "SETTLED" -> "SIGN→SETTLED"
             else -> "SIGN→WAKE"
         }
 
@@ -475,7 +495,7 @@ class StepService : Service(), SensorEventListener {
 
         when (r.trigger) {
             "SIGN" -> energySceneEarly = r
-            "WAKE" -> energySceneSettled = r
+            "WAKE", "SETTLED" -> energySceneSettled = r
         }
 
         if (energySceneEvidenceLogged) return
@@ -489,9 +509,14 @@ class StepService : Service(), SensorEventListener {
             return
         }
 
-        // wakeAt внутри SIGN означает: wake callback уже был использован
-        // этой сценой, поэтому отдельного позднего WAKE-окна не появится.
-        if (r.trigger == "SIGN" && r.wakeOffsetMs != null) {
+        // v436: wakeAt внутри SIGN теперь обычно означает deferred SETTLED.
+        // Не закрываем evidence раньше времени. Fallback settled=нет остаётся
+        // только на случай, если deferred по какой-то причине не был поставлен.
+        if (
+            r.trigger == "SIGN" &&
+            r.wakeOffsetMs != null &&
+            energyProbeDeferredSettledScene != energySceneId
+        ) {
             energySceneLogSingle(
                 r,
                 "SIGN+wake-в-окне@" + r.wakeOffsetMs + "мс · settled=нет",
@@ -603,6 +628,30 @@ class StepService : Service(), SensorEventListener {
 
         // [сцена] получает уже законченный и неизменяемый Summary.
         energySceneObserve(r, now)
+
+        // v436: Deferred Settled Probe.
+        //
+        // Стартуем ТОЛЬКО после полного штатного SIGN/окно.
+        // При "смена сцены", "тень выкл" и destroy ничего нового не
+        // запускаем. Так старый sceneId не протекает в новую сцену.
+        val deferredSettled =
+            r.trigger == "SIGN" &&
+            reason == "окно" &&
+            energyProbeDeferredSettledScene == r.scene &&
+            r.scene == energySceneId &&
+            energyShadowEnabled &&
+            screenOff
+
+        if (deferredSettled) {
+            energyProbeDeferredSettledScene = -1L
+            val settledStart = SystemClock.elapsedRealtime()
+            val settledTrace = energyTrace(settledStart)
+            logEvent(
+                "[проба] " + settledTrace +
+                    " · START DEFERRED SETTLED · после SIGN"
+            )
+            energyProbeSignal("SETTLED", settledStart)
+        }
     }
 
     /**
