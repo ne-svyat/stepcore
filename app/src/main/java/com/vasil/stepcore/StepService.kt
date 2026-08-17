@@ -41,8 +41,8 @@ class StepService : Service(), SensorEventListener {
     private val features = FeatureCollector()
     private val shakeHold = ShakeHold()
 
-    // v437. Activity Context не считает шаги, а только решает судьбу
-    // уже пришедшей аппаратной STEP_COUNTER delta.
+    // v438. Transition Activity Context не считает шаги.
+    // Он только даёт semantic state для guard над аппаратной delta.
     private lateinit var activityContext: ActivityContextTracker
     private val activityGuard = ActivityGuard()
 
@@ -881,6 +881,10 @@ class StepService : Service(), SensorEventListener {
                 }
                 Intent.ACTION_SCREEN_ON -> {
                     screenOff = false
+
+                    // v438. Sampling теперь только one-shot seed.
+                    activityContext.seed { msg -> logEvent(msg) }
+
                     // v430: первый звонок имеет смысл только внутри сцены
                     // с погашенным экраном.
                     energyDisarmWakeStep()
@@ -1168,8 +1172,8 @@ class StepService : Service(), SensorEventListener {
         createChannel()
         startForeground(NOTIF_ID, buildNotification(walkSteps + runSteps))
 
-        // v437. Один low-power Activity Recognition subscription на жизнь
-        // foreground service. Ошибка всегда fail-open.
+        // v438. Transition API живёт на протяжении foreground service.
+        // Sampling используется только как one-shot initial seed.
         activityContext = ActivityContextTracker(this)
         activityContext.start { msg -> logEvent(msg) }
 
@@ -2240,9 +2244,9 @@ class StepService : Service(), SensorEventListener {
                 // v429: сырая дельта чипа до любых guard-решений.
                 energyShadowOnChip(delta, hwTotal, timeMs, nowRt)
 
-                // v437. Activity Guard стоит перед старым ShakeHold.
-                // Stable BLOCK сначала HOLD, а не мгновенный DROP.
-                // WALK/RUN/UNKNOWN fail-open и выпускают held.
+                // v438. Event-driven Activity Guard стоит перед ShakeHold.
+                // Fresh BLOCK получает 30с хвоста чипа, mature BLOCK
+                // подтверждается двумя аппаратными batches.
                 val ctx = activityContext.snapshot()
                 val ag = activityGuard.onChip(ctx, delta, nowRt)
                 ag.message?.let { logEvent("[контекст] " + it) }
