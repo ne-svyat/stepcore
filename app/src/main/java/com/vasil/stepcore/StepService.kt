@@ -13,6 +13,8 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.hardware.TriggerEvent
+import android.hardware.TriggerEventListener
 import android.os.IBinder
 import android.os.PowerManager
 import android.graphics.drawable.Icon
@@ -64,6 +66,80 @@ class StepService : Service(), SensorEventListener {
     // v213: курс. ROTATION_VECTOR - сплав акселерометра, гироскопа и компаса:
     // он устойчивее сырого магнитометра и уже сглажен системой.
     private var rotSensor: Sensor? = null
+
+    // v429: Energy Gate Shadow. Только наблюдение, никакой власти.
+    // Trigger sensors не являются частью motionRegistered и не трогают
+    // accel/gyro/rotation/wakelock.
+    private var energyShadowEnabled = false
+    private var energySigSensor: Sensor? = null
+    private var energyMotionSensor: Sensor? = null
+    private var energyStationarySensor: Sensor? = null
+    private val energyArmedTypes = HashSet<Int>()
+
+    // Последние времена по ДВУМ шкалам:
+    // sensorMs = timestamp события из Sensor HAL;
+    // arrivalMs = когда callback реально пришёл процессу.
+    private var energySigSensorMs = 0L
+    private var energySigArrivalMs = 0L
+    private var energyMotionSensorMs = 0L
+    private var energyMotionArrivalMs = 0L
+    private var energyStationarySensorMs = 0L
+    private var energyStationaryArrivalMs = 0L
+    private var energyChipSensorMs = 0L
+    private var energyChipArrivalMs = 0L
+
+    private val energyTriggerListener = object : TriggerEventListener() {
+        override fun onTrigger(event: TriggerEvent) {
+            if (!energyShadowEnabled) return
+            val sensor = event.sensor
+            energyArmedTypes.remove(sensor.type)
+
+            val sensorMs = event.timestamp / 1_000_000L
+            val arrivalMs = SystemClock.elapsedRealtime()
+            val sinceChip = energyAgePair(
+                sensorMs, arrivalMs, energyChipSensorMs, energyChipArrivalMs
+            )
+
+            when (sensor.type) {
+                Sensor.TYPE_SIGNIFICANT_MOTION -> {
+                    energySigSensorMs = sensorMs
+                    energySigArrivalMs = arrivalMs
+                }
+                Sensor.TYPE_MOTION_DETECT -> {
+                    energyMotionSensorMs = sensorMs
+                    energyMotionArrivalMs = arrivalMs
+                }
+                Sensor.TYPE_STATIONARY_DETECT -> {
+                    energyStationarySensorMs = sensorMs
+                    energyStationaryArrivalMs = arrivalMs
+                }
+            }
+
+            logEvent(
+                "[энерг] триггер " + energySensorName(sensor.type) +
+                    " · lag " + energyDeliveryLag(sensorMs, arrivalMs) +
+                    " · от чипа " + sinceChip +
+                    " · chip=" + (if (hwLastTotal >= 0L) hwLastTotal else -1L) +
+                    " · экран=" + (if (screenOff) "off" else "on") +
+                    " · bg=" + (if (StepsState.bgAccel.value) "on" else "off")
+            )
+
+            // Не перевооружаем тот же триггер вслепую:
+            // MOTION/STATIONARY работают парой переходов.
+            when (sensor.type) {
+                Sensor.TYPE_STATIONARY_DETECT -> {
+                    energyArmSensor(energySigSensor)
+                    energyArmSensor(energyMotionSensor)
+                }
+                Sensor.TYPE_MOTION_DETECT -> {
+                    energyArmSensor(energyStationarySensor)
+                }
+                // SIGNIFICANT ждёт STATIONARY либо новую сцену SCREEN_OFF.
+                Sensor.TYPE_SIGNIFICANT_MOTION -> Unit
+            }
+        }
+    }
+
     @Volatile private var headingDeg: Float? = null
     @Volatile private var headingAcc: Int? = null
     @Volatile private var headingAtMs = 0L
@@ -146,12 +222,156 @@ class StepService : Service(), SensorEventListener {
     private var hwDayAnchor = -1L
     private var hwDayPaused = false   // был Стоп/перезагрузка - сверка дня неполная
 
+    /**
+     * v429: Energy Gate Shadow.
+     * Пара sensor/arrival показывает время железа и время доставки callback.
+     */
+    private fun energyAgePair(
+        nowSensorMs: Long, nowArrivalMs: Long,
+        thenSensorMs: Long, thenArrivalMs: Long
+    ): String {
+        if (thenSensorMs <= 0L || thenArrivalMs <= 0L) return "—"
+        val ds = nowSensorMs - thenSensorMs
+        val da = nowArrivalMs - thenArrivalMs
+        if (ds < 0L || da < 0L) return "—"
+        return ds.toString() + "/" + da.toString() + "мс(ts/приход)"
+    }
+
+    private fun energyDeliveryLag(sensorMs: Long, arrivalMs: Long): String {
+        val d = arrivalMs - sensorMs
+        return if (d >= 0L) d.toString() + "мс" else "?"
+    }
+
+    private fun energySensorName(type: Int): String = when (type) {
+        Sensor.TYPE_SIGNIFICANT_MOTION -> "SIGNIFICANT"
+        Sensor.TYPE_MOTION_DETECT -> "MOTION"
+        Sensor.TYPE_STATIONARY_DETECT -> "STATIONARY"
+        else -> "TYPE_" + type
+    }
+
+    private fun energySensorState(sensor: Sensor?): String {
+        if (sensor == null) return "—"
+        if (sensor.reportingMode != Sensor.REPORTING_MODE_ONE_SHOT) {
+            return "mode=" + sensor.reportingMode
+        }
+        val armed = if (energyArmedTypes.contains(sensor.type)) "armed" else "idle"
+        return armed + "/" + (if (sensor.isWakeUpSensor) "wake" else "nonwake")
+    }
+
+    private fun energyArmSensor(sensor: Sensor?): Boolean {
+        if (!energyShadowEnabled || sensor == null) return false
+        if (sensor.reportingMode != Sensor.REPORTING_MODE_ONE_SHOT) return false
+        if (energyArmedTypes.contains(sensor.type)) return true
+        val ok = runCatching {
+            sensorManager.requestTriggerSensor(energyTriggerListener, sensor)
+        }.getOrDefault(false)
+        if (ok) energyArmedTypes.add(sensor.type)
+        return ok
+    }
+
+    private fun energyCancelAll() {
+        listOf(energySigSensor, energyMotionSensor, energyStationarySensor)
+            .filterNotNull()
+            .forEach { sensor ->
+                runCatching {
+                    sensorManager.cancelTriggerSensor(energyTriggerListener, sensor)
+                }
+            }
+        energyArmedTypes.clear()
+    }
+
+    private fun energyResetRelations() {
+        energySigSensorMs = 0L
+        energySigArrivalMs = 0L
+        energyMotionSensorMs = 0L
+        energyMotionArrivalMs = 0L
+        energyStationarySensorMs = 0L
+        energyStationaryArrivalMs = 0L
+        energyChipSensorMs = 0L
+        energyChipArrivalMs = 0L
+    }
+
+    private fun energyArmFresh(reason: String, announce: Boolean) {
+        if (!energyShadowEnabled) return
+        energyCancelAll()
+        energyResetRelations()
+        energyArmSensor(energySigSensor)
+        energyArmSensor(energyMotionSensor)
+        energyArmSensor(energyStationarySensor)
+        if (announce) {
+            logEvent(
+                "[энерг] новая сцена: " + reason +
+                    " · SIGN=" + energySensorState(energySigSensor) +
+                    " · MOTION=" + energySensorState(energyMotionSensor) +
+                    " · STAT=" + energySensorState(energyStationarySensor)
+            )
+        }
+    }
+
+    private fun setEnergyShadow(on: Boolean, announce: Boolean) {
+        energyShadowEnabled = on
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+            .putBoolean(KEY_ENERGY_SHADOW, on).apply()
+
+        if (!on) {
+            energyCancelAll()
+            energyResetRelations()
+            if (announce) logEvent("[энерг] тень ВЫКЛ")
+            return
+        }
+
+        energySigSensor =
+            sensorManager.getDefaultSensor(Sensor.TYPE_SIGNIFICANT_MOTION)
+        energyMotionSensor =
+            sensorManager.getDefaultSensor(Sensor.TYPE_MOTION_DETECT)
+        energyStationarySensor =
+            sensorManager.getDefaultSensor(Sensor.TYPE_STATIONARY_DETECT)
+
+        energyArmFresh(
+            if (screenOff) "старт при погашенном экране" else "старт при включённом экране",
+            announce
+        )
+    }
+
+    /**
+     * Сырая дельта STEP_COUNTER идёт сюда ДО ShakeHold и любых решений.
+     */
+    private fun energyShadowOnChip(
+        delta: Int, hwTotal: Long, sensorMs: Long, arrivalMs: Long
+    ) {
+        if (!energyShadowEnabled) return
+
+        val sig = energyAgePair(
+            sensorMs, arrivalMs, energySigSensorMs, energySigArrivalMs
+        )
+        val motion = energyAgePair(
+            sensorMs, arrivalMs, energyMotionSensorMs, energyMotionArrivalMs
+        )
+        val stationary = energyAgePair(
+            sensorMs, arrivalMs, energyStationarySensorMs, energyStationaryArrivalMs
+        )
+
+        logEvent(
+            "[энерг] чип +" + delta + " total=" + hwTotal +
+                " · lag " + energyDeliveryLag(sensorMs, arrivalMs) +
+                " · SIGN " + sig +
+                " · MOTION " + motion +
+                " · STAT " + stationary +
+                " · экран=" + (if (screenOff) "off" else "on")
+        )
+
+        energyChipSensorMs = sensorMs
+        energyChipArrivalMs = arrivalMs
+    }
+
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context?, intent: Intent?) {
             when (intent?.action) {
                 Intent.ACTION_SCREEN_OFF -> {
                     screenOff = true
                     updateMotionSensors()
+                    // v429. SCREEN_OFF — фактическая новая сцена без таймера.
+                    energyArmFresh("экран погашен", announce = true)
                     hwSessionAdded = 0
                     divWindowStartMs = 0L   // окно расхождения только при экране вкл
                 }
@@ -431,6 +651,7 @@ class StepService : Service(), SensorEventListener {
         StepsState.decisionLog.value = prefs.getBoolean("decision_log", false)
         StepsState.gaitLog.value = prefs.getBoolean("gait_log", false)
         StepsState.rawLog.value = prefs.getBoolean("raw_log", false)
+        energyShadowEnabled = prefs.getBoolean(KEY_ENERGY_SHADOW, false)
         loadProfile()
         StepsState.steps.value = walkSteps + runSteps
 
@@ -545,6 +766,11 @@ class StepService : Service(), SensorEventListener {
         // не нужен: он лишь диагностика при калибровке, а она идёт при
         // включённом экране. На SENSOR_DELAY_FASTEST он будил процессор.
         updateMotionSensors()
+
+        // v429: trigger sensors живут отдельно от motion-сенсоров.
+        if (energyShadowEnabled) {
+            setEnergyShadow(true, announce = true)
+        }
 
         if (hwDetSensor == null) {
             logEvent("⚠ Аппаратного детектора шагов нет - калибровка темпа по акселерометру")
@@ -709,6 +935,8 @@ class StepService : Service(), SensorEventListener {
                 }
                 ACTION_DIAG_STOP -> finishDiag()
                 ACTION_RECONCILE -> logHwComparison("сейчас")
+                ACTION_ENERGY_SHADOW_SET ->
+                    setEnergyShadow(intent.getBooleanExtra(EXTRA_ENABLED, false), announce = true)
                 ACTION_INCLINE_UP -> applyIncline(TerrainState.Incline.UP, true)
                 ACTION_INCLINE_FLAT -> applyIncline(TerrainState.Incline.FLAT, true)
                 ACTION_INCLINE_DOWN -> applyIncline(TerrainState.Incline.DOWN, true)
@@ -1430,6 +1658,10 @@ class StepService : Service(), SensorEventListener {
                 hwBaseline = hwTotal
                 persistHwBase()
                 if (delta <= 0) return
+
+                // v429: сырая дельта чипа до ShakeHold/транспорта/класса.
+                energyShadowOnChip(delta, hwTotal, timeMs, nowRt)
+
                 val nowElapsed = SystemClock.elapsedRealtime()
                 if (!screenOff && nowElapsed < shakeGuardUntilElapsed) {
                     // Guard 1 (v184): КАРАНТИН ВМЕСТО РАССТРЕЛА.
@@ -2283,6 +2515,8 @@ class StepService : Service(), SensorEventListener {
         runCatching {
             getSystemService(NotificationManager::class.java).cancel(NOTIF_ID_MARKS)
         }
+        // TriggerEventListener снимается отдельным API.
+        energyCancelAll()
         sensorManager.unregisterListener(this)
         runCatching { unregisterReceiver(screenReceiver) }
         logHwComparisonBlocking("стоп")
@@ -2643,6 +2877,7 @@ class StepService : Service(), SensorEventListener {
         const val KEY_HW_DAY_ANCHOR = "hw_day_anchor"
         const val KEY_HW_ANCHOR_DAY = "hw_anchor_day"
         const val KEY_HW_DAY_PAUSED = "hw_day_paused"
+        const val KEY_ENERGY_SHADOW = "energy_shadow"
         const val DIV_WINDOW_MS = 120_000L  // окно сравнения детектор/чип
         const val DIV_MIN_DET = 20          // минимум шагов детектора для вывода
         const val DIV_LOG_THROTTLE_MS = 600_000L // журнал не чаще 1 строки / 10 мин
@@ -2653,6 +2888,8 @@ class StepService : Service(), SensorEventListener {
         const val ACTION_CAL_STOP = "cal_stop"
         const val ACTION_CAL_DIST_START = "cal_dist_start"
         const val ACTION_CAL_DIST_STOP = "cal_dist_stop"
+        const val ACTION_ENERGY_SHADOW_SET = "energy_shadow_set"
+        const val EXTRA_ENABLED = "enabled"
         const val CHANNEL_MARKS = "stepcore_marks"
         const val NOTIF_ID_MARKS = 2
         const val ACTION_MARKS_DISMISSED = "marks_dismissed"

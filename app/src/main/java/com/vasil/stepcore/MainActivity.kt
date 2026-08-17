@@ -242,6 +242,7 @@ class MainActivity : AppCompatActivity() {
         val rawLogSwitch = findViewById<SwitchCompat>(R.id.rawLogSwitch)
         val fieldModeSwitch = findViewById<SwitchCompat>(R.id.fieldModeSwitch)
         val bgAccelToolSwitch = findViewById<SwitchCompat>(R.id.bgAccelToolSwitch)
+        val energyShadowSwitch = findViewById<SwitchCompat>(R.id.energyShadowSwitch)
         val sensorInfoButton = findViewById<Button>(R.id.sensorInfoButton)
         val toolsToggle = findViewById<TextView>(R.id.toolsToggle)
         val toolsContainer = findViewById<View>(R.id.toolsContainer)
@@ -437,6 +438,20 @@ class MainActivity : AppCompatActivity() {
             rawLogSwitch.isChecked = checked
             fieldSync = false
             syncFieldMode()
+        }
+
+        // v429. Energy Gate Shadow независим от полевого мастера и bg_accel.
+        energyShadowSwitch.isChecked =
+            prefs.getBoolean(StepService.KEY_ENERGY_SHADOW, false)
+        energyShadowSwitch.setOnCheckedChangeListener { _, checked ->
+            prefs.edit().putBoolean(StepService.KEY_ENERGY_SHADOW, checked).apply()
+            if (StepsState.serviceRunning.value) {
+                startForegroundService(
+                    Intent(this, StepService::class.java)
+                        .setAction(StepService.ACTION_ENERGY_SHADOW_SET)
+                        .putExtra(StepService.EXTRA_ENABLED, checked)
+                )
+            }
         }
 
         sensorInfoButton.setOnClickListener {

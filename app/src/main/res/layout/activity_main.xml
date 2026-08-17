@@ -778,6 +778,34 @@
                     android:layout_marginTop="2dp"
                     android:layout_marginBottom="10dp" />
 
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="ENERGY GATE · ТЕНЬ"
+                    android:textColor="@color/axis_dim"
+                    android:textSize="12sp"
+                    android:letterSpacing="0.15"
+                    android:fontFamily="monospace"
+                    android:layout_marginTop="4dp"
+                    android:layout_marginBottom="4dp" />
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/energyShadowSwitch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Energy Gate: тень"
+                    android:textColor="@color/accent_amber_bright"
+                    android:textSize="17sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Только наблюдает low-power trigger sensors и сырые дельты STEP_COUNTER. Не меняет счёт, accel/gyro, bg_accel или wakelock. Строки [энерг] показывают пары ts/приход: время железа и время доставки. Каждый SCREEN_OFF начинает новую чистую сцену."
+                    android:textColor="@color/text_dim"
+                    android:textSize="13sp"
+                    android:layout_marginTop="2dp"
+                    android:layout_marginBottom="10dp" />
+
                 <Button
                     android:id="@+id/sensorInfoButton"
                     android:layout_width="match_parent"
