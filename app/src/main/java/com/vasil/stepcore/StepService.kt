@@ -518,18 +518,37 @@ class StepService : Service(), SensorEventListener {
         // Вне калибровки события игнорируются (см. onSensorChanged), счёт
         // по-прежнему только на STEP_COUNTER.
         hwDetSensor = sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR)
-        // v191: подписка отдана updateMotionSensors. В фоне этот сенсор
-        // не нужен: он лишь диагностика при калибровке, а она идёт при
-        // включённом экране. На SENSOR_DELAY_FASTEST он будил процессор.
-        updateMotionSensors()
-        if (hwDetSensor == null) {
-            logEvent("⚠ Аппаратного детектора шагов нет - калибровка темпа по акселерометру")
-        }
+
+        // v427: сначала фиксируем реальное состояние экрана, И ТОЛЬКО ПОТОМ
+        // решаем, нужны ли тяжёлые motion-сенсоры.
+        //
+        // До v427 порядок был обратным:
+        //   screenOff по умолчанию false -> ранняя подписка -> need=true
+        //   -> accel/gyro/rotation + PARTIAL_WAKE_LOCK включены
+        //   -> лишь ПОСЛЕ этого screenOff = !pm.isInteractive.
+        //
+        // Если служба стартовала/перезапускалась уже с погашенным экраном,
+        // следующего screen-события могло не быть часами. В итоге при
+        // bg_accel=false код думал, что фон спит, а железо и CPU продолжали
+        // работать. Это жизненный цикл, не механика подсчёта.
+        //
+        // Receiver регистрируем ДО чтения isInteractive: если экран сменится
+        // сразу после чтения, следующий broadcast всё равно приведёт
+        // подписки к актуальному состоянию.
         registerReceiver(screenReceiver, IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_OFF)
             addAction(Intent.ACTION_SCREEN_ON)
         })
         screenOff = !pm.isInteractive
+
+        // v191: подписка отдана updateMotionSensors. В фоне этот сенсор
+        // не нужен: он лишь диагностика при калибровке, а она идёт при
+        // включённом экране. На SENSOR_DELAY_FASTEST он будил процессор.
+        updateMotionSensors()
+
+        if (hwDetSensor == null) {
+            logEvent("⚠ Аппаратного детектора шагов нет - калибровка темпа по акселерометру")
+        }
 
         StepsState.serviceRunning.value = true
         scope.launch {
@@ -2271,7 +2290,11 @@ class StepService : Service(), SensorEventListener {
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
             .putLong(KEY_ALIVE, System.currentTimeMillis())
             .putBoolean(KEY_CLEAN_STOP, true).apply()
-        wakeLock?.release(); wakeLock = null
+        // v427. После исправления старта wakelock законно может существовать,
+        // но не быть захвачен. Без isHeld обычный Стоп в таком состоянии
+        // рискует получить WakeLock under-locked.
+        if (wakeLock?.isHeld == true) wakeLock?.release()
+        wakeLock = null
         persistPrefs()
         persistDbBlocking()   // V8.12: scope.cancel() ниже убивает launch-записи
         StepsState.serviceRunning.value = false
