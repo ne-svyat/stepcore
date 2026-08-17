@@ -239,6 +239,12 @@ class StepService : Service(), SensorEventListener {
      * v429: Energy Gate Shadow.
      * Пара sensor/arrival показывает время железа и время доставки callback.
      */
+    // v431: signed timeline. Отрицательная разница — НЕ ошибка.
+    //
+    // Callback A может прийти раньше callback B, а sensor timestamp B может
+    // оказаться чуть раньше/позже timestamp A из-за разных HAL-очередей.
+    // Раньше любой минус превращался в "—" и мы теряли самую интересную
+    // информацию о порядке доставки.
     private fun energyAgePair(
         nowSensorMs: Long, nowArrivalMs: Long,
         thenSensorMs: Long, thenArrivalMs: Long
@@ -246,8 +252,9 @@ class StepService : Service(), SensorEventListener {
         if (thenSensorMs <= 0L || thenArrivalMs <= 0L) return "—"
         val ds = nowSensorMs - thenSensorMs
         val da = nowArrivalMs - thenArrivalMs
-        if (ds < 0L || da < 0L) return "—"
-        return ds.toString() + "/" + da.toString() + "мс(ts/приход)"
+        fun signed(v: Long): String =
+            if (v >= 0L) "+" + v.toString() else v.toString()
+        return signed(ds) + "/" + signed(da) + "мс(ts/приход)"
     }
 
     private fun energyDeliveryLag(sensorMs: Long, arrivalMs: Long): String {
@@ -439,7 +446,10 @@ class StepService : Service(), SensorEventListener {
                     // с погашенным экраном.
                     energyDisarmWakeStep()
                     if (hwSessionAdded > 0) {
-                        logEvent("За время блокировки: $hwSessionAdded шагов (аппаратный чип)")
+                        logEvent(
+                            "До разблокировки доставлено чипом: " +
+                                "$hwSessionAdded шагов · хвост может прийти после SCREEN_ON"
+                        )
                     }
                     hwSessionAdded = 0
                     detector.resetTransient()
@@ -1700,7 +1710,7 @@ class StepService : Service(), SensorEventListener {
                         )
 
                         logEvent(
-                            "[энерг] первый wake-step" +
+                            "[энерг] wake-step сигнал сцены" +
                                 " · lag " + energyDeliveryLag(sensorMs, arrivalMs) +
                                 " · после SIGN " + afterSig +
                                 " · после MOTION " + afterMotion +
