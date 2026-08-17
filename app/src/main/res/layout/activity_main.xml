@@ -733,6 +733,75 @@
                     android:textSize="13sp"
                     android:layout_marginBottom="10dp" />
 
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="ПОЛЕВОЙ СБОР"
+                    android:textColor="@color/axis_dim"
+                    android:textSize="12sp"
+                    android:letterSpacing="0.15"
+                    android:fontFamily="monospace"
+                    android:layout_marginTop="2dp"
+                    android:layout_marginBottom="4dp" />
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/fieldModeSwitch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Полевой сбор одним тумблером"
+                    android:textColor="@color/accent_teal_bright"
+                    android:textSize="17sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Включает вместе: журнал решений + признаки походки + сырьё вокруг события + фоновый сбор. «Подробный журнал» не трогает. Это мастер над существующими флагами, не новая механика."
+                    android:textColor="@color/text_dim"
+                    android:textSize="13sp"
+                    android:layout_marginTop="2dp"
+                    android:layout_marginBottom="10dp" />
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/bgAccelToolSwitch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Сбор при выключенном экране"
+                    android:textColor="@color/accent_blue_bright"
+                    android:textSize="17sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Тот же параметр bg_accel, что и в SYNX. Второго состояния нет. Сейчас фон обрабатывает признаки окнами, но сам расход питания ещё будем проверять отдельно."
+                    android:textColor="@color/text_dim"
+                    android:textSize="13sp"
+                    android:layout_marginTop="2dp"
+                    android:layout_marginBottom="10dp" />
+
+                <Button
+                    android:id="@+id/sensorInfoButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Снимок датчиков устройства" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Ничего не включает. Копирует в буфер фактические сенсоры телефона: accel/gyro, rotation vector, game rotation, магнитометр, давление, step-сенсоры, wake-up и FIFO. Это карта возможностей для следующих приборов."
+                    android:textColor="@color/text_dim"
+                    android:textSize="13sp"
+                    android:layout_marginTop="2dp"
+                    android:layout_marginBottom="10dp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Хранение сейчас: автоматически старше 14 дней чистятся только строки [диаг]. [реш], [гип], [сыр] и [тень] пока не удаляются. До отдельного исследовательского архива это намеренно."
+                    android:textColor="@color/axis_dim"
+                    android:textSize="12sp"
+                    android:fontFamily="monospace"
+                    android:layout_marginBottom="16dp" />
+
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"

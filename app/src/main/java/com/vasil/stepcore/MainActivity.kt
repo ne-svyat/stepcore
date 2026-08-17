@@ -240,6 +240,9 @@ class MainActivity : AppCompatActivity() {
         val decisionLogSwitch = findViewById<SwitchCompat>(R.id.decisionLogSwitch)
         val gaitLogSwitch = findViewById<SwitchCompat>(R.id.gaitLogSwitch)
         val rawLogSwitch = findViewById<SwitchCompat>(R.id.rawLogSwitch)
+        val fieldModeSwitch = findViewById<SwitchCompat>(R.id.fieldModeSwitch)
+        val bgAccelToolSwitch = findViewById<SwitchCompat>(R.id.bgAccelToolSwitch)
+        val sensorInfoButton = findViewById<Button>(R.id.sensorInfoButton)
         val toolsToggle = findViewById<TextView>(R.id.toolsToggle)
         val toolsContainer = findViewById<View>(R.id.toolsContainer)
 
@@ -361,6 +364,24 @@ class MainActivity : AppCompatActivity() {
 
         val diagBtn = findViewById<Button>(R.id.diagButton)
         val reconcileBtn = findViewById<Button>(R.id.reconcileButton)
+
+        // v426. "Полевой сбор" — НЕ новый источник истины. Это только
+        // мастер над четырьмя реальными флагами: решения, походка, сырьё и
+        // фоновый sensor-сбор. Подробный журнал намеренно отдельно.
+        var fieldSync = false
+        fun syncFieldMode() {
+            if (fieldSync) return
+            val allOn = decisionLogSwitch.isChecked &&
+                gaitLogSwitch.isChecked &&
+                rawLogSwitch.isChecked &&
+                bgAccelToolSwitch.isChecked
+            if (fieldModeSwitch.isChecked != allOn) {
+                fieldSync = true
+                fieldModeSwitch.isChecked = allOn
+                fieldSync = false
+            }
+        }
+
         detailLogSwitch.isChecked = prefs.getBoolean("detail_log", false)
         StepsState.detailLog.value = detailLogSwitch.isChecked
         detailLogSwitch.setOnCheckedChangeListener { _, checked ->
@@ -373,6 +394,7 @@ class MainActivity : AppCompatActivity() {
         decisionLogSwitch.setOnCheckedChangeListener { _, checked ->
             StepsState.decisionLog.value = checked
             prefs.edit().putBoolean("decision_log", checked).apply()
+            if (!fieldSync) syncFieldMode()
         }
 
         gaitLogSwitch.isChecked = prefs.getBoolean("gait_log", false)
@@ -380,6 +402,7 @@ class MainActivity : AppCompatActivity() {
         gaitLogSwitch.setOnCheckedChangeListener { _, checked ->
             StepsState.gaitLog.value = checked
             prefs.edit().putBoolean("gait_log", checked).apply()
+            if (!fieldSync) syncFieldMode()
         }
 
         rawLogSwitch.isChecked = prefs.getBoolean("raw_log", false)
@@ -387,6 +410,49 @@ class MainActivity : AppCompatActivity() {
         rawLogSwitch.setOnCheckedChangeListener { _, checked ->
             StepsState.rawLog.value = checked
             prefs.edit().putBoolean("raw_log", checked).apply()
+            if (!fieldSync) syncFieldMode()
+        }
+
+        // Это ТОТ ЖЕ bg_accel, который живёт в SYNX. Никакого второго
+        // состояния: переключение здесь сразу видно SYNX и наоборот.
+        bgAccelToolSwitch.isChecked = prefs.getBoolean("bg_accel", false)
+        StepsState.bgAccel.value = bgAccelToolSwitch.isChecked
+        bgAccelToolSwitch.setOnCheckedChangeListener { _, checked ->
+            StepsState.bgAccel.value = checked
+            prefs.edit().putBoolean("bg_accel", checked).apply()
+            if (!fieldSync) syncFieldMode()
+        }
+
+        fieldModeSwitch.isChecked =
+            decisionLogSwitch.isChecked && gaitLogSwitch.isChecked &&
+            rawLogSwitch.isChecked && bgAccelToolSwitch.isChecked
+        fieldModeSwitch.setOnCheckedChangeListener { _, checked ->
+            if (fieldSync) return@setOnCheckedChangeListener
+            fieldSync = true
+            // Программное изменение вызывает штатные listeners каждого
+            // флага, поэтому prefs и StepsState остаются единой правдой.
+            decisionLogSwitch.isChecked = checked
+            gaitLogSwitch.isChecked = checked
+            rawLogSwitch.isChecked = checked
+            bgAccelToolSwitch.isChecked = checked
+            fieldSync = false
+            syncFieldMode()
+        }
+
+        sensorInfoButton.setOnClickListener {
+            val report = buildSensorCapabilityReport()
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as
+                android.content.ClipboardManager
+            cm.setPrimaryClip(android.content.ClipData.newPlainText(
+                "StepCore sensors", report))
+            androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("Датчики устройства")
+                .setMessage(report)
+                .setPositiveButton("Готово", null)
+                .show()
+            android.widget.Toast.makeText(
+                this, "Снимок датчиков уже в буфере", android.widget.Toast.LENGTH_SHORT
+            ).show()
         }
 
         diagBtn.setOnClickListener {
@@ -469,6 +535,16 @@ class MainActivity : AppCompatActivity() {
                 launch {
                     StepsState.mode.collect { m -> applyModeBadge(modeView, m) }
                 }
+                // v426. SYNX и Инструменты показывают один bg_accel.
+                // Если его поменяли в SYNX и вернулись назад, главный экран
+                // обновится без recreate и без второго ключа.
+                launch {
+                    StepsState.bgAccel.collect { on ->
+                        if (bgAccelToolSwitch.isChecked != on) {
+                            bgAccelToolSwitch.isChecked = on
+                        }
+                    }
+                }
                 launch { StepsState.diag.collect { findViewById<TextView>(R.id.diagText).text = it } }
                 launch {
                     StepsState.diagRecording.collect { on ->
@@ -497,6 +573,69 @@ class MainActivity : AppCompatActivity() {
                         updateStats()
                         delay(20_000)
                     }
+                }
+            }
+        }
+    }
+
+    /**
+     * v426. Инвентаризация сенсоров устройства.
+     *
+     * Ничего не регистрирует и не включает: только читает метаданные Android.
+     * Нужна, чтобы проектировать новые приборы по ФАКТУ конкретного телефона,
+     * а не по списку датчиков из интернета.
+     */
+    private fun buildSensorCapabilityReport(): String {
+        val sm = getSystemService(Context.SENSOR_SERVICE) as android.hardware.SensorManager
+        val wanted = listOf(
+            android.hardware.Sensor.TYPE_ACCELEROMETER to "ACCELEROMETER",
+            android.hardware.Sensor.TYPE_ACCELEROMETER_UNCALIBRATED to "ACCEL_UNCALIBRATED",
+            android.hardware.Sensor.TYPE_LINEAR_ACCELERATION to "LINEAR_ACCELERATION",
+            android.hardware.Sensor.TYPE_GRAVITY to "GRAVITY",
+            android.hardware.Sensor.TYPE_GYROSCOPE to "GYROSCOPE",
+            android.hardware.Sensor.TYPE_GYROSCOPE_UNCALIBRATED to "GYRO_UNCALIBRATED",
+            android.hardware.Sensor.TYPE_ROTATION_VECTOR to "ROTATION_VECTOR",
+            android.hardware.Sensor.TYPE_GAME_ROTATION_VECTOR to "GAME_ROTATION_VECTOR",
+            android.hardware.Sensor.TYPE_GEOMAGNETIC_ROTATION_VECTOR to "GEOMAG_ROTATION_VECTOR",
+            android.hardware.Sensor.TYPE_MAGNETIC_FIELD to "MAGNETIC_FIELD",
+            android.hardware.Sensor.TYPE_PRESSURE to "PRESSURE",
+            android.hardware.Sensor.TYPE_STEP_COUNTER to "STEP_COUNTER",
+            android.hardware.Sensor.TYPE_STEP_DETECTOR to "STEP_DETECTOR",
+            android.hardware.Sensor.TYPE_SIGNIFICANT_MOTION to "SIGNIFICANT_MOTION",
+        )
+
+        fun modeName(m: Int): String = when (m) {
+            android.hardware.Sensor.REPORTING_MODE_CONTINUOUS -> "continuous"
+            android.hardware.Sensor.REPORTING_MODE_ON_CHANGE -> "on-change"
+            android.hardware.Sensor.REPORTING_MODE_ONE_SHOT -> "one-shot"
+            android.hardware.Sensor.REPORTING_MODE_SPECIAL_TRIGGER -> "special"
+            else -> m.toString()
+        }
+
+        return buildString {
+            appendLine("StepCore — датчики устройства")
+            appendLine("Android ${android.os.Build.VERSION.RELEASE} · ${android.os.Build.MODEL}")
+            appendLine()
+            for ((type, label) in wanted) {
+                val list = sm.getSensorList(type)
+                if (list.isEmpty()) {
+                    appendLine("$label: —")
+                    continue
+                }
+                list.forEachIndexed { i, x ->
+                    val suffix = if (list.size > 1) "#${i + 1}" else ""
+                    append(label).append(suffix).append(": ")
+                        .append(x.name).append(" · ").append(x.vendor).appendLine()
+                    append("  wake=").append(x.isWakeUpSensor)
+                        .append(" mode=").append(modeName(x.reportingMode))
+                        .append(" min=").append(x.minDelay).append("µs")
+                        .append(" max=").append(x.maxDelay).append("µs")
+                        .append(" fifo=").append(x.fifoMaxEventCount)
+                        .appendLine()
+                    append("  power=").append("%.3f".format(x.power)).append("mA")
+                        .append(" res=").append(x.resolution)
+                        .append(" range=").append(x.maximumRange)
+                        .appendLine()
                 }
             }
         }
