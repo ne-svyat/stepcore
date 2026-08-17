@@ -15,7 +15,9 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.hardware.TriggerEvent
 import android.hardware.TriggerEventListener
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
 import android.graphics.drawable.Icon
 import android.os.SystemClock
@@ -109,6 +111,42 @@ class StepService : Service(), SensorEventListener {
             " rt=" + arrivalMs + "мс"
     }
 
+    // v433: Physical Probe Shadow.
+    // Отдельный listener — данные probe НЕ проходят через onSensorChanged()
+    // StepService и поэтому не кормят детектор/старые признаки.
+    private val energyProbe = EnergyProbe()
+    private var energyProbeActive = false
+    private var energyProbeGameRotSensor: Sensor? = null
+    private var energyProbeWakeLock: PowerManager.WakeLock? = null
+    private lateinit var energyProbeHandler: Handler
+    private var energyProbeDidSignScene = -1L
+    private var energyProbeDidWakeScene = -1L
+
+    private val energyProbeFinishRunnable = Runnable {
+        energyProbeFinish("окно")
+    }
+
+    private val energyProbeListener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent) {
+            if (!energyProbeActive) return
+            val t = event.timestamp / 1_000_000L
+            when (event.sensor.type) {
+                Sensor.TYPE_ACCELEROMETER ->
+                    energyProbe.onAccel(
+                        event.values[0], event.values[1], event.values[2], t
+                    )
+                Sensor.TYPE_GYROSCOPE ->
+                    energyProbe.onGyro(
+                        event.values[0], event.values[1], event.values[2], t
+                    )
+                Sensor.TYPE_GAME_ROTATION_VECTOR ->
+                    energyProbe.onGameRotation(event.values)
+            }
+        }
+
+        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+    }
+
     private val energyTriggerListener = object : TriggerEventListener() {
         override fun onTrigger(event: TriggerEvent) {
             if (!energyShadowEnabled) return
@@ -150,6 +188,10 @@ class StepService : Service(), SensorEventListener {
                     " · экран=" + (if (screenOff) "off" else "on") +
                     " · bg=" + (if (StepsState.bgAccel.value) "on" else "off")
             )
+
+            if (sensor.type == Sensor.TYPE_SIGNIFICANT_MOTION) {
+                energyProbeSignal("SIGN", arrivalMs)
+            }
 
             // Не перевооружаем тот же триггер вслепую:
             // MOTION/STATIONARY работают парой переходов.
@@ -248,6 +290,127 @@ class StepService : Service(), SensorEventListener {
     // сравнений вместо ручных вечерних записей.
     private var hwDayAnchor = -1L
     private var hwDayPaused = false   // был Стоп/перезагрузка - сверка дня неполная
+
+    /**
+     * v433. Управление коротким физическим probe.
+     *
+     * Это БЮДЖЕТ ИЗМЕРЕНИЯ, не классификационный порог. Probe не решает,
+     * что перед ним: ходьба, тряска или транспорт.
+     */
+    private fun energyProbeSignal(kind: String, arrivalMs: Long) {
+        if (!energyShadowEnabled || !screenOff) return
+
+        if (kind == "WAKE") {
+            energyProbe.markWake(arrivalMs)
+            if (energyProbeDidWakeScene == energySceneId) return
+            energyProbeDidWakeScene = energySceneId
+            if (energyProbeActive) return
+        } else if (kind == "SIGN") {
+            if (energyProbeDidSignScene == energySceneId) return
+            energyProbeDidSignScene = energySceneId
+            if (energyProbeActive) return
+        }
+
+        val a = accelSensor
+        val g = gyroSensor
+        if (a == null || g == null) {
+            val trace = energyTrace(arrivalMs)
+            logEvent(
+                "[проба] " + trace + " · SKIP " + kind +
+                    " · accel=" + (if (a != null) "ok" else "—") +
+                    " gyro=" + (if (g != null) "ok" else "—")
+            )
+            return
+        }
+
+        energyProbeActive = true
+        energyProbe.reset(energySceneId, kind, arrivalMs)
+
+        val okA = sensorManager.registerListener(
+            energyProbeListener, a, SensorManager.SENSOR_DELAY_GAME
+        )
+        val okG = sensorManager.registerListener(
+            energyProbeListener, g, SensorManager.SENSOR_DELAY_GAME
+        )
+        val okR = energyProbeGameRotSensor?.let {
+            sensorManager.registerListener(
+                energyProbeListener, it, SensorManager.SENSOR_DELAY_GAME
+            )
+        } ?: false
+
+        if (!okA || !okG) {
+            sensorManager.unregisterListener(energyProbeListener)
+            energyProbeActive = false
+            val trace = energyTrace(arrivalMs)
+            logEvent(
+                "[проба] " + trace + " · SKIP " + kind +
+                    " · register accel=" + okA + " gyro=" + okG +
+                    " gameRot=" + okR
+            )
+            return
+        }
+
+        if (energyProbeWakeLock?.isHeld != true) {
+            energyProbeWakeLock?.acquire(ENERGY_PROBE_WAKE_TIMEOUT_MS)
+        }
+
+        energyProbeHandler.removeCallbacks(energyProbeFinishRunnable)
+        energyProbeHandler.postDelayed(
+            energyProbeFinishRunnable, ENERGY_PROBE_WINDOW_MS
+        )
+
+        val trace = energyTrace(arrivalMs)
+        logEvent(
+            "[проба] " + trace + " · START " + kind +
+                " · accel=on gyro=on gameRot=" + (if (okR) "on" else "—") +
+                " · окно=" + ENERGY_PROBE_WINDOW_MS + "мс"
+        )
+    }
+
+    private fun energyProbeMarkChip(arrivalMs: Long, delta: Int) {
+        if (energyProbeActive) energyProbe.markChip(arrivalMs, delta)
+    }
+
+    private fun energyProbeFinish(reason: String) {
+        if (!energyProbeActive) return
+        energyProbeActive = false
+        energyProbeHandler.removeCallbacks(energyProbeFinishRunnable)
+        sensorManager.unregisterListener(energyProbeListener)
+        if (energyProbeWakeLock?.isHeld == true) energyProbeWakeLock?.release()
+
+        val now = SystemClock.elapsedRealtime()
+        val r = energyProbe.finish(now)
+        val trace = energyTrace(now)
+        val f = java.util.Locale.US
+
+        fun d(v: Double, n: Int = 2): String =
+            String.format(f, "%." + n + "f", v)
+
+        logEvent(
+            "[проба] " + trace +
+                " · END " + r.trigger + "/" + reason +
+                " · dur=" + r.durationMs + "мс" +
+                " · n=" + r.accN + "/" + r.gyroN + "/" + r.rotN +
+                " · Hz=" + d(r.accHz, 1) + "/" + d(r.gyroHz, 1) +
+                " · accRms=" + d(r.accDynRms) +
+                " peak=" + d(r.accPeak) +
+                " jerk=" + d(r.jerkRms, 1) +
+                " axis=" + d(r.accAxisDom) +
+                " · accPeriod=" + d(r.accPeriodMs, 0) +
+                " auto=" + d(r.accAuto) +
+                " · gyroRms=" + d(r.gyroRms) +
+                " peak=" + d(r.gyroPeak) +
+                " axis=" + d(r.gyroAxisDom) +
+                " period=" + d(r.gyroPeriodMs, 0) +
+                " auto=" + d(r.gyroAuto) +
+                " · Δperiod=" + d(r.periodGapMs, 0) + "мс" +
+                " · rotPath=" + d(r.rotPathDeg, 1) + "°" +
+                " rotMax=" + d(r.rotMaxDeg, 1) + "°" +
+                " · wakeAt=" + (r.wakeOffsetMs?.toString() ?: "—") + "мс" +
+                " chipAt=" + (r.chipOffsetMs?.toString() ?: "—") + "мс" +
+                " chipΔ=" + r.chipDelta
+        )
+    }
 
     /**
      * v429: Energy Gate Shadow.
@@ -361,6 +524,7 @@ class StepService : Service(), SensorEventListener {
 
     private fun energyArmFresh(reason: String, announce: Boolean) {
         if (!energyShadowEnabled) return
+        energyProbeFinish("смена сцены")
         energyCancelAll()
         energyResetRelations()
         energySceneId += 1L
@@ -387,6 +551,7 @@ class StepService : Service(), SensorEventListener {
             .putBoolean(KEY_ENERGY_SHADOW, on).apply()
 
         if (!on) {
+            energyProbeFinish("тень выкл")
             energyCancelAll()
             energyResetRelations()
             if (announce) {
@@ -421,6 +586,7 @@ class StepService : Service(), SensorEventListener {
         delta: Int, hwTotal: Long, sensorMs: Long, arrivalMs: Long
     ) {
         if (!energyShadowEnabled) return
+        energyProbeMarkChip(arrivalMs, delta)
         val trace = energyTrace(arrivalMs)
 
         val sig = energyAgePair(
@@ -770,6 +936,13 @@ class StepService : Service(), SensorEventListener {
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "stepcore:steps")
 
+        // v433: отдельный короткий wakelock только для физического probe.
+        // Он не связан с motionRegistered и имеет жёсткий timeout-предохранитель.
+        energyProbeWakeLock = pm.newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK, "stepcore:energy_probe"
+        )
+        energyProbeHandler = Handler(Looper.getMainLooper())
+
         // v191: ОБЫЧНЫЕ, не wakeup-версии. Раньше здесь стоял
         // getDefaultSensor(type, true) - wakeup-сенсор будит процессор на
         // каждой порции данных, и при 50 Гц телефон не спал никогда.
@@ -777,6 +950,9 @@ class StepService : Service(), SensorEventListener {
         accelSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         gyroSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
         rotSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+        // v433: относительная ориентация без магнитометра — только probe.
+        energyProbeGameRotSensor =
+            sensorManager.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR)
         detector.hasGyro = gyroSensor != null
         hwBaseline = prefs.getLong(KEY_HW_BASE, -1L)
         hwDayAnchor =
@@ -1748,6 +1924,7 @@ class StepService : Service(), SensorEventListener {
                                 (if (hwLastTotal >= 0L) hwLastTotal else -1L) +
                                 " · экран=" + (if (screenOff) "off" else "on")
                         )
+                        energyProbeSignal("WAKE", arrivalMs)
                     }
                     return
                 }
@@ -2659,7 +2836,8 @@ class StepService : Service(), SensorEventListener {
         runCatching {
             getSystemService(NotificationManager::class.java).cancel(NOTIF_ID_MARKS)
         }
-        // TriggerEventListener снимается отдельным API.
+        // TriggerEventListener и probe снимаются отдельными путями.
+        energyProbeFinish("service destroy")
         energyCancelAll()
         sensorManager.unregisterListener(this)
         runCatching { unregisterReceiver(screenReceiver) }
@@ -3022,6 +3200,10 @@ class StepService : Service(), SensorEventListener {
         const val KEY_HW_ANCHOR_DAY = "hw_anchor_day"
         const val KEY_HW_DAY_PAUSED = "hw_day_paused"
         const val KEY_ENERGY_SHADOW = "energy_shadow"
+        // v433. Бюджет измерения, НЕ порог классификации:
+        // ~3 с при ~50 Гц дают около 150 физических отсчётов.
+        const val ENERGY_PROBE_WINDOW_MS = 3_000L
+        const val ENERGY_PROBE_WAKE_TIMEOUT_MS = 5_000L
         const val DIV_WINDOW_MS = 120_000L  // окно сравнения детектор/чип
         const val DIV_MIN_DET = 20          // минимум шагов детектора для вывода
         const val DIV_LOG_THROTTLE_MS = 600_000L // журнал не чаще 1 строки / 10 мин
