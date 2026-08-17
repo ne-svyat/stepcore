@@ -122,6 +122,14 @@ class StepService : Service(), SensorEventListener {
     private var energyProbeDidSignScene = -1L
     private var energyProbeDidWakeScene = -1L
 
+    // v435: Scene Evidence Shadow.
+    // Храним максимум по одному SIGN и WAKE Summary на screen-off сцену.
+    // Это только связь двух измерений во времени. Никаких решений.
+    private var energySceneEarly: EnergyProbe.Summary? = null
+    private var energySceneSettled: EnergyProbe.Summary? = null
+    private var energySceneFirstProbe: String? = null
+    private var energySceneEvidenceLogged = false
+
     private val energyProbeFinishRunnable = Runnable {
         energyProbeFinish("окно")
     }
@@ -371,6 +379,159 @@ class StepService : Service(), SensorEventListener {
         if (energyProbeActive) energyProbe.markChip(arrivalMs, delta)
     }
 
+    // v435. Никаких порогов: только преобразование уже измеренных полей.
+    private fun energySceneFloor(r: EnergyProbe.Summary): String = when {
+        r.accPeriodFloor && r.gyroPeriodFloor -> "A+G"
+        r.accPeriodFloor -> "A"
+        r.gyroPeriodFloor -> "G"
+        else -> "—"
+    }
+
+    private fun energySceneRotRate(r: EnergyProbe.Summary): Double =
+        if (r.durationMs > 0L) {
+            r.rotPathDeg * 1000.0 / r.durationMs.toDouble()
+        } else 0.0
+
+    private fun energySceneReset() {
+        energySceneEarly = null
+        energySceneSettled = null
+        energySceneFirstProbe = null
+        energySceneEvidenceLogged = false
+    }
+
+    private fun energySceneLogSingle(
+        r: EnergyProbe.Summary,
+        label: String,
+        now: Long
+    ) {
+        val f = java.util.Locale.US
+        fun d(v: Double, n: Int = 2): String =
+            String.format(f, "%." + n + "f", v)
+
+        val trace = energyTrace(now)
+        logEvent(
+            "[сцена] " + trace + " · " + label +
+                " · rhythm=" + d(r.accPeriodMs, 0) + "/" +
+                    d(r.gyroPeriodMs, 0) + "мс" +
+                " gap=" + d(r.periodGapMs, 0) + "мс" +
+                " floor=" + energySceneFloor(r) +
+                " auto=" + d(r.accAuto) + "/" + d(r.gyroAuto) +
+                " · dyn=" + d(r.accDynRms) + "/" + d(r.gyroRms) +
+                " · rot=" + d(energySceneRotRate(r), 1) + "°/с/" +
+                    d(r.rotMaxDeg, 1) + "°"
+        )
+    }
+
+    private fun energySceneLogPair(
+        early: EnergyProbe.Summary,
+        settled: EnergyProbe.Summary,
+        now: Long
+    ) {
+        val f = java.util.Locale.US
+        fun d(v: Double, n: Int = 2): String =
+            String.format(f, "%." + n + "f", v)
+
+        val order = when (energySceneFirstProbe) {
+            "WAKE" -> "WAKE→SIGN"
+            else -> "SIGN→WAKE"
+        }
+
+        val trace = energyTrace(now)
+        logEvent(
+            "[сцена] " + trace + " · pair=" + order +
+                " · rhythm=" +
+                    d(early.accPeriodMs, 0) + "/" +
+                    d(early.gyroPeriodMs, 0) + "→" +
+                    d(settled.accPeriodMs, 0) + "/" +
+                    d(settled.gyroPeriodMs, 0) + "мс" +
+                " · gap=" + d(early.periodGapMs, 0) + "→" +
+                    d(settled.periodGapMs, 0) + "мс" +
+                " floor=" + energySceneFloor(early) + "→" +
+                    energySceneFloor(settled) +
+                " auto=" + d(early.accAuto) + "/" + d(early.gyroAuto) +
+                    "→" + d(settled.accAuto) + "/" + d(settled.gyroAuto) +
+                " · dyn=" + d(early.accDynRms) + "/" + d(early.gyroRms) +
+                    "→" + d(settled.accDynRms) + "/" + d(settled.gyroRms) +
+                " · rot=" + d(energySceneRotRate(early), 1) + "/" +
+                    d(early.rotMaxDeg, 1) + "→" +
+                    d(energySceneRotRate(settled), 1) + "/" +
+                    d(settled.rotMaxDeg, 1) + "(°/с/°)"
+        )
+    }
+
+    /**
+     * Получает готовый Summary ПОСЛЕ [проба] и [вектор].
+     *
+     * Если wake-step пришёл прямо внутрь SIGN-окна, второго WAKE probe
+     * по политике v433 уже не будет. Это фиксируем честно как settled=нет,
+     * а не выдумываем позднюю физику.
+     */
+    private fun energySceneObserve(r: EnergyProbe.Summary, now: Long) {
+        if (r.scene != energySceneId) return
+
+        if (energySceneFirstProbe == null) {
+            energySceneFirstProbe = r.trigger
+        }
+
+        when (r.trigger) {
+            "SIGN" -> energySceneEarly = r
+            "WAKE" -> energySceneSettled = r
+        }
+
+        if (energySceneEvidenceLogged) return
+
+        val early = energySceneEarly
+        val settled = energySceneSettled
+
+        if (early != null && settled != null) {
+            energySceneLogPair(early, settled, now)
+            energySceneEvidenceLogged = true
+            return
+        }
+
+        // wakeAt внутри SIGN означает: wake callback уже был использован
+        // этой сценой, поэтому отдельного позднего WAKE-окна не появится.
+        if (r.trigger == "SIGN" && r.wakeOffsetMs != null) {
+            energySceneLogSingle(
+                r,
+                "SIGN+wake-в-окне@" + r.wakeOffsetMs + "мс · settled=нет",
+                now
+            )
+            energySceneEvidenceLogged = true
+        }
+    }
+
+    /**
+     * Закрытие неполной сцены. Вызывается ДО увеличения energySceneId,
+     * чтобы scene/ev оставались привязаны к правильной сцене.
+     */
+    private fun energySceneFlush(reason: String) {
+        if (energySceneEvidenceLogged) return
+
+        val early = energySceneEarly
+        val settled = energySceneSettled
+        if (early == null && settled == null) return
+
+        val now = SystemClock.elapsedRealtime()
+
+        if (early != null && settled != null) {
+            energySceneLogPair(early, settled, now)
+        } else if (early != null) {
+            energySceneLogSingle(
+                early,
+                "PARTIAL SIGN-only · " + reason,
+                now
+            )
+        } else if (settled != null) {
+            energySceneLogSingle(
+                settled,
+                "PARTIAL WAKE-only · " + reason,
+                now
+            )
+        }
+        energySceneEvidenceLogged = true
+    }
+
     private fun energyProbeFinish(reason: String) {
         if (!energyProbeActive) return
         energyProbeActive = false
@@ -439,6 +600,9 @@ class StepService : Service(), SensorEventListener {
                     d(r.gyroAxisDom) +
                 " rotMax=" + d(r.rotMaxDeg, 1) + "°"
         )
+
+        // [сцена] получает уже законченный и неизменяемый Summary.
+        energySceneObserve(r, now)
     }
 
     /**
@@ -554,6 +718,8 @@ class StepService : Service(), SensorEventListener {
     private fun energyArmFresh(reason: String, announce: Boolean) {
         if (!energyShadowEnabled) return
         energyProbeFinish("смена сцены")
+        energySceneFlush("смена сцены")
+        energySceneReset()
         energyCancelAll()
         energyResetRelations()
         energySceneId += 1L
@@ -581,6 +747,8 @@ class StepService : Service(), SensorEventListener {
 
         if (!on) {
             energyProbeFinish("тень выкл")
+            energySceneFlush("тень выкл")
+            energySceneReset()
             energyCancelAll()
             energyResetRelations()
             if (announce) {
