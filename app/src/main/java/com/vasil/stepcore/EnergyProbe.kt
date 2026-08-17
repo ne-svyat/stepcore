@@ -29,17 +29,19 @@ class EnergyProbe {
         val accAxisDom: Double,
         val accPeriodMs: Double,
         val accAuto: Double,
+        val accPeriodFloor: Boolean,
         val gyroRms: Double,
         val gyroPeak: Double,
         val gyroAxisDom: Double,
         val gyroPeriodMs: Double,
         val gyroAuto: Double,
+        val gyroPeriodFloor: Boolean,
         val periodGapMs: Double,
         val rotPathDeg: Double,
         val rotMaxDeg: Double,
         val wakeOffsetMs: Long?,
-        val chipOffsetMs: Long?,
-        val chipDelta: Int
+        val chipDeliveredOffsetMs: Long?,
+        val chipDeliveredDelta: Int
     )
 
     private val cap = 256
@@ -63,7 +65,7 @@ class EnergyProbe {
     private var startRt = 0L
     private var wakeRt = -1L
     private var chipRt = -1L
-    private var chipDelta = 0
+    private var chipDeliveredDelta = 0
 
     private var rotN = 0
     private var firstQ: DoubleArray? = null
@@ -77,7 +79,7 @@ class EnergyProbe {
         startRt = startArrivalMs
         wakeRt = if (triggerName == "WAKE") startArrivalMs else -1L
         chipRt = -1L
-        chipDelta = 0
+        chipDeliveredDelta = 0
         an = 0
         gn = 0
         rotN = 0
@@ -91,9 +93,14 @@ class EnergyProbe {
         if (wakeRt < 0L) wakeRt = arrivalMs
     }
 
+    /**
+     * delta здесь означает только STEP_COUNTER delta, ДОСТАВЛЕННУЮ callback'ом
+     * во время probe. Она может содержать старый hardware batch и не означает,
+     * что столько физических шагов произошло внутри трёхсекундного окна.
+     */
     fun markChip(arrivalMs: Long, delta: Int) {
         if (chipRt < 0L) chipRt = arrivalMs
-        chipDelta += delta
+        chipDeliveredDelta += delta
     }
 
     fun onAccel(x: Float, y: Float, z: Float, timeMs: Long) {
@@ -189,53 +196,67 @@ class EnergyProbe {
             accAxisDom = accAxis,
             accPeriodMs = accStats.periodMs,
             accAuto = accStats.auto,
+            accPeriodFloor = accStats.floorHit,
             gyroRms = gyroRms,
             gyroPeak = gyroPeak,
             gyroAxisDom = gyroAxis,
             gyroPeriodMs = gyroStats.periodMs,
             gyroAuto = gyroStats.auto,
+            gyroPeriodFloor = gyroStats.floorHit,
             periodGapMs = gap,
             rotPathDeg = Math.toDegrees(rotPathRad),
             rotMaxDeg = Math.toDegrees(rotMaxRad),
             wakeOffsetMs = if (wakeRt >= 0L) wakeRt - startRt else null,
-            chipOffsetMs = if (chipRt >= 0L) chipRt - startRt else null,
-            chipDelta = chipDelta
+            chipDeliveredOffsetMs = if (chipRt >= 0L) chipRt - startRt else null,
+            chipDeliveredDelta = chipDeliveredDelta
         )
     }
 
     private data class SeriesStats(
         val hz: Double,
         val periodMs: Double,
-        val auto: Double
+        val auto: Double,
+        val floorHit: Boolean
+    )
+
+    private data class AutoResult(
+        val periodMs: Double,
+        val score: Double,
+        val floorHit: Boolean
     )
 
     private fun seriesStats(v: DoubleArray, t: LongArray, n: Int): SeriesStats {
-        if (n < 8) return SeriesStats(0.0, 0.0, 0.0)
+        if (n < 8) return SeriesStats(0.0, 0.0, 0.0, false)
         val span = t[n - 1] - t[0]
         val hz = if (span > 0L) (n - 1) * 1000.0 / span.toDouble() else 0.0
-        val (period, auto) = autocorr(v, t, n)
-        return SeriesStats(hz, period, auto)
+        val a = autocorr(v, t, n)
+        return SeriesStats(hz, a.periodMs, a.score, a.floorHit)
     }
 
     /**
      * Не ищем "походочный" диапазон. Берём лучший повтор среди лагов
-     * от 4 отсчётов до половины окна. Это измерение формы, не правило.
+     * от minLag=4 отсчётов до половины окна.
+     *
+     * v434: если победил ровно minLag, это отдельно помечается floorHit.
+     * Это НЕ классификационный порог. Это честная отметка, что максимум
+     * корреляции упёрся в нижнюю границу измерительного поиска.
      */
-    private fun autocorr(v: DoubleArray, t: LongArray, n: Int): Pair<Double, Double> {
-        if (n < 16) return 0.0 to 0.0
+    private fun autocorr(v: DoubleArray, t: LongArray, n: Int): AutoResult {
+        if (n < 16) return AutoResult(0.0, 0.0, false)
         var mean = 0.0
         for (i in 0 until n) mean += v[i]
         mean /= n.toDouble()
 
         val avgDt = (t[n - 1] - t[0]).toDouble() / (n - 1).toDouble()
-        if (avgDt <= 0.0) return 0.0 to 0.0
+        if (avgDt <= 0.0) return AutoResult(0.0, 0.0, false)
 
+        val minLag = 4
         val maxLag = min(n / 2, 100)
-        if (maxLag < 4) return 0.0 to 0.0
+        if (maxLag < minLag) return AutoResult(0.0, 0.0, false)
 
         var bestLag = 0
         var best = -1.0
-        for (lag in 4..maxLag) {
+        for (lag in minLag..maxLag) {
             var num = 0.0
             var da = 0.0
             var db = 0.0
@@ -257,8 +278,12 @@ class EnergyProbe {
             }
         }
 
-        if (bestLag == 0) return 0.0 to 0.0
-        return bestLag * avgDt to best.coerceIn(-1.0, 1.0)
+        if (bestLag == 0) return AutoResult(0.0, 0.0, false)
+        return AutoResult(
+            bestLag * avgDt,
+            best.coerceIn(-1.0, 1.0),
+            bestLag == minLag
+        )
     }
 
     private fun centeredRms(v: DoubleArray, n: Int): Double {

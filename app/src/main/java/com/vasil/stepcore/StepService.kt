@@ -407,8 +407,37 @@ class StepService : Service(), SensorEventListener {
                 " · rotPath=" + d(r.rotPathDeg, 1) + "°" +
                 " rotMax=" + d(r.rotMaxDeg, 1) + "°" +
                 " · wakeAt=" + (r.wakeOffsetMs?.toString() ?: "—") + "мс" +
-                " chipAt=" + (r.chipOffsetMs?.toString() ?: "—") + "мс" +
-                " chipΔ=" + r.chipDelta
+                " chipDeliveredAt=" +
+                    (r.chipDeliveredOffsetMs?.toString() ?: "—") + "мс" +
+                " chipDeliveredΔ=" + r.chipDeliveredDelta
+        )
+
+        // v434: Evidence Vector Shadow. Только компактная упаковка уже
+        // измеренных физических признаков. Никаких WALK/SHAKE решений.
+        val floor = when {
+            r.accPeriodFloor && r.gyroPeriodFloor -> "A+G"
+            r.accPeriodFloor -> "A"
+            r.gyroPeriodFloor -> "G"
+            else -> "—"
+        }
+        val rotRate = if (r.durationMs > 0L) {
+            r.rotPathDeg * 1000.0 / r.durationMs.toDouble()
+        } else 0.0
+
+        val vectorTrace = energyTrace(now)
+        logEvent(
+            "[вектор] " + vectorTrace + " · " + r.trigger +
+                " · rhythm=" + d(r.accPeriodMs, 0) + "/" +
+                    d(r.gyroPeriodMs, 0) + "мс" +
+                " gap=" + d(r.periodGapMs, 0) + "мс" +
+                " floor=" + floor +
+                " auto=" + d(r.accAuto) + "/" + d(r.gyroAuto) +
+                " · dyn accRms=" + d(r.accDynRms) +
+                " gyroRms=" + d(r.gyroRms) +
+                " rotRate=" + d(rotRate, 1) + "°/с" +
+                " · shape axis=" + d(r.accAxisDom) + "/" +
+                    d(r.gyroAxisDom) +
+                " rotMax=" + d(r.rotMaxDeg, 1) + "°"
         )
     }
 
