@@ -74,6 +74,13 @@ class StepService : Service(), SensorEventListener {
     private var energySigSensor: Sensor? = null
     private var energyMotionSensor: Sensor? = null
     private var energyStationarySensor: Sensor? = null
+
+    // v430: wake-up STEP_DETECTOR — только первый звонок сцены.
+    // После первого события сразу unregisterListener(sensor), поэтому
+    // 800 шагов не превращаются в 800 пробуждений CPU.
+    private var energyWakeStepSensor: Sensor? = null
+    private var energyWakeStepArmed = false
+
     private val energyArmedTypes = HashSet<Int>()
 
     // Последние времена по ДВУМ шкалам:
@@ -85,6 +92,8 @@ class StepService : Service(), SensorEventListener {
     private var energyMotionArrivalMs = 0L
     private var energyStationarySensorMs = 0L
     private var energyStationaryArrivalMs = 0L
+    private var energyWakeStepSensorMs = 0L
+    private var energyWakeStepArrivalMs = 0L
     private var energyChipSensorMs = 0L
     private var energyChipArrivalMs = 0L
 
@@ -98,6 +107,9 @@ class StepService : Service(), SensorEventListener {
             val arrivalMs = SystemClock.elapsedRealtime()
             val sinceChip = energyAgePair(
                 sensorMs, arrivalMs, energyChipSensorMs, energyChipArrivalMs
+            )
+            val sinceWakeStep = energyAgePair(
+                sensorMs, arrivalMs, energyWakeStepSensorMs, energyWakeStepArrivalMs
             )
 
             when (sensor.type) {
@@ -119,6 +131,7 @@ class StepService : Service(), SensorEventListener {
                 "[энерг] триггер " + energySensorName(sensor.type) +
                     " · lag " + energyDeliveryLag(sensorMs, arrivalMs) +
                     " · от чипа " + sinceChip +
+                    " · от wake-step " + sinceWakeStep +
                     " · chip=" + (if (hwLastTotal >= 0L) hwLastTotal else -1L) +
                     " · экран=" + (if (screenOff) "off" else "on") +
                     " · bg=" + (if (StepsState.bgAccel.value) "on" else "off")
@@ -258,6 +271,37 @@ class StepService : Service(), SensorEventListener {
         return armed + "/" + (if (sensor.isWakeUpSensor) "wake" else "nonwake")
     }
 
+    // v430: wake-step только первый звонок сцены.
+    private fun energyWakeStepState(): String {
+        val sensor = energyWakeStepSensor ?: return "—"
+        return (if (energyWakeStepArmed) "armed" else "idle") +
+            "/" + (if (sensor.isWakeUpSensor) "wake" else "nonwake")
+    }
+
+    private fun energyArmWakeStep(): Boolean {
+        if (!energyShadowEnabled || !screenOff) return false
+        val sensor = energyWakeStepSensor ?: return false
+        if (!sensor.isWakeUpSensor) return false
+        if (energyWakeStepArmed) return true
+
+        val ok = runCatching {
+            sensorManager.registerListener(
+                this, sensor, SensorManager.SENSOR_DELAY_NORMAL
+            )
+        }.getOrDefault(false)
+
+        energyWakeStepArmed = ok
+        return ok
+    }
+
+    private fun energyDisarmWakeStep() {
+        val sensor = energyWakeStepSensor
+        if (sensor != null) {
+            runCatching { sensorManager.unregisterListener(this, sensor) }
+        }
+        energyWakeStepArmed = false
+    }
+
     private fun energyArmSensor(sensor: Sensor?): Boolean {
         if (!energyShadowEnabled || sensor == null) return false
         if (sensor.reportingMode != Sensor.REPORTING_MODE_ONE_SHOT) return false
@@ -270,6 +314,7 @@ class StepService : Service(), SensorEventListener {
     }
 
     private fun energyCancelAll() {
+        energyDisarmWakeStep()
         listOf(energySigSensor, energyMotionSensor, energyStationarySensor)
             .filterNotNull()
             .forEach { sensor ->
@@ -287,6 +332,8 @@ class StepService : Service(), SensorEventListener {
         energyMotionArrivalMs = 0L
         energyStationarySensorMs = 0L
         energyStationaryArrivalMs = 0L
+        energyWakeStepSensorMs = 0L
+        energyWakeStepArrivalMs = 0L
         energyChipSensorMs = 0L
         energyChipArrivalMs = 0L
     }
@@ -298,12 +345,14 @@ class StepService : Service(), SensorEventListener {
         energyArmSensor(energySigSensor)
         energyArmSensor(energyMotionSensor)
         energyArmSensor(energyStationarySensor)
+        if (screenOff) energyArmWakeStep()
         if (announce) {
             logEvent(
                 "[энерг] новая сцена: " + reason +
                     " · SIGN=" + energySensorState(energySigSensor) +
                     " · MOTION=" + energySensorState(energyMotionSensor) +
-                    " · STAT=" + energySensorState(energyStationarySensor)
+                    " · STAT=" + energySensorState(energyStationarySensor) +
+                    " · STEP_WAKE=" + energyWakeStepState()
             )
         }
     }
@@ -326,6 +375,11 @@ class StepService : Service(), SensorEventListener {
             sensorManager.getDefaultSensor(Sensor.TYPE_MOTION_DETECT)
         energyStationarySensor =
             sensorManager.getDefaultSensor(Sensor.TYPE_STATIONARY_DETECT)
+        // API 21+: просим именно wake-up пару. На Xiaomi из инвентаризации
+        // есть отдельный step_detect_wakeup; обычный default остаётся
+        // прежним non-wake диагностическим hwDetSensor.
+        energyWakeStepSensor =
+            sensorManager.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR, true)
 
         energyArmFresh(
             if (screenOff) "старт при погашенном экране" else "старт при включённом экране",
@@ -350,6 +404,9 @@ class StepService : Service(), SensorEventListener {
         val stationary = energyAgePair(
             sensorMs, arrivalMs, energyStationarySensorMs, energyStationaryArrivalMs
         )
+        val wakeStep = energyAgePair(
+            sensorMs, arrivalMs, energyWakeStepSensorMs, energyWakeStepArrivalMs
+        )
 
         logEvent(
             "[энерг] чип +" + delta + " total=" + hwTotal +
@@ -357,6 +414,7 @@ class StepService : Service(), SensorEventListener {
                 " · SIGN " + sig +
                 " · MOTION " + motion +
                 " · STAT " + stationary +
+                " · STEP_WAKE " + wakeStep +
                 " · экран=" + (if (screenOff) "off" else "on")
         )
 
@@ -377,6 +435,9 @@ class StepService : Service(), SensorEventListener {
                 }
                 Intent.ACTION_SCREEN_ON -> {
                     screenOff = false
+                    // v430: первый звонок имеет смысл только внутри сцены
+                    // с погашенным экраном.
+                    energyDisarmWakeStep()
                     if (hwSessionAdded > 0) {
                         logEvent("За время блокировки: $hwSessionAdded шагов (аппаратный чип)")
                     }
@@ -1608,6 +1669,50 @@ class StepService : Service(), SensorEventListener {
         val timeMs = event.timestamp / 1_000_000
         when (event.sensor.type) {
             Sensor.TYPE_STEP_DETECTOR -> {
+                // v430: wake-up вариант — только первый звонок Energy Gate.
+                // Он НИКОГДА не идёт в счёт и в старую калибровочную
+                // диагностику. После первого callback сразу отписывается.
+                if (event.sensor.isWakeUpSensor) {
+                    if (energyShadowEnabled && energyWakeStepArmed) {
+                        val sensorMs = event.timestamp / 1_000_000L
+                        val arrivalMs = nowRt
+
+                        // Сначала фиксируем событие, потом снимаем подписку:
+                        // queued callback уже наш, но следующего шага не будет.
+                        energyWakeStepArmed = false
+                        energyWakeStepSensor?.let {
+                            sensorManager.unregisterListener(this, it)
+                        }
+
+                        energyWakeStepSensorMs = sensorMs
+                        energyWakeStepArrivalMs = arrivalMs
+
+                        val afterSig = energyAgePair(
+                            sensorMs, arrivalMs, energySigSensorMs, energySigArrivalMs
+                        )
+                        val afterMotion = energyAgePair(
+                            sensorMs, arrivalMs,
+                            energyMotionSensorMs, energyMotionArrivalMs
+                        )
+                        val afterStationary = energyAgePair(
+                            sensorMs, arrivalMs,
+                            energyStationarySensorMs, energyStationaryArrivalMs
+                        )
+
+                        logEvent(
+                            "[энерг] первый wake-step" +
+                                " · lag " + energyDeliveryLag(sensorMs, arrivalMs) +
+                                " · после SIGN " + afterSig +
+                                " · после MOTION " + afterMotion +
+                                " · после STAT " + afterStationary +
+                                " · chip=" +
+                                (if (hwLastTotal >= 0L) hwLastTotal else -1L) +
+                                " · экран=" + (if (screenOff) "off" else "on")
+                        )
+                    }
+                    return
+                }
+
                 // V11.8: НЕ источник калибровки. Гипотеза V11.7 провалена на
                 // устройстве: MIUI отдаёт события пачками по ~750 мс, метка
                 // времени = момент доставки, не шага (walk==run, разброс 0%).
