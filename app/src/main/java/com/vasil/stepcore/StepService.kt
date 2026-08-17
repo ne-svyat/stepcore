@@ -97,6 +97,18 @@ class StepService : Service(), SensorEventListener {
     private var energyChipSensorMs = 0L
     private var energyChipArrivalMs = 0L
 
+    // v432: детерминированный след Energy Gate.
+    // logEvent() пишет в Room асинхронно, поэтому две строки могут визуально
+    // поменяться местами. scene/ev фиксируются В САМОМ callback до coroutine.
+    private var energySceneId = 0L
+    private val energyEventSeq = java.util.concurrent.atomic.AtomicLong(0L)
+
+    private fun energyTrace(arrivalMs: Long): String {
+        val ev = energyEventSeq.incrementAndGet()
+        return "scene=" + energySceneId + " ev=" + ev +
+            " rt=" + arrivalMs + "мс"
+    }
+
     private val energyTriggerListener = object : TriggerEventListener() {
         override fun onTrigger(event: TriggerEvent) {
             if (!energyShadowEnabled) return
@@ -105,6 +117,7 @@ class StepService : Service(), SensorEventListener {
 
             val sensorMs = event.timestamp / 1_000_000L
             val arrivalMs = SystemClock.elapsedRealtime()
+            val trace = energyTrace(arrivalMs)
             val sinceChip = energyAgePair(
                 sensorMs, arrivalMs, energyChipSensorMs, energyChipArrivalMs
             )
@@ -128,7 +141,8 @@ class StepService : Service(), SensorEventListener {
             }
 
             logEvent(
-                "[энерг] триггер " + energySensorName(sensor.type) +
+                "[энерг] " + trace +
+                    " · триггер " + energySensorName(sensor.type) +
                     " · lag " + energyDeliveryLag(sensorMs, arrivalMs) +
                     " · от чипа " + sinceChip +
                     " · от wake-step " + sinceWakeStep +
@@ -349,13 +363,16 @@ class StepService : Service(), SensorEventListener {
         if (!energyShadowEnabled) return
         energyCancelAll()
         energyResetRelations()
+        energySceneId += 1L
         energyArmSensor(energySigSensor)
         energyArmSensor(energyMotionSensor)
         energyArmSensor(energyStationarySensor)
         if (screenOff) energyArmWakeStep()
         if (announce) {
+            val arrivalMs = SystemClock.elapsedRealtime()
+            val trace = energyTrace(arrivalMs)
             logEvent(
-                "[энерг] новая сцена: " + reason +
+                "[энерг] " + trace + " · новая сцена: " + reason +
                     " · SIGN=" + energySensorState(energySigSensor) +
                     " · MOTION=" + energySensorState(energyMotionSensor) +
                     " · STAT=" + energySensorState(energyStationarySensor) +
@@ -372,7 +389,10 @@ class StepService : Service(), SensorEventListener {
         if (!on) {
             energyCancelAll()
             energyResetRelations()
-            if (announce) logEvent("[энерг] тень ВЫКЛ")
+            if (announce) {
+                val arrivalMs = SystemClock.elapsedRealtime()
+                logEvent("[энерг] " + energyTrace(arrivalMs) + " · тень ВЫКЛ")
+            }
             return
         }
 
@@ -401,6 +421,7 @@ class StepService : Service(), SensorEventListener {
         delta: Int, hwTotal: Long, sensorMs: Long, arrivalMs: Long
     ) {
         if (!energyShadowEnabled) return
+        val trace = energyTrace(arrivalMs)
 
         val sig = energyAgePair(
             sensorMs, arrivalMs, energySigSensorMs, energySigArrivalMs
@@ -416,7 +437,8 @@ class StepService : Service(), SensorEventListener {
         )
 
         logEvent(
-            "[энерг] чип +" + delta + " total=" + hwTotal +
+            "[энерг] " + trace +
+                " · чип +" + delta + " total=" + hwTotal +
                 " · lag " + energyDeliveryLag(sensorMs, arrivalMs) +
                 " · SIGN " + sig +
                 " · MOTION " + motion +
@@ -1686,6 +1708,7 @@ class StepService : Service(), SensorEventListener {
                     if (energyShadowEnabled && energyWakeStepArmed) {
                         val sensorMs = event.timestamp / 1_000_000L
                         val arrivalMs = nowRt
+                        val trace = energyTrace(arrivalMs)
 
                         // Сначала фиксируем событие, потом снимаем подписку:
                         // queued callback уже наш, но следующего шага не будет.
@@ -1708,13 +1731,19 @@ class StepService : Service(), SensorEventListener {
                             sensorMs, arrivalMs,
                             energyStationarySensorMs, energyStationaryArrivalMs
                         )
+                        val afterChip = energyAgePair(
+                            sensorMs, arrivalMs,
+                            energyChipSensorMs, energyChipArrivalMs
+                        )
 
                         logEvent(
-                            "[энерг] wake-step сигнал сцены" +
+                            "[энерг] " + trace +
+                                " · wake-step сигнал сцены" +
                                 " · lag " + energyDeliveryLag(sensorMs, arrivalMs) +
                                 " · после SIGN " + afterSig +
                                 " · после MOTION " + afterMotion +
                                 " · после STAT " + afterStationary +
+                                " · после CHIP " + afterChip +
                                 " · chip=" +
                                 (if (hwLastTotal >= 0L) hwLastTotal else -1L) +
                                 " · экран=" + (if (screenOff) "off" else "on")
