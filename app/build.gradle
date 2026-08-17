@@ -12,8 +12,8 @@ android {
         applicationId "com.vasil.stepcore"
         minSdk 30
         targetSdk 34
-        versionCode 431
-        versionName "3.5.15"
+        versionCode 432
+        versionName "3.5.16"
     }
 
     // v285. Ключ подписи БОЛЬШЕ НЕ ЛЕЖИТ В РЕПОЗИТОРИИ.
@@ -74,5 +74,10 @@ dependencies {
     implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.8.4'
     implementation 'androidx.room:room-runtime:2.6.1'
     implementation 'androidx.room:room-ktx:2.6.1'
+
+    // v437. Activity Recognition через Google Play services.
+    // StepCore сам остаётся без INTERNET permission.
+    implementation 'com.google.android.gms:play-services-location:21.4.0'
+
     ksp 'androidx.room:room-compiler:2.6.1'
 }

@@ -69,6 +69,11 @@
             android:exported="false"
             android:foregroundServiceType="health" />
 
+        <!-- v437. Explicit PendingIntent target Activity Recognition. -->
+        <receiver
+            android:name=".ActivityContextReceiver"
+            android:exported="false" />
+
         <activity
             android:name=".TimelineActivity"
             android:screenOrientation="portrait"

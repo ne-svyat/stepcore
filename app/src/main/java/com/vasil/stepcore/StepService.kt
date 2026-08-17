@@ -41,6 +41,11 @@ class StepService : Service(), SensorEventListener {
     private val features = FeatureCollector()
     private val shakeHold = ShakeHold()
 
+    // v437. Activity Context не считает шаги, а только решает судьбу
+    // уже пришедшей аппаратной STEP_COUNTER delta.
+    private lateinit var activityContext: ActivityContextTracker
+    private val activityGuard = ActivityGuard()
+
     // --- v391: приборы походки. Ничего не решают, только пишут. ---
     private val gait = GaitFeatures()
     private var gaitWindowStart = 0L
@@ -1162,6 +1167,12 @@ class StepService : Service(), SensorEventListener {
 
         createChannel()
         startForeground(NOTIF_ID, buildNotification(walkSteps + runSteps))
+
+        // v437. Один low-power Activity Recognition subscription на жизнь
+        // foreground service. Ошибка всегда fail-open.
+        activityContext = ActivityContextTracker(this)
+        activityContext.start { msg -> logEvent(msg) }
+
         // v251. Панель меток - отдельным обычным уведомлением, иначе
         // HyperOS прячет её на локскрине вместе со служебным.
         createMarksChannel()
@@ -2226,8 +2237,23 @@ class StepService : Service(), SensorEventListener {
                 persistHwBase()
                 if (delta <= 0) return
 
-                // v429: сырая дельта чипа до ShakeHold/транспорта/класса.
+                // v429: сырая дельта чипа до любых guard-решений.
                 energyShadowOnChip(delta, hwTotal, timeMs, nowRt)
+
+                // v437. Activity Guard стоит перед старым ShakeHold.
+                // Stable BLOCK сначала HOLD, а не мгновенный DROP.
+                // WALK/RUN/UNKNOWN fail-open и выпускают held.
+                val ctx = activityContext.snapshot()
+                val ag = activityGuard.onChip(ctx, delta, nowRt)
+                ag.message?.let { logEvent("[контекст] " + it) }
+                if (ag.discarded > 0) {
+                    logEvent(
+                        "[контекст] отброшено ${ag.discarded} шагов чипа · " +
+                            "осталось в HOLD ${ag.held}"
+                    )
+                }
+                if (ag.release <= 0) return
+                delta = ag.release
 
                 val nowElapsed = SystemClock.elapsedRealtime()
                 if (!screenOff && nowElapsed < shakeGuardUntilElapsed) {
@@ -3085,6 +3111,13 @@ class StepService : Service(), SensorEventListener {
         // TriggerEventListener и probe снимаются отдельными путями.
         energyProbeFinish("service destroy")
         energyCancelAll()
+        if (this::activityContext.isInitialized) {
+            activityContext.stop()
+            val held = activityGuard.pendingSteps()
+            if (held > 0) {
+                logEvent("[контекст] Stop: снято из HOLD $held шагов")
+            }
+        }
         sensorManager.unregisterListener(this)
         runCatching { unregisterReceiver(screenReceiver) }
         logHwComparisonBlocking("стоп")
