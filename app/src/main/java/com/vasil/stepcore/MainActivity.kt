@@ -365,16 +365,18 @@ class MainActivity : AppCompatActivity() {
         val diagBtn = findViewById<Button>(R.id.diagButton)
         val reconcileBtn = findViewById<Button>(R.id.reconcileButton)
 
-        // v426. "Полевой сбор" — НЕ новый источник истины. Это только
-        // мастер над четырьмя реальными флагами: решения, походка, сырьё и
-        // фоновый sensor-сбор. Подробный журнал намеренно отдельно.
+        // v428. Полевой сбор = только журналы.
+        //
+        // bg_accel намеренно НЕ входит в мастер: это отдельный энергетически
+        // дорогой режим. Человек может собирать решения/походку/сырьё при
+        // обычном использовании экрана, не включая круглосуточный фон.
+        // Подробный журнал по-прежнему отдельно.
         var fieldSync = false
         fun syncFieldMode() {
             if (fieldSync) return
             val allOn = decisionLogSwitch.isChecked &&
                 gaitLogSwitch.isChecked &&
-                rawLogSwitch.isChecked &&
-                bgAccelToolSwitch.isChecked
+                rawLogSwitch.isChecked
             if (fieldModeSwitch.isChecked != allOn) {
                 fieldSync = true
                 fieldModeSwitch.isChecked = allOn
@@ -420,12 +422,11 @@ class MainActivity : AppCompatActivity() {
         bgAccelToolSwitch.setOnCheckedChangeListener { _, checked ->
             StepsState.bgAccel.value = checked
             prefs.edit().putBoolean("bg_accel", checked).apply()
-            if (!fieldSync) syncFieldMode()
         }
 
         fieldModeSwitch.isChecked =
             decisionLogSwitch.isChecked && gaitLogSwitch.isChecked &&
-            rawLogSwitch.isChecked && bgAccelToolSwitch.isChecked
+            rawLogSwitch.isChecked
         fieldModeSwitch.setOnCheckedChangeListener { _, checked ->
             if (fieldSync) return@setOnCheckedChangeListener
             fieldSync = true
@@ -434,7 +435,6 @@ class MainActivity : AppCompatActivity() {
             decisionLogSwitch.isChecked = checked
             gaitLogSwitch.isChecked = checked
             rawLogSwitch.isChecked = checked
-            bgAccelToolSwitch.isChecked = checked
             fieldSync = false
             syncFieldMode()
         }
@@ -602,6 +602,8 @@ class MainActivity : AppCompatActivity() {
             android.hardware.Sensor.TYPE_STEP_COUNTER to "STEP_COUNTER",
             android.hardware.Sensor.TYPE_STEP_DETECTOR to "STEP_DETECTOR",
             android.hardware.Sensor.TYPE_SIGNIFICANT_MOTION to "SIGNIFICANT_MOTION",
+            android.hardware.Sensor.TYPE_MOTION_DETECT to "MOTION_DETECT",
+            android.hardware.Sensor.TYPE_STATIONARY_DETECT to "STATIONARY_DETECT",
         )
 
         fun modeName(m: Int): String = when (m) {

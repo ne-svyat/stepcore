@@ -755,7 +755,7 @@
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="Включает вместе: журнал решений + признаки походки + сырьё вокруг события + фоновый сбор. «Подробный журнал» не трогает. Это мастер над существующими флагами, не новая механика."
+                    android:text="Включает вместе только три журнала: решения + признаки походки + сырьё вокруг события. «Подробный журнал» и фоновый сбор НЕ трогает. Это безопасный мастер диагностики, а не новая механика."
                     android:textColor="@color/text_dim"
                     android:textSize="13sp"
                     android:layout_marginTop="2dp"
@@ -772,7 +772,7 @@
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="Тот же параметр bg_accel, что и в SYNX. Второго состояния нет. Сейчас фон обрабатывает признаки окнами, но сам расход питания ещё будем проверять отдельно."
+                    android:text="Тот же параметр bg_accel, что и в SYNX. Второго состояния нет. Режим отдельный от «Полевого сбора»: сейчас он держит motion-сенсоры и wakelock активными при погашенном экране, поэтому включай его только для осознанного фонового теста."
                     android:textColor="@color/text_dim"
                     android:textSize="13sp"
                     android:layout_marginTop="2dp"
@@ -787,7 +787,7 @@
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="Ничего не включает. Копирует в буфер фактические сенсоры телефона: accel/gyro, rotation vector, game rotation, магнитометр, давление, step-сенсоры, wake-up и FIFO. Это карта возможностей для следующих приборов."
+                    android:text="Ничего не включает. Копирует фактические сенсоры телефона: accel/gyro, rotation vector, step-сенсоры, Significant Motion, Motion/Stationary Detect, wake-up и FIFO. Это карта возможностей для Energy Gate и следующих приборов."
                     android:textColor="@color/text_dim"
                     android:textSize="13sp"
                     android:layout_marginTop="2dp"
