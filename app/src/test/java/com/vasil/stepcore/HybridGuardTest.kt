@@ -343,24 +343,73 @@ class HybridGuardTest {
     }
 
     @Test
-    fun transportBoundaryIsAlsoProtected() {
+    fun freshTransportTailGraceReleasesImmediately() {
         val g = HybridGuard()
         val ctx = HybridContext(
             HybridContextHint.TRANSPORT,
             stateAgeMs = 20_000L
         )
 
-        g.onChip(
+        // 20 s is intentionally inside CHIP_TAIL_GRACE_MS=30 s.
+        val chip = g.onChip(
             ctx, 40, 11_000_000L,
             prevChipSensorMs = 10_950_000L,
             chipSensorMs = 11_000_000L
         )
 
+        assertEquals(40, chip.release)
+        assertEquals(0, chip.discarded)
+        assertTrue(chip.requestProbe)
+
         g.onProbe(ctx, quiet(), 11_003_000L)
         val p2 = g.onProbe(ctx, quiet(), 11_006_000L)
 
+        // The batch was already protected and released by tail grace.
+        assertEquals(0, p2.release)
+        assertEquals(0, p2.discarded)
+    }
+
+    @Test
+    fun staleTransportBoundaryUsesTemporalLedger() {
+        val g = HybridGuard()
+
+        // Stable transition start = 10_960_000.
+        // stateAge grows with nowRt across synthetic callbacks.
+        val chipCtx = HybridContext(
+            HybridContextHint.TRANSPORT,
+            stateAgeMs = 40_000L
+        )
+        val probe1Ctx = HybridContext(
+            HybridContextHint.TRANSPORT,
+            stateAgeMs = 43_000L
+        )
+        val probe2Ctx = HybridContext(
+            HybridContextHint.TRANSPORT,
+            stateAgeMs = 46_000L
+        )
+
+        val chip = g.onChip(
+            chipCtx, 40, 11_000_000L,
+            prevChipSensorMs = 10_950_000L,
+            chipSensorMs = 11_000_000L
+        )
+
+        assertEquals(0, chip.release)
+        assertEquals(40, chip.held)
+        assertTrue(chip.requestProbe)
+
+        g.onProbe(probe1Ctx, quiet(), 11_003_000L)
+        val p2 = g.onProbe(
+            probe2Ctx,
+            quiet(),
+            11_006_000L
+        )
+
+        // Boundary = 11_006_000 - 46_000 = 10_960_000.
+        // Batch spans 10_950_000 -> 11_000_000.
         assertEquals(40, p2.release)
         assertEquals(0, p2.discarded)
+        assertTrue(p2.reason?.contains("boundary=40") == true)
     }
 
     @Test

@@ -629,10 +629,11 @@ internal class HybridGuard(recoveredHeld: Int = 0) {
         var boundary = 0
         var pre = 0
         var post = 0
-        var known = 0
+        var unknown = 0
+        var batchedSteps = 0
 
         for (b in heldBatches) {
-            known += b.steps
+            batchedSteps += b.steps
 
             val sane =
                 sceneStartRt > 0L &&
@@ -641,6 +642,9 @@ internal class HybridGuard(recoveredHeld: Int = 0) {
                     b.sensorMs >= b.prevSensorMs
 
             if (!sane) {
+                // Batch exists, but temporal provenance is UNKNOWN.
+                // Quantity therefore fails open.
+                unknown += b.steps
                 release += b.steps
                 continue
             }
@@ -663,8 +667,12 @@ internal class HybridGuard(recoveredHeld: Int = 0) {
             }
         }
 
-        val unknown = (heldSteps - known).coerceAtLeast(0)
-        release += unknown
+        // recoveredHeld has no HeldBatch objects. If orphan steps ever reach
+        // this function, they also have unknown provenance and fail open.
+        val orphanUnknown =
+            (heldSteps - batchedSteps).coerceAtLeast(0)
+        unknown += orphanUnknown
+        release += orphanUnknown
 
         clearHeld()
 
