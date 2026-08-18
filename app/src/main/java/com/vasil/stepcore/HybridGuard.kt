@@ -517,7 +517,7 @@ internal class HybridGuard(recoveredHeld: Int = 0) {
             release = n,
             reason = prefix +
                 if (n > 0)
-                    " · RELEASE $n · bypass ${FAIL_OPEN_BYPASS_MS / 1000}s"
+                    " · fail-open · RELEASE $n · bypass ${FAIL_OPEN_BYPASS_MS / 1000}s"
                 else " · fail-open"
         )
     }
