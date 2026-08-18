@@ -13,11 +13,28 @@ internal data class HybridContext(
 )
 
 /**
- * v440. Hybrid production guard with temporal state.
+ * Interactive screen is not the same as an unlocked device.
+ * Hybrid keeps ownership until the keyguard is actually gone.
+ */
+internal fun hybridOwnsPipeline(
+    interactive: Boolean,
+    keyguardLocked: Boolean
+): Boolean = !interactive || keyguardLocked
+
+/**
+ * v441. Temporal Hybrid Guard.
  *
- * TYPE_STEP_COUNTER remains the only quantity source.
- * Google is semantic context. EnergyProbe is physical evidence.
- * No single weak/ambiguous source can DROP steps.
+ * TYPE_STEP_COUNTER is the quantity source.
+ * Google is semantic context.
+ * EnergyProbe is physical evidence.
+ *
+ * New rule:
+ * current SHAKE may only hard-drop chip batches whose entire KNOWN sensor-time
+ * span is after the proven shake-scene boundary.
+ *
+ * Android exposes only aggregate count + timestamp of the LAST step in each
+ * STEP_COUNTER event, so a batch crossing WALK -> SHAKE cannot be split
+ * exactly. Such a boundary batch is released whole.
  */
 internal class HybridGuard(recoveredHeld: Int = 0) {
 
@@ -38,8 +55,29 @@ internal class HybridGuard(recoveredHeld: Int = 0) {
         val reason: String? = null
     )
 
+    private data class HeldBatch(
+        val steps: Int,
+        val prevSensorMs: Long,
+        val sensorMs: Long
+    )
+
+    private data class LedgerSplit(
+        val release: Int,
+        val drop: Int,
+        val boundarySteps: Int,
+        val preSteps: Int,
+        val postSteps: Int,
+        val unknownSteps: Int
+    ) {
+        fun compact(): String =
+            "ledger rel=$release drop=$drop" +
+                " · pre=$preSteps boundary=$boundarySteps" +
+                " post=$postSteps unknown=$unknownSteps"
+    }
+
     private var heldSteps = recoveredHeld.coerceAtLeast(0)
     private var heldSinceRt = 0L
+    private val heldBatches = ArrayList<HeldBatch>()
 
     private var verificationActive = false
     private var blockingVerification = false
@@ -50,10 +88,10 @@ internal class HybridGuard(recoveredHeld: Int = 0) {
     private var lastPhysicalAt = 0L
     private var gaitTrustUntil = 0L
 
-    // v440: memory of an already proven shake scene.
     private var shakeLatchUntil = 0L
+    private var shakeCandidateStartRt = 0L
+    private var shakeSceneStartRt = 0L
 
-    // Prevent immediate HOLD/release/HOLD thrashing after bounded fail-open.
     private var failOpenBypassUntil = 0L
 
     fun pendingSteps(): Int = heldSteps
@@ -62,7 +100,7 @@ internal class HybridGuard(recoveredHeld: Int = 0) {
         val n = heldSteps
         clearHeld()
         clearVerification()
-        shakeLatchUntil = 0L
+        clearShakeMemory()
         failOpenBypassUntil = 0L
         return if (n > 0) {
             Decision(
@@ -72,24 +110,34 @@ internal class HybridGuard(recoveredHeld: Int = 0) {
         } else Decision()
     }
 
+    /**
+     * Historical method name retained to minimize StepService surface.
+     * v441 calls it only on actual foreground handoff, not plain SCREEN_ON.
+     */
     fun onScreenOn(): Decision {
         val n = heldSteps
         clearHeld()
         clearVerification()
         gaitTrustUntil = 0L
-        shakeLatchUntil = 0L
+        clearShakeMemory()
         failOpenBypassUntil = 0L
         return if (n > 0) {
             Decision(
                 release = n,
-                reason = "RELEASE $n · screen-on, управление вернулось старому guard"
+                reason = "RELEASE $n · user present, handoff foreground pipeline"
             )
         } else Decision()
     }
 
     fun onMotionHint(context: HybridContext, nowRt: Long): Decision {
+        expireLatchIfNeeded(nowRt)
+
         if (verificationActive) return Decision(held = heldSteps)
-        if (lastPhysicalAt > 0L && nowRt - lastPhysicalAt < PREFLIGHT_MIN_GAP_MS) {
+
+        if (
+            lastPhysicalAt > 0L &&
+            nowRt - lastPhysicalAt < PREFLIGHT_MIN_GAP_MS
+        ) {
             return Decision(held = heldSteps)
         }
 
@@ -99,33 +147,41 @@ internal class HybridGuard(recoveredHeld: Int = 0) {
                 context.hint == HybridContextHint.TRANSPORT
 
         startVerification(blocking)
+
         return Decision(
             held = heldSteps,
             requestProbe = true,
             reason = "preflight · ${context.hint}" +
-                if (latchActive(nowRt)) " · SHAKE-LATCH"
-                else if (blocking) " · HOLD-ready"
-                else ""
+                if (latchActive(nowRt)) " · SHAKE-LATCH" else
+                    if (blocking) " · HOLD-ready" else ""
         )
     }
 
+    /**
+     * prevChipSensorMs and chipSensorMs are SensorEvent timestamps / 1e6.
+     * Unknown provenance is fail-open for hard DROP.
+     */
     fun onChip(
         context: HybridContext,
         delta: Int,
-        nowRt: Long
+        nowRt: Long,
+        prevChipSensorMs: Long = 0L,
+        chipSensorMs: Long = 0L
     ): Decision {
+        expireLatchIfNeeded(nowRt)
+
         if (delta <= 0) return Decision(held = heldSteps)
 
         if (heldSteps > 0 && holdTimedOut(nowRt)) {
             val old = heldSteps
             clearHeld()
             clearVerification()
-            shakeLatchUntil = 0L
+            clearShakeMemory()
             failOpenBypassUntil = nowRt + FAIL_OPEN_BYPASS_MS
             return Decision(
                 release = old + delta,
-                reason = "TIMEOUT fail-open · RELEASE ${old + delta} · " +
-                    "bypass ${FAIL_OPEN_BYPASS_MS / 1000}s"
+                reason = "TIMEOUT fail-open · RELEASE ${old + delta}" +
+                    " · bypass ${FAIL_OPEN_BYPASS_MS / 1000}s"
             )
         }
 
@@ -136,31 +192,42 @@ internal class HybridGuard(recoveredHeld: Int = 0) {
         val negativeNow = isNegative(context.hint)
 
         if (verificationActive) {
-            if (blockingVerification || negativeNow || latchActive(nowRt)) {
+            if (
+                blockingVerification ||
+                negativeNow ||
+                latchActive(nowRt)
+            ) {
                 blockingVerification = true
-                addHeld(delta, nowRt)
+                addHeld(
+                    delta,
+                    nowRt,
+                    prevChipSensorMs,
+                    chipSensorMs
+                )
                 return Decision(
                     held = heldSteps,
                     reason = "HOLD +$delta · verification active" +
                         if (latchActive(nowRt)) " · SHAKE-LATCH" else ""
                 )
             }
+
             return Decision(release = delta, held = heldSteps)
         }
 
-        // Proven shake remains active across later Xiaomi chip batches.
         if (latchActive(nowRt)) {
-            addHeld(delta, nowRt)
+            addHeld(delta, nowRt, prevChipSensorMs, chipSensorMs)
             startVerification(blocking = true)
             return Decision(
                 held = heldSteps,
                 requestProbe = true,
-                reason = "HOLD +$delta · SHAKE-LATCH · перепроверка"
+                reason = "HOLD +$delta · SHAKE-LATCH · temporal recheck"
             )
         }
 
         val gaitFresh =
-            lastPhysical == Physical.GAIT && nowRt <= gaitTrustUntil
+            lastPhysical == Physical.GAIT &&
+                nowRt <= gaitTrustUntil
+
         if (gaitFresh) {
             return Decision(release = delta, held = heldSteps)
         }
@@ -176,47 +243,47 @@ internal class HybridGuard(recoveredHeld: Int = 0) {
             HybridContextHint.TRANSPORT -> NEGATIVE_REFRESH_MS
         }
 
-        // Fresh semantic negative cannot execute a late STEP_COUNTER tail.
-        if (negativeNow && context.stateAgeMs in 0L until CHIP_TAIL_GRACE_MS) {
+        if (
+            negativeNow &&
+            context.stateAgeMs in 0L until CHIP_TAIL_GRACE_MS
+        ) {
             if (physicalAge > staleAfter) {
                 startVerification(blocking = false)
                 return Decision(
                     release = delta,
-                    held = heldSteps,
                     requestProbe = true,
-                    reason = "PASS +$delta · fresh ${context.hint}, " +
-                        "tail grace + background probe"
+                    reason = "PASS +$delta · fresh ${context.hint}" +
+                        " · tail grace + physical refresh"
                 )
             }
+
             return Decision(
                 release = delta,
-                held = heldSteps,
-                reason = "PASS +$delta · fresh ${context.hint}, tail grace"
+                reason = "PASS +$delta · fresh ${context.hint} · tail grace"
             )
         }
 
         if (negativeNow) {
-            addHeld(delta, nowRt)
+            addHeld(delta, nowRt, prevChipSensorMs, chipSensorMs)
             startVerification(blocking = true)
             return Decision(
                 held = heldSteps,
                 requestProbe = true,
-                reason = "HOLD +$delta · ${context.hint}, нужно физическое подтверждение"
+                reason = "HOLD +$delta · ${context.hint}" +
+                    " · physical confirmation needed"
             )
         }
 
-        // Positive/unknown context still gets periodic physics refresh.
         if (physicalAge > staleAfter) {
             startVerification(blocking = false)
             return Decision(
                 release = delta,
-                held = heldSteps,
                 requestProbe = true,
                 reason = "PASS +$delta · periodic physical refresh"
             )
         }
 
-        return Decision(release = delta, held = heldSteps)
+        return Decision(release = delta)
     }
 
     fun onProbe(
@@ -224,7 +291,11 @@ internal class HybridGuard(recoveredHeld: Int = 0) {
         summary: EnergyProbe.Summary,
         nowRt: Long
     ): Decision {
-        if (!verificationActive) return Decision(held = heldSteps)
+        expireLatchIfNeeded(nowRt)
+
+        if (!verificationActive) {
+            return Decision(held = heldSteps)
+        }
 
         val p = classify(summary)
         lastPhysical = p
@@ -240,11 +311,16 @@ internal class HybridGuard(recoveredHeld: Int = 0) {
         val latched = latchActive(nowRt)
         val negative = isNegative(context.hint)
 
-        // GAIT path. Under stale-prone STILL/TRANSPORT one rhythmic window
-        // is not enough, because v439 showed shake can look like one GAIT.
+        // ---------- GAIT exit ----------
         if (p == Physical.GAIT) {
+            shakeCandidateStartRt = 0L
+
             if (!negative) {
-                return acceptGait(context, nowRt, "$evidence · GAIT accepted")
+                return acceptGait(
+                    context,
+                    nowRt,
+                    "$evidence · GAIT accepted"
+                )
             }
 
             if (firstPhysical == Physical.GAIT) {
@@ -266,7 +342,7 @@ internal class HybridGuard(recoveredHeld: Int = 0) {
 
         val previous = firstPhysical
 
-        // Already confirmed SHAKE: ambiguity is memory, not amnesia.
+        // ---------- already confirmed SHAKE ----------
         if (latched) {
             when (p) {
                 Physical.STRONG_SHAKE -> {
@@ -298,12 +374,14 @@ internal class HybridGuard(recoveredHeld: Int = 0) {
                 Physical.AMBIGUOUS,
                 Physical.QUIET -> {
                     firstPhysical = p
+
                     if (heldSteps <= 0) {
                         clearVerification()
                         return Decision(
                             reason = "$evidence · latch preserved, no HOLD"
                         )
                     }
+
                     return continueOrFailOpen(
                         nowRt,
                         "$evidence · latch keeps HOLD; ambiguity is NOT release"
@@ -314,9 +392,13 @@ internal class HybridGuard(recoveredHeld: Int = 0) {
             }
         }
 
-        // No latch yet: establish SHAKE from multiple windows.
+        // ---------- establish NEW SHAKE scene ----------
         val currentShake = shakeScore(p)
+
         if (currentShake > 0) {
+            val windowStart =
+                (nowRt - summary.durationMs).coerceAtLeast(0L)
+
             val previousShake =
                 if (previous == null) 0 else shakeScore(previous)
 
@@ -324,43 +406,64 @@ internal class HybridGuard(recoveredHeld: Int = 0) {
                 val score = previousShake + currentShake
                 val shakeConfirmed =
                     score >= 3 ||
-                        (context.hint == HybridContextHint.STILL && score >= 2)
+                        (
+                            context.hint == HybridContextHint.STILL &&
+                                score >= 2
+                        )
 
                 if (shakeConfirmed) {
+                    val start =
+                        if (shakeCandidateStartRt > 0L)
+                            shakeCandidateStartRt
+                        else windowStart
+
                     return establishShakeLatch(
                         nowRt,
+                        start,
                         "$evidence · SHAKE confirmed $previous→$p"
                     )
                 }
             }
 
+            shakeCandidateStartRt = windowStart
             firstPhysical = p
             blockingVerification = true
+
             return Decision(
                 held = heldSteps,
                 requestProbe = true,
-                reason = "$evidence · shake evidence 1/2"
+                reason = "$evidence · shake evidence 1/2" +
+                    " · candidateStart=$shakeCandidateStartRt"
             )
         }
 
-        // Transport remains a true hybrid veto: Google + two non-gait windows.
+        // Non-shake breaks only an UNCONFIRMED candidate chain.
+        shakeCandidateStartRt = 0L
+
+        // ---------- transport ----------
         if (
             context.hint == HybridContextHint.TRANSPORT &&
             previous != null &&
             isNonGaitSupport(previous) &&
             isNonGaitSupport(p)
         ) {
-            val n = heldSteps
-            clearHeld()
+            val transportStart =
+                if (context.stateAgeMs >= 0L)
+                    (nowRt - context.stateAgeMs).coerceAtLeast(0L)
+                else 0L
+
+            val split = splitHeldAt(transportStart)
             clearVerification()
+
             return Decision(
-                discarded = n,
+                release = split.release,
+                discarded = split.drop,
                 reason = "$evidence · TRANSPORT confirmed $previous→$p" +
-                    if (n > 0) " · DROP $n" else ""
+                    " · ${split.compact()}"
             )
         }
 
-        // Negative-context ambiguity no longer means RELEASE.
+        // ---------- unresolved context ----------
         if (blockingVerification || negative) {
             firstPhysical = p
             blockingVerification = true
@@ -374,7 +477,7 @@ internal class HybridGuard(recoveredHeld: Int = 0) {
 
             return continueOrFailOpen(
                 nowRt,
-                "$evidence · unresolved negative context; HOLD preserved"
+                "$evidence · unresolved context; HOLD preserved"
             )
         }
 
@@ -389,12 +492,12 @@ internal class HybridGuard(recoveredHeld: Int = 0) {
         val n = heldSteps
         clearHeld()
         clearVerification()
-        shakeLatchUntil = 0L
+        clearShakeMemory()
         failOpenBypassUntil = 0L
         return Decision(
             release = n,
             reason = if (n > 0)
-                "RELEASE $n · physical probe unavailable, fail-open"
+                "RELEASE $n · physical probe unavailable · fail-open"
             else
                 "physical probe unavailable · fail-open"
         )
@@ -408,6 +511,7 @@ internal class HybridGuard(recoveredHeld: Int = 0) {
         ) return Physical.INVALID
 
         val rotRate = rotRate(s)
+
         val periodsInGaitBand =
             s.accPeriodMs in GAIT_PERIOD_MIN_MS..GAIT_PERIOD_MAX_MS &&
                 s.gyroPeriodMs in GAIT_PERIOD_MIN_MS..GAIT_PERIOD_MAX_MS
@@ -421,12 +525,14 @@ internal class HybridGuard(recoveredHeld: Int = 0) {
                 s.gyroAuto >= GAIT_GYRO_AUTO_MIN &&
                 s.gyroRms <= GAIT_GYRO_MAX &&
                 rotRate <= GAIT_ROT_RATE_MAX
+
         if (gait) return Physical.GAIT
 
         val strongShake =
             s.gyroRms >= STRONG_SHAKE_GYRO_MIN &&
                 rotRate >= STRONG_SHAKE_ROT_RATE_MIN &&
                 s.rotMaxDeg >= STRONG_SHAKE_ROT_MAX_MIN
+
         if (strongShake) return Physical.STRONG_SHAKE
 
         val rhythmAnomaly =
@@ -439,6 +545,7 @@ internal class HybridGuard(recoveredHeld: Int = 0) {
             s.gyroRms >= MODERATE_SHAKE_GYRO_MIN &&
                 rotRate >= MODERATE_SHAKE_ROT_RATE_MIN &&
                 rhythmAnomaly
+
         if (moderateShake) return Physical.MODERATE_SHAKE
 
         val quiet =
@@ -457,9 +564,10 @@ internal class HybridGuard(recoveredHeld: Int = 0) {
         val n = heldSteps
         clearHeld()
         clearVerification()
-        shakeLatchUntil = 0L
+        clearShakeMemory()
         failOpenBypassUntil = 0L
         gaitTrustUntil = nowRt + gaitTrustMs(context.hint)
+
         return Decision(
             release = n,
             reason = prefix +
@@ -468,38 +576,116 @@ internal class HybridGuard(recoveredHeld: Int = 0) {
         )
     }
 
-    private fun establishShakeLatch(nowRt: Long, prefix: String): Decision {
-        val n = heldSteps
-        clearHeld()
+    private fun establishShakeLatch(
+        nowRt: Long,
+        sceneStartRt: Long,
+        prefix: String
+    ): Decision {
+        val start = sceneStartRt.coerceAtLeast(0L)
+        val split = splitHeldAt(start)
+
         clearVerification()
         gaitTrustUntil = 0L
         failOpenBypassUntil = 0L
+        shakeCandidateStartRt = 0L
+        shakeSceneStartRt = start
         shakeLatchUntil = nowRt + SHAKE_LATCH_MS
+
         return Decision(
-            discarded = n,
-            reason = prefix + " · latch ${SHAKE_LATCH_MS / 1000}s" +
-                if (n > 0) " · DROP $n" else ""
+            release = split.release,
+            discarded = split.drop,
+            reason = prefix +
+                " · sceneStart=$start" +
+                " · latch ${SHAKE_LATCH_MS / 1000}s" +
+                " · ${split.compact()}"
         )
     }
 
-    private fun confirmLatchedShake(nowRt: Long, prefix: String): Decision {
-        val n = heldSteps
-        clearHeld()
+    private fun confirmLatchedShake(
+        nowRt: Long,
+        prefix: String
+    ): Decision {
+        val split = splitHeldAt(shakeSceneStartRt)
+
         clearVerification()
         gaitTrustUntil = 0L
         failOpenBypassUntil = 0L
+        shakeCandidateStartRt = 0L
         shakeLatchUntil = nowRt + SHAKE_LATCH_MS
+
         return Decision(
-            discarded = n,
-            reason = prefix + " · latch renewed ${SHAKE_LATCH_MS / 1000}s" +
-                if (n > 0) " · DROP $n" else ""
+            release = split.release,
+            discarded = split.drop,
+            reason = prefix +
+                " · sceneStart=$shakeSceneStartRt" +
+                " · latch renewed ${SHAKE_LATCH_MS / 1000}s" +
+                " · ${split.compact()}"
         )
     }
 
-    private fun continueOrFailOpen(nowRt: Long, prefix: String): Decision {
+    private fun splitHeldAt(sceneStartRt: Long): LedgerSplit {
+        var release = 0
+        var drop = 0
+        var boundary = 0
+        var pre = 0
+        var post = 0
+        var known = 0
+
+        for (b in heldBatches) {
+            known += b.steps
+
+            val sane =
+                sceneStartRt > 0L &&
+                    b.prevSensorMs > 0L &&
+                    b.sensorMs > 0L &&
+                    b.sensorMs >= b.prevSensorMs
+
+            if (!sane) {
+                release += b.steps
+                continue
+            }
+
+            when {
+                b.sensorMs <= sceneStartRt -> {
+                    pre += b.steps
+                    release += b.steps
+                }
+
+                b.prevSensorMs < sceneStartRt -> {
+                    boundary += b.steps
+                    release += b.steps
+                }
+
+                else -> {
+                    post += b.steps
+                    drop += b.steps
+                }
+            }
+        }
+
+        val unknown = (heldSteps - known).coerceAtLeast(0)
+        release += unknown
+
+        clearHeld()
+
+        return LedgerSplit(
+            release = release,
+            drop = drop,
+            boundarySteps = boundary,
+            preSteps = pre,
+            postSteps = post,
+            unknownSteps = unknown
+        )
+    }
+
+    private fun continueOrFailOpen(
+        nowRt: Long,
+        prefix: String
+    ): Decision {
         if (heldSteps > 0 && holdTimedOut(nowRt)) {
             return failOpen(nowRt, "$prefix · HOLD timeout")
         }
+
         return Decision(
             held = heldSteps,
             requestProbe = true,
@@ -507,29 +693,51 @@ internal class HybridGuard(recoveredHeld: Int = 0) {
         )
     }
 
-    private fun failOpen(nowRt: Long, prefix: String): Decision {
+    private fun failOpen(
+        nowRt: Long,
+        prefix: String
+    ): Decision {
         val n = heldSteps
         clearHeld()
         clearVerification()
-        shakeLatchUntil = 0L
+        clearShakeMemory()
         failOpenBypassUntil = nowRt + FAIL_OPEN_BYPASS_MS
+
         return Decision(
             release = n,
             reason = prefix +
                 if (n > 0)
-                    " · fail-open · RELEASE $n · bypass ${FAIL_OPEN_BYPASS_MS / 1000}s"
-                else " · fail-open"
+                    " · fail-open · RELEASE $n" +
+                        " · bypass ${FAIL_OPEN_BYPASS_MS / 1000}s"
+                else
+                    " · fail-open"
         )
     }
 
-    private fun addHeld(delta: Int, nowRt: Long) {
-        if (heldSteps <= 0) heldSinceRt = nowRt
+    private fun addHeld(
+        delta: Int,
+        nowRt: Long,
+        prevSensorMs: Long,
+        sensorMs: Long
+    ) {
+        if (heldSteps <= 0) {
+            heldSinceRt = nowRt
+        }
+
         heldSteps += delta
+        heldBatches.add(
+            HeldBatch(
+                steps = delta,
+                prevSensorMs = prevSensorMs,
+                sensorMs = sensorMs
+            )
+        )
     }
 
     private fun clearHeld() {
         heldSteps = 0
         heldSinceRt = 0L
+        heldBatches.clear()
     }
 
     private fun startVerification(blocking: Boolean) {
@@ -537,6 +745,7 @@ internal class HybridGuard(recoveredHeld: Int = 0) {
         blockingVerification = blocking
         firstPhysical = null
         verificationWindows = 0
+        shakeCandidateStartRt = 0L
     }
 
     private fun clearVerification() {
@@ -544,17 +753,36 @@ internal class HybridGuard(recoveredHeld: Int = 0) {
         blockingVerification = false
         firstPhysical = null
         verificationWindows = 0
+        shakeCandidateStartRt = 0L
+    }
+
+    private fun clearShakeMemory() {
+        shakeLatchUntil = 0L
+        shakeSceneStartRt = 0L
+        shakeCandidateStartRt = 0L
+    }
+
+    private fun expireLatchIfNeeded(nowRt: Long) {
+        if (shakeLatchUntil > 0L && nowRt >= shakeLatchUntil) {
+            shakeLatchUntil = 0L
+            shakeSceneStartRt = 0L
+        }
     }
 
     private fun latchActive(nowRt: Long): Boolean =
         shakeLatchUntil > 0L && nowRt < shakeLatchUntil
 
     private fun isNegative(hint: HybridContextHint): Boolean =
-        hint == HybridContextHint.STILL || hint == HybridContextHint.TRANSPORT
+        hint == HybridContextHint.STILL ||
+            hint == HybridContextHint.TRANSPORT
 
     private fun holdTimedOut(nowRt: Long): Boolean {
         if (heldSteps <= 0 || heldSinceRt <= 0L) return false
-        val max = if (latchActive(nowRt)) LATCH_HOLD_MAX_MS else NEGATIVE_HOLD_MAX_MS
+
+        val max =
+            if (latchActive(nowRt)) LATCH_HOLD_MAX_MS
+            else NEGATIVE_HOLD_MAX_MS
+
         return nowRt - heldSinceRt >= max
     }
 
@@ -619,7 +847,7 @@ internal class HybridGuard(recoveredHeld: Int = 0) {
         const val MIN_PROBE_MS = 2_500L
         const val MIN_SAMPLES = 100
 
-        // Physical thresholds from v439 are deliberately frozen in v440.
+        // v440 thresholds deliberately frozen in v441.
         const val GAIT_PERIOD_MIN_MS = 650.0
         const val GAIT_PERIOD_MAX_MS = 1_500.0
         const val GAIT_PERIOD_GAP_MAX_MS = 150.0
@@ -646,7 +874,6 @@ internal class HybridGuard(recoveredHeld: Int = 0) {
         const val UNKNOWN_REFRESH_MS = 45_000L
         const val LOCOMOTION_REFRESH_MS = 60_000L
 
-        // Field-derived temporal policy from the v439 composite test.
         const val SHAKE_LATCH_MS = 30_000L
         const val LATCH_HOLD_MAX_MS = 20_000L
         const val NEGATIVE_HOLD_MAX_MS = 12_000L

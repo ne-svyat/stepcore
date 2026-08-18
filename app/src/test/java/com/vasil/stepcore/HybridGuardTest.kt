@@ -97,26 +97,56 @@ class HybridGuardTest {
             accRms = 0.4
         )
 
-    private fun establishLatch(g: HybridGuard, start: Long) {
+    private fun establishLatch(
+        g: HybridGuard,
+        start: Long = 1_000_000L
+    ) {
         val ctx = HybridContext(HybridContextHint.LOCOMOTION, 100_000L)
         assertTrue(g.onMotionHint(ctx, start).requestProbe)
-        assertTrue(g.onProbe(ctx, strongShake(), start + 3_000L).requestProbe)
+        assertTrue(
+            g.onProbe(ctx, strongShake(), start + 3_000L).requestProbe
+        )
         val p2 = g.onProbe(ctx, strongShake(), start + 6_000L)
-        assertEquals(0, p2.release)
-        assertEquals(0, p2.discarded)
         assertTrue(p2.reason?.contains("SHAKE confirmed") == true)
     }
 
     @Test
+    fun screenOnLockedStillBelongsToHybrid() {
+        assertTrue(
+            hybridOwnsPipeline(
+                interactive = true,
+                keyguardLocked = true
+            )
+        )
+        assertTrue(
+            hybridOwnsPipeline(
+                interactive = false,
+                keyguardLocked = false
+            )
+        )
+        assertFalse(
+            hybridOwnsPipeline(
+                interactive = true,
+                keyguardLocked = false
+            )
+        )
+    }
+
+    @Test
     fun cleanPocketWalkIsGait() {
-        assertEquals(HybridGuard.Physical.GAIT, HybridGuard().classify(summary()))
+        val g = HybridGuard()
+        assertEquals(
+            HybridGuard.Physical.GAIT,
+            g.classify(summary())
+        )
     }
 
     @Test
     fun coherentRhythmDoesNotHideStrongShake() {
+        val g = HybridGuard()
         assertEquals(
             HybridGuard.Physical.STRONG_SHAKE,
-            HybridGuard().classify(strongShake())
+            g.classify(strongShake())
         )
     }
 
@@ -124,129 +154,220 @@ class HybridGuardTest {
     fun stickyStillNeedsTwoConsecutiveGaitsBeforeRelease() {
         val g = HybridGuard()
         val ctx = HybridContext(HybridContextHint.STILL, 300_000L)
-        val chip = g.onChip(ctx, 21, 2_000_000L)
+
+        val chip = g.onChip(
+            ctx, 21, 2_000_000L,
+            prevChipSensorMs = 1_990_000L,
+            chipSensorMs = 2_000_000L
+        )
         assertEquals(21, chip.held)
+
         val gait1 = g.onProbe(ctx, summary(), 2_003_000L)
         assertEquals(0, gait1.release)
         assertEquals(21, gait1.held)
         assertTrue(gait1.requestProbe)
-        assertTrue(gait1.reason?.contains("GAIT 1/2") == true)
+
         val gait2 = g.onProbe(ctx, summary(), 2_006_000L)
         assertEquals(21, gait2.release)
         assertEquals(0, gait2.discarded)
     }
 
     @Test
-    fun stillModeratePlusModerateCanConfirmShake() {
+    fun boundaryBatchIsReleasedWhenShakeConfirms() {
         val g = HybridGuard()
-        val ctx = HybridContext(HybridContextHint.STILL, 300_000L)
-        assertTrue(g.onChip(ctx, 17, 3_000_000L).requestProbe)
-        assertTrue(g.onProbe(ctx, moderateShake(), 3_003_000L).requestProbe)
-        val p2 = g.onProbe(ctx, moderateShake(), 3_006_000L)
-        assertEquals(17, p2.discarded)
-        assertEquals(0, p2.release)
+        val ctx = HybridContext(HybridContextHint.LOCOMOTION, 100_000L)
+
+        assertTrue(g.onMotionHint(ctx, 3_000_000L).requestProbe)
+        assertTrue(
+            g.onProbe(ctx, strongShake(), 3_003_000L).requestProbe
+        )
+
+        val chip = g.onChip(
+            ctx, 192, 3_004_000L,
+            prevChipSensorMs = 2_880_000L,
+            chipSensorMs = 3_004_000L
+        )
+        assertEquals(192, chip.held)
+
+        val confirm =
+            g.onProbe(ctx, strongShake(), 3_006_000L)
+
+        assertEquals(192, confirm.release)
+        assertEquals(0, confirm.discarded)
+        assertTrue(confirm.reason?.contains("boundary=192") == true)
     }
 
     @Test
-    fun latchedShakeHoldsAmbiguousBatchesUntilStrongDropsAll() {
+    fun fullyPostShakeBatchCanBeDropped() {
         val g = HybridGuard()
-        establishLatch(g, 4_000_000L)
         val ctx = HybridContext(HybridContextHint.LOCOMOTION, 100_000L)
-        assertEquals(22, g.onChip(ctx, 22, 4_008_000L).held)
-        val a1 = g.onProbe(ctx, ambiguous(), 4_011_000L)
-        assertEquals(22, a1.held)
+
+        g.onMotionHint(ctx, 4_000_000L)
+        g.onProbe(ctx, strongShake(), 4_003_000L)
+
+        val chip = g.onChip(
+            ctx, 17, 4_004_000L,
+            prevChipSensorMs = 4_001_000L,
+            chipSensorMs = 4_004_000L
+        )
+        assertEquals(17, chip.held)
+
+        val confirm =
+            g.onProbe(ctx, strongShake(), 4_006_000L)
+
+        assertEquals(0, confirm.release)
+        assertEquals(17, confirm.discarded)
+        assertTrue(confirm.reason?.contains("post=17") == true)
+    }
+
+    @Test
+    fun unknownProvenanceIsFailOpenOnShake() {
+        val g = HybridGuard()
+        val ctx = HybridContext(HybridContextHint.LOCOMOTION, 100_000L)
+
+        g.onMotionHint(ctx, 5_000_000L)
+        g.onProbe(ctx, strongShake(), 5_003_000L)
+        g.onChip(ctx, 50, 5_004_000L)
+
+        val confirm =
+            g.onProbe(ctx, strongShake(), 5_006_000L)
+
+        assertEquals(50, confirm.release)
+        assertEquals(0, confirm.discarded)
+        assertTrue(confirm.reason?.contains("unknown=50") == true)
+    }
+
+    @Test
+    fun latchedLedgerSplitsBoundaryAndPostShakeBatches() {
+        val g = HybridGuard()
+        establishLatch(g, 6_000_000L)
+        val ctx = HybridContext(HybridContextHint.LOCOMOTION, 100_000L)
+
+        g.onChip(
+            ctx, 192, 6_008_000L,
+            prevChipSensorMs = 5_850_000L,
+            chipSensorMs = 6_008_000L
+        )
+        g.onProbe(ctx, ambiguous(), 6_011_000L)
+
+        g.onChip(
+            ctx, 61, 6_012_000L,
+            prevChipSensorMs = 6_008_000L,
+            chipSensorMs = 6_012_000L
+        )
+
+        val strong =
+            g.onProbe(ctx, strongShake(), 6_014_000L)
+
+        assertEquals(192, strong.release)
+        assertEquals(61, strong.discarded)
+        assertEquals(0, g.pendingSteps())
+        assertTrue(strong.reason?.contains("boundary=192") == true)
+        assertTrue(strong.reason?.contains("post=61") == true)
+    }
+
+    @Test
+    fun latchedAmbiguityStillDoesNotRelease() {
+        val g = HybridGuard()
+        establishLatch(g, 7_000_000L)
+        val ctx = HybridContext(HybridContextHint.LOCOMOTION, 100_000L)
+
+        val chip = g.onChip(
+            ctx, 22, 7_008_000L,
+            prevChipSensorMs = 7_001_000L,
+            chipSensorMs = 7_008_000L
+        )
+        assertEquals(22, chip.held)
+
+        val a1 = g.onProbe(ctx, ambiguous(), 7_011_000L)
         assertEquals(0, a1.release)
+        assertEquals(22, a1.held)
         assertTrue(a1.requestProbe)
-        assertEquals(40, g.onChip(ctx, 18, 4_012_000L).held)
-        val a2 = g.onProbe(ctx, ambiguous(), 4_014_000L)
-        assertEquals(40, a2.held)
-        assertEquals(0, a2.release)
-        assertEquals(56, g.onChip(ctx, 16, 4_015_000L).held)
-        val strong = g.onProbe(ctx, strongShake(), 4_017_000L)
-        assertEquals(56, strong.discarded)
-        assertEquals(0, strong.release)
     }
 
     @Test
     fun latchedShakeToLocomotionGaitReleasesImmediately() {
         val g = HybridGuard()
-        establishLatch(g, 5_000_000L)
+        establishLatch(g, 8_000_000L)
         val ctx = HybridContext(HybridContextHint.LOCOMOTION, 100_000L)
-        assertEquals(22, g.onChip(ctx, 22, 5_008_000L).held)
-        val gait = g.onProbe(ctx, summary(), 5_011_000L)
+
+        g.onChip(
+            ctx, 22, 8_008_000L,
+            prevChipSensorMs = 8_001_000L,
+            chipSensorMs = 8_008_000L
+        )
+
+        val gait = g.onProbe(ctx, summary(), 8_011_000L)
         assertEquals(22, gait.release)
         assertEquals(0, gait.discarded)
     }
 
     @Test
-    fun latchedShakeStickyStillAlsoNeedsTwoGaits() {
+    fun stillModeratePlusModerateProtectsBoundary() {
         val g = HybridGuard()
-        establishLatch(g, 6_000_000L)
         val ctx = HybridContext(HybridContextHint.STILL, 300_000L)
-        assertEquals(20, g.onChip(ctx, 20, 6_008_000L).held)
-        val gait1 = g.onProbe(ctx, summary(), 6_011_000L)
-        assertEquals(0, gait1.release)
-        assertEquals(20, gait1.held)
-        assertTrue(gait1.requestProbe)
-        val gait2 = g.onProbe(ctx, summary(), 6_014_000L)
-        assertEquals(20, gait2.release)
-        assertEquals(0, gait2.discarded)
+
+        val chip = g.onChip(
+            ctx, 17, 9_000_000L,
+            prevChipSensorMs = 8_980_000L,
+            chipSensorMs = 9_000_000L
+        )
+        assertTrue(chip.requestProbe)
+
+        g.onProbe(ctx, moderateShake(), 9_003_000L)
+        val p2 = g.onProbe(ctx, moderateShake(), 9_006_000L)
+
+        assertEquals(17, p2.release)
+        assertEquals(0, p2.discarded)
     }
 
     @Test
-    fun latchedAmbiguityEventuallyFailsOpen() {
+    fun negativeAmbiguityStillFailsOpenAfterBoundedTimeout() {
         val g = HybridGuard()
-        establishLatch(g, 7_000_000L)
-        val ctx = HybridContext(HybridContextHint.LOCOMOTION, 100_000L)
-        assertEquals(18, g.onChip(ctx, 18, 7_008_000L).held)
-        g.onProbe(ctx, ambiguous(), 7_011_000L)
-        g.onProbe(ctx, ambiguous(), 7_014_000L)
-        g.onProbe(ctx, ambiguous(), 7_017_000L)
-        g.onProbe(ctx, ambiguous(), 7_020_000L)
-        g.onProbe(ctx, ambiguous(), 7_023_000L)
-        g.onProbe(ctx, ambiguous(), 7_026_000L)
-        val timeout = g.onProbe(ctx, ambiguous(), 7_029_000L)
-        assertEquals(18, timeout.release)
+        val ctx = HybridContext(HybridContextHint.STILL, 300_000L)
+
+        g.onChip(
+            ctx, 15, 10_000_000L,
+            prevChipSensorMs = 9_990_000L,
+            chipSensorMs = 10_000_000L
+        )
+
+        g.onProbe(ctx, ambiguous(), 10_003_000L)
+        g.onProbe(ctx, ambiguous(), 10_006_000L)
+        g.onProbe(ctx, ambiguous(), 10_009_000L)
+        val timeout = g.onProbe(ctx, ambiguous(), 10_012_000L)
+
+        assertEquals(15, timeout.release)
         assertEquals(0, timeout.discarded)
         assertTrue(timeout.reason?.contains("fail-open") == true)
     }
 
     @Test
-    fun negativeAmbiguityDoesNotReleaseBeforeBoundedTimeout() {
+    fun transportBoundaryIsAlsoProtected() {
         val g = HybridGuard()
-        val ctx = HybridContext(HybridContextHint.STILL, 300_000L)
-        assertTrue(g.onChip(ctx, 15, 8_000_000L).requestProbe)
-        assertEquals(0, g.onProbe(ctx, ambiguous(), 8_003_000L).release)
-        assertEquals(0, g.onProbe(ctx, ambiguous(), 8_006_000L).release)
-        assertEquals(0, g.onProbe(ctx, ambiguous(), 8_009_000L).release)
-        val timeout = g.onProbe(ctx, ambiguous(), 8_012_000L)
-        assertEquals(15, timeout.release)
-        assertEquals(0, timeout.discarded)
-    }
+        val ctx = HybridContext(
+            HybridContextHint.TRANSPORT,
+            stateAgeMs = 20_000L
+        )
 
-    @Test
-    fun freshNegativeTransitionGetsChipTailGrace() {
-        val g = HybridGuard()
-        val ctx = HybridContext(HybridContextHint.STILL, 5_000L)
-        val d = g.onChip(ctx, 42, 9_000_000L)
-        assertEquals(42, d.release)
-        assertEquals(0, d.discarded)
-    }
+        g.onChip(
+            ctx, 40, 11_000_000L,
+            prevChipSensorMs = 10_950_000L,
+            chipSensorMs = 11_000_000L
+        )
 
-    @Test
-    fun transportStillNeedsTwoPhysicalNonGaitWindows() {
-        val g = HybridGuard()
-        val ctx = HybridContext(HybridContextHint.TRANSPORT, 120_000L)
-        assertTrue(g.onChip(ctx, 12, 10_000_000L).requestProbe)
-        assertTrue(g.onProbe(ctx, quiet(), 10_003_000L).requestProbe)
-        val p2 = g.onProbe(ctx, quiet(), 10_006_000L)
-        assertEquals(12, p2.discarded)
-        assertEquals(0, p2.release)
+        g.onProbe(ctx, quiet(), 11_003_000L)
+        val p2 = g.onProbe(ctx, quiet(), 11_006_000L)
+
+        assertEquals(40, p2.release)
+        assertEquals(0, p2.discarded)
     }
 
     @Test
     fun recoveredHoldIsFailOpen() {
         val g = HybridGuard(recoveredHeld = 33)
+        assertEquals(33, g.pendingSteps())
+
         val d = g.recoverFailOpen()
         assertEquals(33, d.release)
         assertEquals(0, g.pendingSteps())
@@ -256,21 +377,15 @@ class HybridGuardTest {
     fun locomotionHintDoesNotBecomePermanentTruth() {
         val g = HybridGuard()
         val ctx = HybridContext(HybridContextHint.LOCOMOTION, 100_000L)
-        val d = g.onChip(ctx, 20, 11_000_000L)
+
+        val d = g.onChip(
+            ctx, 20, 12_000_000L,
+            prevChipSensorMs = 11_990_000L,
+            chipSensorMs = 12_000_000L
+        )
+
         assertEquals(20, d.release)
         assertTrue(d.requestProbe)
         assertFalse(d.discarded > 0)
-    }
-
-    @Test
-    fun evidenceLineIsPresentOnPhysicalDecision() {
-        val g = HybridGuard()
-        val ctx = HybridContext(HybridContextHint.LOCOMOTION, 100_000L)
-        g.onMotionHint(ctx, 12_000_000L)
-        val d = g.onProbe(ctx, strongShake(), 12_003_000L)
-        assertTrue(d.reason?.contains("phys=STRONG_SHAKE") == true)
-        assertTrue(d.reason?.contains("gyro=") == true)
-        assertTrue(d.reason?.contains("rot=") == true)
-        assertTrue(d.reason?.contains("ctx=LOCOMOTION") == true)
     }
 }

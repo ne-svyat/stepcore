@@ -4,6 +4,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.app.KeyguardManager
 import android.app.Service
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -46,6 +47,16 @@ class StepService : Service(), SensorEventListener {
     private lateinit var activityContext: ActivityContextTracker
     private lateinit var hybridGuard: HybridGuard
     private lateinit var hybridProbe: HybridProbeController
+    private lateinit var keyguardManager: KeyguardManager
+
+    // v441. Screen interactive != user present.
+    @Volatile private var hybridBackground = false
+
+    // STEP_COUNTER temporal provenance.
+    private var lastHybridChipSensorMs = 0L
+
+    // Best-effort FIFO flush timing witness.
+    private var lastHybridFlushRt = 0L
 
     // --- v391: приборы походки. Ничего не решают, только пишут. ---
     private val gait = GaitFeatures()
@@ -881,47 +892,85 @@ class StepService : Service(), SensorEventListener {
         energyChipArrivalMs = arrivalMs
     }
 
+    private fun keyguardShowing(): Boolean =
+        runCatching { keyguardManager.isKeyguardLocked }
+            .getOrDefault(true)
+
+    private fun finishHybridBackground(reason: String) {
+        if (!hybridBackground) return
+
+        // Hybrid decision is applied while ownership is still true.
+        hybridProbe.setScreenOff(false)
+        handleHybridDecision(
+            hybridGuard.onScreenOn(),
+            SystemClock.elapsedRealtime(),
+            reason
+        )
+        hybridBackground = false
+
+        if (hwSessionAdded > 0) {
+            logEvent(
+                "До РАЗБЛОКИРОВКИ принято гибридом: " +
+                    "$hwSessionAdded шагов · handoff=$reason"
+            )
+        }
+        hwSessionAdded = 0
+
+        detector.resetTransient()
+        features.reset()
+        lastLoggedMode = "IDLE"
+        StepsState.mode.value = "IDLE"
+    }
+
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context?, intent: Intent?) {
             when (intent?.action) {
                 Intent.ACTION_SCREEN_OFF -> {
+                    val enteringBackground = !hybridBackground
                     screenOff = true
+                    hybridBackground = true
                     hybridProbe.setScreenOff(true)
                     updateMotionSensors()
-                    // v429. SCREEN_OFF — фактическая новая сцена без таймера.
+
+                    // Energy Shadow still follows physical interactive state.
                     energyArmFresh("экран погашен", announce = true)
-                    hwSessionAdded = 0
-                    divWindowStartMs = 0L   // окно расхождения только при экране вкл
+
+                    if (enteringBackground) {
+                        hwSessionAdded = 0
+                    }
+                    divWindowStartMs = 0L
                 }
+
                 Intent.ACTION_SCREEN_ON -> {
-                    // Сначала отменяем production probe, затем fail-open
-                    // выпускаем HOLD ещё как screen-off delta. Так старый
-                    // screen-on ShakeHold не сможет повторно задержать её.
-                    hybridProbe.setScreenOff(false)
-                    handleHybridDecision(
-                        hybridGuard.onScreenOn(),
-                        SystemClock.elapsedRealtime(),
-                        "screen-on"
-                    )
                     screenOff = false
 
-                    // Sampling остаётся только one-shot seed.
+                    val locked = keyguardShowing()
+                    val shouldHybridOwn = hybridOwnsPipeline(
+                        interactive = true,
+                        keyguardLocked = locked
+                    )
+
+                    if (shouldHybridOwn) {
+                        hybridBackground = true
+                        hybridProbe.setScreenOff(true)
+                        logEvent(
+                            "[гибрид] SCREEN_ON · keyguard=locked" +
+                                " · latch/HOLD сохранены"
+                        )
+                    } else {
+                        finishHybridBackground("screen-on unlocked")
+                    }
+
+                    // Semantic seed is harmless; it never owns quantity.
                     activityContext.seed { msg -> logEvent(msg) }
 
-                    // v430: первый звонок имеет смысл только внутри сцены
-                    // с погашенным экраном.
                     energyDisarmWakeStep()
-                    if (hwSessionAdded > 0) {
-                        logEvent(
-                            "До разблокировки доставлено чипом: " +
-                                "$hwSessionAdded шагов · хвост может прийти после SCREEN_ON"
-                        )
-                    }
-                    hwSessionAdded = 0
-                    detector.resetTransient()
-                    features.reset()
-                    lastLoggedMode = "IDLE"
-                    StepsState.mode.value = "IDLE"
+                    updateMotionSensors()
+                }
+
+                Intent.ACTION_USER_PRESENT -> {
+                    screenOff = false
+                    finishHybridBackground("user-present")
                     updateMotionSensors()
                 }
             }
@@ -981,7 +1030,7 @@ class StepService : Service(), SensorEventListener {
      * Во всех остальных случаях телефон спит, а шаги считает чип.
      */
     private fun motionNeeded(): Boolean =
-        !screenOff || StepsState.bgAccel.value ||
+        !hybridBackground || StepsState.bgAccel.value ||
             SystemClock.elapsedRealtime() < labelWindowUntilElapsed
 
     /**
@@ -1172,6 +1221,8 @@ class StepService : Service(), SensorEventListener {
     override fun onCreate() {
         super.onCreate()
         sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
+        keyguardManager =
+            getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
         val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
         vibrator = vm.defaultVibrator
 
@@ -1335,9 +1386,20 @@ class StepService : Service(), SensorEventListener {
         registerReceiver(screenReceiver, IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_OFF)
             addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_USER_PRESENT)
         })
         screenOff = !pm.isInteractive
-        hybridProbe.setScreenOff(screenOff)
+        hybridBackground = hybridOwnsPipeline(
+            interactive = pm.isInteractive,
+            keyguardLocked = keyguardShowing()
+        )
+        hybridProbe.setScreenOff(hybridBackground)
+
+        logEvent(
+            "[гибрид] ownership start · interactive=${pm.isInteractive}" +
+                " · keyguard=${keyguardShowing()}" +
+                " · hybrid=$hybridBackground"
+        )
 
         handleHybridDecision(
             hybridGuard.recoverFailOpen(),
@@ -2182,10 +2244,16 @@ class StepService : Service(), SensorEventListener {
      * v439. Единственная воронка уже ПРИНЯТОЙ аппаратной delta.
      * Async RELEASE проходит тем же путём, что обычный STEP_COUNTER callback.
      */
-    private fun applyAcceptedChipDelta(deltaIn: Int, nowRt: Long) {
+    private fun applyAcceptedChipDelta(
+        deltaIn: Int,
+        nowRt: Long,
+        fromHybrid: Boolean = false
+    ) {
         var delta = deltaIn
         val nowElapsed = nowRt
-        if (!screenOff && nowElapsed < shakeGuardUntilElapsed) {
+
+        // v441. A Hybrid RELEASE has already passed the background guard.
+        if (!fromHybrid && !screenOff && nowElapsed < shakeGuardUntilElapsed) {
             // Guard 1 (v184): КАРАНТИН ВМЕСТО РАССТРЕЛА.
             // Раньше дельта отбрасывалась навсегда, и телефон в
             // кармане при включённом экране терял всё: 728 шагов
@@ -2227,7 +2295,7 @@ class StepService : Service(), SensorEventListener {
             }
             if (v.release <= 0) return
             delta = v.release
-        } else if (shakeHold.heldSteps > 0) {
+        } else if (!fromHybrid && shakeHold.heldSteps > 0) {
             // Тряска кончилась, ритм так и не подтвердился -
             // отбрасываем, ровно как до v184.
             val lost = shakeHold.onShakeEnded()
@@ -2246,7 +2314,10 @@ class StepService : Service(), SensorEventListener {
             }
         } else transportChipAccum = 0
         rolloverDayIfNeeded()
-        val asRun = !screenOff && detector.mode == StepDetector.Mode.RUN
+        val asRun =
+            !fromHybrid &&
+                !screenOff &&
+                detector.mode == StepDetector.Mode.RUN
         // Интервал шага копим только если детектор его реально мерил
         // (ходьба/бег с акселерометром). В кармане mode иной - каденс
         // не искажаем, час останется с нулём и откатится на константу.
@@ -2284,7 +2355,7 @@ class StepService : Service(), SensorEventListener {
             }
         }
         else { walkSteps += delta; bumpHour(delta, 0) }
-        if (screenOff) hwSessionAdded += delta
+        if (hybridBackground) hwSessionAdded += delta
         // v185: корпус в кармане. Детектор здесь молчит (вето по
         // гироскопу), но метка уклона, оси гироскопа, наклон
         // телефона и амплитуда из сырого канала существуют и без
@@ -2356,10 +2427,14 @@ class StepService : Service(), SensorEventListener {
         }
 
         if (d.release > 0) {
-            applyAcceptedChipDelta(d.release, nowRt)
+            applyAcceptedChipDelta(
+                d.release,
+                nowRt,
+                fromHybrid = true
+            )
         }
 
-        if (d.requestProbe && screenOff) {
+        if (d.requestProbe && hybridBackground) {
             val ok = hybridProbe.requestProbe(probeReason)
             if (!ok) {
                 val failOpen = hybridGuard.onProbeUnavailable()
@@ -2368,16 +2443,40 @@ class StepService : Service(), SensorEventListener {
                 if (failOpen.release > 0) {
                     applyAcceptedChipDelta(
                         failOpen.release,
-                        SystemClock.elapsedRealtime()
+                        SystemClock.elapsedRealtime(),
+                        fromHybrid = true
                     )
                 }
             }
         }
     }
 
+    private fun maybeFlushHybridChip(nowRt: Long) {
+        if (!hybridBackground) return
+        if (
+            lastHybridFlushRt > 0L &&
+            nowRt - lastHybridFlushRt < HYBRID_FLUSH_MIN_GAP_MS
+        ) return
+
+        lastHybridFlushRt = nowRt
+
+        val ok = runCatching {
+            sensorManager.flush(this)
+        }.getOrDefault(false)
+
+        logEvent(
+            "[ledger] preflight STEP_COUNTER flush=" +
+                (if (ok) "requested" else "unsupported")
+        )
+    }
+
     private fun onHybridSignificant() {
-        if (!screenOff || !this::activityContext.isInitialized) return
+        if (!hybridBackground || !this::activityContext.isInitialized) return
         val now = SystemClock.elapsedRealtime()
+
+        // Best-effort FIFO drain before the physical verdict.
+        maybeFlushHybridChip(now)
+
         val context = activityContext.snapshot().hybridContext(now)
         handleHybridDecision(
             hybridGuard.onMotionHint(context, now),
@@ -2390,7 +2489,7 @@ class StepService : Service(), SensorEventListener {
         summary: EnergyProbe.Summary,
         reason: String
     ) {
-        if (!screenOff || !this::activityContext.isInitialized) return
+        if (!hybridBackground || !this::activityContext.isInitialized) return
         val now = SystemClock.elapsedRealtime()
         val context = activityContext.snapshot().hybridContext(now)
         val d = hybridGuard.onProbe(context, summary, now)
@@ -2491,12 +2590,14 @@ class StepService : Service(), SensorEventListener {
                 // сброс после перезагрузки телефона (чип стартует с нуля)
                 if (hwBaseline < 0 || hwTotal < hwBaseline) {
                     hwBaseline = hwTotal
+                    lastHybridChipSensorMs = timeMs
                     persistHwBase()
                     return
                 }
                 if (adoptBaselineOnce) {
                     // после ручного Стопа: шаги чипа за паузу не добавляем
                     hwBaseline = hwTotal
+                    lastHybridChipSensorMs = timeMs
                     persistHwBase()
                     adoptBaselineOnce = false
                     return
@@ -2512,6 +2613,9 @@ class StepService : Service(), SensorEventListener {
                 // Известная цена: чип придерживает первые ~10 шагов серии и
                 // отдаёт пачкой; короткие проходки могут не засчитаться
                 // (конституция: лучше недосчитать один, чем добавить десять).
+                val prevHybridChipSensorMs = lastHybridChipSensorMs
+                lastHybridChipSensorMs = timeMs
+
                 var delta = (hwTotal - hwBaseline).toInt()
                 hwBaseline = hwTotal
                 persistHwBase()
@@ -2520,9 +2624,8 @@ class StepService : Service(), SensorEventListener {
                 // v429: сырая дельта чипа до любых guard-решений.
                 energyShadowOnChip(delta, hwTotal, timeMs, nowRt)
 
-                // v439. Screen-on остаётся старой проверенной ветке.
-                // Screen-off идёт через hybrid context + physical evidence.
-                if (!screenOff) {
+                // v441. Interactive lockscreen still belongs to Hybrid.
+                if (!hybridBackground) {
                     applyAcceptedChipDelta(delta, nowRt)
                     return
                 }
@@ -2532,7 +2635,9 @@ class StepService : Service(), SensorEventListener {
                 val hd = hybridGuard.onChip(
                     hybridContext,
                     delta,
-                    nowRt
+                    nowRt,
+                    prevChipSensorMs = prevHybridChipSensorMs,
+                    chipSensorMs = timeMs
                 )
                 handleHybridDecision(hd, nowRt, "chip")
                 return
@@ -3624,6 +3729,10 @@ class StepService : Service(), SensorEventListener {
         const val KEY_ENERGY_SHADOW = "energy_shadow"
         // v439. Crash-safe quarantine of consumed STEP_COUNTER delta.
         const val KEY_HYBRID_HELD = "hybrid_guard_held"
+
+        // v441. Timing assist only, never a verdict.
+        const val HYBRID_FLUSH_MIN_GAP_MS = 10_000L
+
         // v433. Бюджет измерения, НЕ порог классификации:
         // ~3 с при ~50 Гц дают около 150 физических отсчётов.
         const val ENERGY_PROBE_WINDOW_MS = 3_000L
