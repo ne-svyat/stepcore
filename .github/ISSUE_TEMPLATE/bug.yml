@@ -1,24 +1,47 @@
 name: Что-то работает не так
-description: Счёт шагов, расход батареи, экран, вылет — всё сюда
+description: Счёт, WALK/RUN, SYNX, Экспедиция, Vault, батарея или интерфейс
 labels: ["баг"]
 body:
   - type: markdown
     attributes:
       value: |
-        Спасибо, что нашли время написать.
+        Спасибо за отчёт.
 
-        Приложение написано и проверено на **одном** телефоне (Xiaomi 13T Pro,
-        HyperOS). Как оно ведёт себя на других — я не знаю, поэтому ваш отчёт
-        имеет реальную ценность.
+        **StepCore находится в активной разработке.**
+        WALK/RUN, SYNX, автокалибровка и Экспедиция сейчас BETA.
+        Vault тоже BETA, хотя уже пригоден для обычного использования.
 
-        Данные никуда не отправляются автоматически. Всё, что вы приложите
-        к этому сообщению, вы прикладываете сами и осознанно.
+        Приложение в основном проверяется на Xiaomi 13T Pro / HyperOS, поэтому
+        модель телефона и условия воспроизведения здесь важнее красивого описания.
+
+        Ничего не отправляется в GitHub автоматически. Issue и вложения публичны:
+        прикладывайте только то, что готовы опубликовать.
+
+        Инструкция для тестировщиков: [docs/TESTING.md](https://github.com/ne-svyat/stepcore/blob/main/docs/TESTING.md)
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Где проблема
+      options:
+        - Счёт шагов / фон
+        - Ходьба / бег
+        - Калибровка
+        - SYNX / обучение
+        - Аналитика / история / Timeline
+        - Экспедиция (BETA)
+        - Vault (BETA)
+        - Интерфейс
+        - Батарея / процесс убит системой
+        - Другое
+    validations:
+      required: true
 
   - type: input
     id: device
     attributes:
       label: Телефон
-      description: Производитель и модель
+      description: Производитель и точная модель
       placeholder: Samsung Galaxy S23
     validations:
       required: true
@@ -27,8 +50,8 @@ body:
     id: android
     attributes:
       label: Android и оболочка
-      description: Версия Android и оболочка, если она есть
-      placeholder: Android 14, One UI 6.1
+      description: Версия Android + One UI / HyperOS / Pixel UI / другое
+      placeholder: Android 16, One UI 8
     validations:
       required: true
 
@@ -36,55 +59,86 @@ body:
     id: version
     attributes:
       label: Версия StepCore
-      description: Профиль → внизу экрана
-      placeholder: 1.83.0
+      description: Версия установленной сборки
+      placeholder: 3.5.21
     validations:
       required: true
+
+  - type: dropdown
+    id: position
+    attributes:
+      label: Где был телефон
+      options:
+        - Карман
+        - Рука
+        - Рюкзак / сумка
+        - На столе / неподвижно
+        - Машина / держатель
+        - Положение менялось
+        - Не относится / не помню
+
+  - type: dropdown
+    id: screen
+    attributes:
+      label: Состояние экрана
+      options:
+        - Экран был заблокирован почти всё время
+        - Экран был включён
+        - Было и так, и так
+        - Не относится / не помню
 
   - type: textarea
     id: what
     attributes:
       label: Что произошло
-      description: Своими словами, без терминов — так понятнее
+      description: Факты и примерное время события
       placeholder: |
-        Прошёл около часа, приложение показало 300 шагов,
-        системный шагомер за то же время — 4200.
+        С 14:32 до 14:36 бежал, телефон был в правом кармане.
+        После разблокировки весь участок остался как WALK.
     validations:
       required: true
 
   - type: textarea
-    id: steps
+    id: expected
     attributes:
-      label: Как это повторить
-      description: Если знаете, при каких условиях это случается
-      placeholder: |
-        1. Запустил счёт
-        2. Заблокировал экран, положил в карман
-        3. Через полчаса открыл — счёт стоит
-
-  - type: dropdown
-    id: background
-    attributes:
-      label: Экран был выключен?
-      options:
-        - Да, телефон лежал в кармане
-        - Нет, экран был включён
-        - И так, и так
-        - Не помню
-
-  - type: checkboxes
-    id: miui
-    attributes:
-      label: Настройки системы
-      options:
-        - label: Разрешил автозапуск и снял ограничения батареи для StepCore
-        - label: Не проверял / не нашёл такие настройки
+      label: Что ожидалось
+      placeholder: Участок бега должен был попасть в RUN, после остановки режим должен вернуться в WALK.
+    validations:
+      required: true
 
   - type: textarea
-    id: export
+    id: reproduce
     attributes:
-      label: Файл диагностики
+      label: Как повторить
+      description: Если сценарий воспроизводится, перечислите коротко
+      placeholder: |
+        1. Запустить счёт
+        2. Заблокировать экран
+        3. Идти 1 минуту
+        4. Бежать 3 минуты
+        5. Снова идти
+
+  - type: checkboxes
+    id: system
+    attributes:
+      label: Фоновые ограничения
+      options:
+        - label: Для StepCore сняты ограничения батареи / разрешён автозапуск, если это требуется оболочкой
+        - label: Не проверял или не уверен
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Диагностика / скриншоты
       description: |
-        Необязательно, но помогает больше всего.
-        SYNX → «⚙ Диагностика» или Профиль дня → «⚕ Диагностика сбора».
-        Файл ложится в Downloads — перетащите его сюда.
+        Если включали «Инструменты → Полевой сбор», приложите релевантный
+        фрагмент журнала, экспорт или скриншот. Не нужно присылать огромный
+        лог целиком, если проблема занимает две минуты.
+
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Перед отправкой
+      options:
+        - label: Я понимаю, что GitHub Issue и вложения публичны
+          required: true

@@ -1,0 +1,146 @@
+name: Полевой отчёт
+description: Структурированный тест StepCore на реальном телефоне
+title: "[FIELD] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Этот шаблон нужен не для «поймать разработчика на ошибке», а чтобы
+        собрать device corpus. Отрицательный результат так же полезен, как успешный.
+
+        Актуальная инструкция: [docs/TESTING.md](https://github.com/ne-svyat/stepcore/blob/main/docs/TESTING.md)
+
+        **Не считайте каждый шаг вручную**, если тест этого специально не требует.
+        Важнее точный сценарий, время переходов и состояние телефона.
+
+  - type: dropdown
+    id: scenario
+    attributes:
+      label: Сценарий
+      options:
+        - Фоновый счёт 5–10 минут
+        - Обычный день vs системный шагомер
+        - WALK → RUN → WALK (Motion Truth)
+        - Долгий screen-off / сон CPU
+        - Батарея
+        - SYNX / автокалибровка
+        - Экспедиция
+        - Vault
+        - Другой полевой сценарий
+    validations:
+      required: true
+
+  - type: input
+    id: device
+    attributes:
+      label: Телефон
+      placeholder: Google Pixel 9
+    validations:
+      required: true
+
+  - type: input
+    id: android
+    attributes:
+      label: Android и оболочка
+      placeholder: Android 16, Pixel UI
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Версия StepCore
+      placeholder: 3.5.21
+    validations:
+      required: true
+
+  - type: dropdown
+    id: position
+    attributes:
+      label: Положение телефона
+      options:
+        - Карман
+        - Рука
+        - Рюкзак / сумка
+        - Другое / менялось
+    validations:
+      required: true
+
+  - type: dropdown
+    id: screen
+    attributes:
+      label: Экран во время основного участка
+      options:
+        - Заблокирован
+        - Включён
+        - Смешанный сценарий
+    validations:
+      required: true
+
+  - type: textarea
+    id: timeline
+    attributes:
+      label: Таймлайн
+      description: Примерное время или интервалы по таймеру
+      placeholder: |
+        00:00–01:00 ходьба
+        01:00–04:00 бег
+        04:00–05:30 ходьба
+        05:30–06:00 покой
+    validations:
+      required: true
+
+  - type: textarea
+    id: result
+    attributes:
+      label: Что показал StepCore
+      description: Режимы, шаги, поведение после разблокировки, заметные ошибки
+    validations:
+      required: true
+
+  - type: textarea
+    id: reference
+    attributes:
+      label: С чем сравнивали
+      description: |
+        Необязательно. Системный шагомер — полезная reference-точка, но не
+        абсолютная истина. Если сравнения не было, так и напишите.
+
+  - type: input
+    id: battery
+    attributes:
+      label: Батарея
+      description: Необязательно. Например «-3% за 2 часа»
+      placeholder: -3% за 2 часа
+
+  - type: checkboxes
+    id: instruments
+    attributes:
+      label: Что было включено
+      options:
+        - label: Полевой сбор одним тумблером
+        - label: Сбор при выключенном экране
+        - label: Energy Gate — тень
+        - label: Ничего из перечисленного
+
+  - type: textarea
+    id: attachments
+    attributes:
+      label: Лог / скриншоты / экспорт
+      description: |
+        Приложите только релевантный фрагмент. Перед публикацией проверьте,
+        что готовы сделать содержимое файла публичным.
+
+  - type: textarea
+    id: note
+    attributes:
+      label: Что ещё важно
+      description: "Любая деталь, которая могла повлиять: энергосбережение, звонок, музыка, смена кармана и т.п."
+
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Подтверждение
+      options:
+        - label: Я понимаю, что StepCore сейчас BETA и этот отчёт будет публичным на GitHub
+          required: true
