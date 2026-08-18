@@ -36,6 +36,10 @@ jobs:
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/stepcore.keystore"
           echo "STEPCORE_KEYSTORE=$RUNNER_TEMP/stepcore.keystore" >> "$GITHUB_ENV"
 
+      # v439. Pure hybrid state machine must pass before packaging APK.
+      - name: Test hybrid core
+        run: gradle testDebugUnitTest
+
       - name: Build debug APK
         env:
           STEPCORE_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}

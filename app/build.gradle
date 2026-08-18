@@ -12,8 +12,8 @@ android {
         applicationId "com.vasil.stepcore"
         minSdk 30
         targetSdk 34
-        versionCode 433
-        versionName "3.5.17"
+        versionCode 434
+        versionName "3.5.18"
     }
 
     // v285. Ключ подписи БОЛЬШЕ НЕ ЛЕЖИТ В РЕПОЗИТОРИИ.
@@ -78,6 +78,9 @@ dependencies {
     // v437. Activity Recognition через Google Play services.
     // StepCore сам остаётся без INTERNET permission.
     implementation 'com.google.android.gms:play-services-location:21.3.0'
+
+    // v439. Pure HybridGuard state machine is unit-tested in CI.
+    testImplementation 'junit:junit:4.13.2'
 
     ksp 'androidx.room:room-compiler:2.6.1'
 }

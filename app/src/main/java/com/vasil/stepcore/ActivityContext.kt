@@ -424,151 +424,36 @@ internal class ActivityContextTracker(private val context: Context) {
     }
 }
 
-internal class ActivityGuard {
-    data class Decision(
-        val release: Int,
-        val discarded: Int,
-        val held: Int,
-        val message: String?
+/**
+ * v439. Google context -> hint для HybridGuard.
+ *
+ * STILL сам не имеет права удалить ни одного шага.
+ */
+internal fun ActivityContextSnapshot.hybridContext(nowRt: Long): HybridContext {
+    if (!usable(nowRt)) {
+        return HybridContext(HybridContextHint.UNKNOWN, -1L)
+    }
+
+    val hint = when {
+        stableFamily == ActivityContextContract.FAMILY_LOCOMOTION ->
+            HybridContextHint.LOCOMOTION
+
+        stableFamily == ActivityContextContract.FAMILY_BLOCK &&
+            rawType == DetectedActivity.STILL ->
+            HybridContextHint.STILL
+
+        stableFamily == ActivityContextContract.FAMILY_BLOCK &&
+            (
+                rawType == DetectedActivity.IN_VEHICLE ||
+                    rawType == DetectedActivity.ON_BICYCLE
+            ) ->
+            HybridContextHint.TRANSPORT
+
+        else -> HybridContextHint.UNKNOWN
+    }
+
+    return HybridContext(
+        hint = hint,
+        stateAgeMs = stateAge(nowRt)
     )
-
-    private var heldSteps = 0
-    private var heldSinceRt = 0L
-    private var heldStateSinceRt = 0L
-    private var confirmedBlockStateSinceRt = 0L
-
-    private val chipTailGraceMs = 30_000L
-    private val secondBatchConfirmMs = 8_000L
-    private val heldRescueWindowMs = 25_000L
-
-    private fun clearHeld() {
-        heldSteps = 0
-        heldSinceRt = 0L
-        heldStateSinceRt = 0L
-    }
-
-    fun onChip(
-        s: ActivityContextSnapshot,
-        delta: Int,
-        nowRt: Long
-    ): Decision {
-        if (delta <= 0) return Decision(0, 0, heldSteps, null)
-
-        if (!s.usable(nowRt)) {
-            val release = heldSteps + delta
-            val oldHeld = heldSteps
-            clearHeld()
-            confirmedBlockStateSinceRt = 0L
-            return Decision(
-                release, 0, 0,
-                if (oldHeld > 0)
-                    "RELEASE $oldHeld+$delta · context UNKNOWN/fail-open"
-                else
-                    "PASS +$delta · context UNKNOWN/fail-open"
-            )
-        }
-
-        if (s.stableFamily != ActivityContextContract.FAMILY_BLOCK) {
-            confirmedBlockStateSinceRt = 0L
-            if (heldSteps > 0) {
-                val oldHeld = heldSteps
-                val heldAge = nowRt - heldSinceRt
-                clearHeld()
-
-                if (
-                    s.stableFamily ==
-                        ActivityContextContract.FAMILY_LOCOMOTION ||
-                    heldAge < heldRescueWindowMs
-                ) {
-                    return Decision(
-                        oldHeld + delta, 0, 0,
-                        "RELEASE $oldHeld+$delta · " + s.compact(nowRt)
-                    )
-                }
-
-                return Decision(
-                    delta, oldHeld, 0,
-                    "DROP held=$oldHeld · потом PASS +$delta · " +
-                        s.compact(nowRt)
-                )
-            }
-            return Decision(delta, 0, 0, null)
-        }
-
-        val blockAge = s.stateAge(nowRt)
-        if (blockAge < 0L || blockAge < chipTailGraceMs) {
-            val oldHeld = heldSteps
-            val release = oldHeld + delta
-            clearHeld()
-            confirmedBlockStateSinceRt = 0L
-            return Decision(
-                release, 0, 0,
-                if (oldHeld > 0)
-                    "RELEASE $oldHeld+$delta · BLOCK grace · " +
-                        s.compact(nowRt)
-                else
-                    "PASS +$delta · BLOCK grace · " + s.compact(nowRt)
-            )
-        }
-
-        if (
-            confirmedBlockStateSinceRt > 0L &&
-            confirmedBlockStateSinceRt == s.stateSinceRt
-        ) {
-            return Decision(
-                0, delta, 0,
-                "DROP +$delta · BLOCK confirmed · " + s.compact(nowRt)
-            )
-        }
-
-        if (
-            heldSteps > 0 &&
-            heldStateSinceRt != s.stateSinceRt
-        ) {
-            val old = heldSteps
-            val oldAge = nowRt - heldSinceRt
-            clearHeld()
-            if (oldAge >= heldRescueWindowMs) {
-                heldSteps = delta
-                heldSinceRt = nowRt
-                heldStateSinceRt = s.stateSinceRt
-                return Decision(
-                    0, old, heldSteps,
-                    "DROP old=$old · HOLD +$delta · " + s.compact(nowRt)
-                )
-            }
-        }
-
-        if (heldSteps <= 0) {
-            heldSteps = delta
-            heldSinceRt = nowRt
-            heldStateSinceRt = s.stateSinceRt
-            return Decision(
-                0, 0, heldSteps,
-                "HOLD +$delta · " + s.compact(nowRt)
-            )
-        }
-
-        if (
-            heldStateSinceRt == s.stateSinceRt &&
-            nowRt - heldSinceRt >= secondBatchConfirmMs
-        ) {
-            val dropped = heldSteps + delta
-            clearHeld()
-            confirmedBlockStateSinceRt = s.stateSinceRt
-            return Decision(
-                0, dropped, 0,
-                "DROP $dropped · BLOCK confirmed by 2 chip batches · " +
-                    s.compact(nowRt)
-            )
-        }
-
-        heldSteps += delta
-        return Decision(
-            0, 0, heldSteps,
-            "HOLD +$delta · всего $heldSteps · " + s.compact(nowRt)
-        )
-    }
-
-    fun pendingSteps(): Int = heldSteps
 }

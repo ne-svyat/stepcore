@@ -41,10 +41,11 @@ class StepService : Service(), SensorEventListener {
     private val features = FeatureCollector()
     private val shakeHold = ShakeHold()
 
-    // v438. Transition Activity Context не считает шаги.
-    // Он только даёт semantic state для guard над аппаратной delta.
+    // v439. Google = semantic hint, Physical Probe = independent evidence.
+    // Ни один из них в одиночку не является quantity source.
     private lateinit var activityContext: ActivityContextTracker
-    private val activityGuard = ActivityGuard()
+    private lateinit var hybridGuard: HybridGuard
+    private lateinit var hybridProbe: HybridProbeController
 
     // --- v391: приборы походки. Ничего не решают, только пишут. ---
     private val gait = GaitFeatures()
@@ -805,11 +806,23 @@ class StepService : Service(), SensorEventListener {
             energySceneReset()
             energyCancelAll()
             energyResetRelations()
+            // Energy Shadow освободил one-shot SIGNIFICANT. Теперь
+            // production Hybrid Guard может безопасно вооружить свой.
+            if (this::hybridProbe.isInitialized) {
+                hybridProbe.setSignificantEnabled(true)
+            }
             if (announce) {
                 val arrivalMs = SystemClock.elapsedRealtime()
                 logEvent("[энерг] " + energyTrace(arrivalMs) + " · тень ВЫКЛ")
             }
             return
+        }
+
+        // Перед тем как Energy Shadow вооружит тот же one-shot
+        // SIGNIFICANT, production listener снимается. Chip-driven hybrid
+        // всё равно остаётся рабочим.
+        if (this::hybridProbe.isInitialized) {
+            hybridProbe.setSignificantEnabled(false)
         }
 
         energySigSensor =
@@ -873,6 +886,7 @@ class StepService : Service(), SensorEventListener {
             when (intent?.action) {
                 Intent.ACTION_SCREEN_OFF -> {
                     screenOff = true
+                    hybridProbe.setScreenOff(true)
                     updateMotionSensors()
                     // v429. SCREEN_OFF — фактическая новая сцена без таймера.
                     energyArmFresh("экран погашен", announce = true)
@@ -880,9 +894,18 @@ class StepService : Service(), SensorEventListener {
                     divWindowStartMs = 0L   // окно расхождения только при экране вкл
                 }
                 Intent.ACTION_SCREEN_ON -> {
+                    // Сначала отменяем production probe, затем fail-open
+                    // выпускаем HOLD ещё как screen-off delta. Так старый
+                    // screen-on ShakeHold не сможет повторно задержать её.
+                    hybridProbe.setScreenOff(false)
+                    handleHybridDecision(
+                        hybridGuard.onScreenOn(),
+                        SystemClock.elapsedRealtime(),
+                        "screen-on"
+                    )
                     screenOff = false
 
-                    // v438. Sampling теперь только one-shot seed.
+                    // Sampling остаётся только one-shot seed.
                     activityContext.seed { msg -> logEvent(msg) }
 
                     // v430: первый звонок имеет смысл только внутри сцены
@@ -1166,6 +1189,12 @@ class StepService : Service(), SensorEventListener {
         StepsState.gaitLog.value = prefs.getBoolean("gait_log", false)
         StepsState.rawLog.value = prefs.getBoolean("raw_log", false)
         energyShadowEnabled = prefs.getBoolean(KEY_ENERGY_SHADOW, false)
+
+        // v439. HOLD state is crash-safe.
+        hybridGuard = HybridGuard(
+            recoveredHeld = prefs.getInt(KEY_HYBRID_HELD, 0)
+        )
+
         loadProfile()
         StepsState.steps.value = walkSteps + runSteps
 
@@ -1214,6 +1243,23 @@ class StepService : Service(), SensorEventListener {
         // v433: относительная ориентация без магнитометра — только probe.
         energyProbeGameRotSensor =
             sensorManager.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR)
+
+        // v439. Production probe lives independently from Energy Shadow.
+        hybridProbe = HybridProbeController(
+            context = this,
+            sensorManager = sensorManager,
+            onResult = { summary, reason ->
+                onHybridProbeResult(summary, reason)
+            },
+            onSignificant = {
+                onHybridSignificant()
+            },
+            log = { msg ->
+                logEvent(msg)
+            }
+        )
+        hybridProbe.setSignificantEnabled(!energyShadowEnabled)
+
         detector.hasGyro = gyroSensor != null
         hwBaseline = prefs.getLong(KEY_HW_BASE, -1L)
         hwDayAnchor =
@@ -1291,6 +1337,13 @@ class StepService : Service(), SensorEventListener {
             addAction(Intent.ACTION_SCREEN_ON)
         })
         screenOff = !pm.isInteractive
+        hybridProbe.setScreenOff(screenOff)
+
+        handleHybridDecision(
+            hybridGuard.recoverFailOpen(),
+            SystemClock.elapsedRealtime(),
+            "recover"
+        )
 
         // v191: подписка отдана updateMotionSensors. В фоне этот сенсор
         // не нужен: он лишь диагностика при калибровке, а она идёт при
@@ -2125,6 +2178,229 @@ class StepService : Service(), SensorEventListener {
         p.runMaxIntervalMs = prefs.getLong("run_max_interval", p.runMaxIntervalMs)
     }
 
+    /**
+     * v439. Единственная воронка уже ПРИНЯТОЙ аппаратной delta.
+     * Async RELEASE проходит тем же путём, что обычный STEP_COUNTER callback.
+     */
+    private fun applyAcceptedChipDelta(deltaIn: Int, nowRt: Long) {
+        var delta = deltaIn
+        val nowElapsed = nowRt
+        if (!screenOff && nowElapsed < shakeGuardUntilElapsed) {
+            // Guard 1 (v184): КАРАНТИН ВМЕСТО РАССТРЕЛА.
+            // Раньше дельта отбрасывалась навсегда, и телефон в
+            // кармане при включённом экране терял всё: 728 шагов
+            // за 6 минут (журнал 19.07). Порогом гироскопа это не
+            // лечится - карман 2.1-4.7 перекрывается с тряской
+            // 3.6-8.0. Разделяет ровность темпа чипа; решение
+            // вынесено в ShakeHold, где пороги измерены.
+            // v187: локомоция уже доказана детектором - не заставляем
+            // доказывать заново. Правило ровности продолжает
+            // работать и оборвёт счёт, когда наберётся материал.
+            if (!shakeHold.isConfirmed && lastConfirmedElapsed > 0L &&
+                nowElapsed - lastConfirmedElapsed <= carryTrustMs
+            ) {
+                if (shakeHold.carryOver()) {
+                    logEvent("Тряска: ходьба уже подтверждена детектором, счёт открыт сразу")
+                }
+            }
+            val gapMs = if (lastChipDeltaElapsed > 0L)
+                nowElapsed - lastChipDeltaElapsed else -1L
+            lastChipDeltaElapsed = nowElapsed
+            val v = shakeHold.onShakenDelta(nowElapsed, delta)
+            if (StepsState.decisionLog.value) {
+                // Главное подозрение v391: дельты чипа на беге
+                // приходят пачками, и разброс ломается ВЫДАЧЕЙ,
+                // а не человеком. Пауза между приходами — прямая
+                // проверка этой гипотезы.
+                logEvent("[реш] чип +" + delta + "ш · пауза " +
+                    (if (gapMs >= 0L) gapMs.toString() + "мс" else "первая") +
+                    " · в карантине " + shakeHold.heldSteps +
+                    " · " + (if (shakeHold.isConfirmed) "счёт открыт" else "карантин"))
+                if (shakeHold.lastReport.isNotEmpty()) {
+                    logEvent("[реш] страж: " + shakeHold.lastReport)
+                }
+            }
+            v.reason?.let { logEvent("Тряска: " + it) }
+            if (v.discarded > 0) {
+                logEvent("Тряска: отброшено ${v.discarded} шагов чипа")
+                dumpRaw("вето стража")
+            }
+            if (v.release <= 0) return
+            delta = v.release
+        } else if (shakeHold.heldSteps > 0) {
+            // Тряска кончилась, ритм так и не подтвердился -
+            // отбрасываем, ровно как до v184.
+            val lost = shakeHold.onShakeEnded()
+            logEvent("Тряска кончилась: отброшено $lost шагов чипа")
+        }
+        settleTransportPending(SystemClock.elapsedRealtime())
+        if (!screenOff && detector.mode == StepDetector.Mode.TRANSPORT) {
+            // Guard 2: чип идёт под меткой транспорта = человек идёт
+            transportChipAccum += delta
+            if (transportChipAccum >= TRANSPORT_DESTICK_STEPS) {
+                logEvent("Метка транспорта снята: чип насчитал " +
+                        "$transportChipAccum шагов - человек идёт")
+                detector.resetTransient()
+                features.reset()
+                transportChipAccum = 0
+            }
+        } else transportChipAccum = 0
+        rolloverDayIfNeeded()
+        val asRun = !screenOff && detector.mode == StepDetector.Mode.RUN
+        // Интервал шага копим только если детектор его реально мерил
+        // (ходьба/бег с акселерометром). В кармане mode иной - каденс
+        // не искажаем, час останется с нулём и откатится на константу.
+        val iv = detector.lastIntervalMs
+        if (!asRun && iv in 250f..2000f) {
+            pendCadSum += (iv.toLong()) * delta
+            pendCadN += delta
+        }
+        // v311. Отдаём тени дельту чипа и решение ДЕТЕКТОРА - чтобы
+        // в журнале два мнения стояли рядом и их можно было сверить.
+        shadowWatch.onChipDelta(delta, asRun)
+        // v317. Ступени замера длины шага. Реплика на каждой сотне
+        // и ровно один раз: повтор на каждом шаге раздражал бы
+        // сильнее, чем молчание.
+        if (distCalActive && distCalChipStart >= 0) {
+            val done = (hwLastTotal - distCalChipStart).toInt()
+            val mark = done / 100
+            if (mark > distCalStepMark && mark in 1..3) {
+                distCalStepMark = mark
+                Voice.say(this, "cal_stride_" + (mark * 100) + "_steps")
+            }
+        }
+        if (asRun) {
+            runSteps += delta; bumpHour(0, delta)
+            // v280. Отметка "бег видели". Нужна, чтобы общая точность
+            // не занижалась у того, кто не бегает. Порог отсекает
+            // случайные пары шагов, помеченных бегом на торможении.
+            if (runSteps >= RUN_SEEN_STEPS) {
+                val pr = getSharedPreferences(PREFS, MODE_PRIVATE)
+                val last = pr.getLong(CalibrationRegistry.KEY_RUN_SEEN, 0L)
+                if (System.currentTimeMillis() - last > 6 * 3600_000L) {
+                    pr.edit().putLong(CalibrationRegistry.KEY_RUN_SEEN,
+                        System.currentTimeMillis()).apply()
+                }
+            }
+        }
+        else { walkSteps += delta; bumpHour(delta, 0) }
+        if (screenOff) hwSessionAdded += delta
+        // v185: корпус в кармане. Детектор здесь молчит (вето по
+        // гироскопу), но метка уклона, оси гироскопа, наклон
+        // телефона и амплитуда из сырого канала существуют и без
+        // него. Без этой ветки они были бы потеряны.
+        // v216. Раньше здесь стояло просто "детектор не в ходьбе".
+        // Это открывало дыру: нажатие метки будит экран, детектор
+        // встаёт в WALK, экран гаснет - и режим ЗАЛИПАЕТ, потому что
+        // разбудить и сбросить его некому. Канал оставался закрытым,
+        // сам детектор спал, строки не писались вовсе. Измерено
+        // 23 июля: 717 и 795 шагов подъёма дали ноль строк.
+        // Теперь режим блокирует канал, только пока он СВЕЖИЙ:
+        // без подтверждённого шага дольше MODE_STALE_MS "ходьба" -
+        // воспоминание, а не наблюдение.
+        val modeFresh = lastConfirmedElapsed > 0L &&
+            SystemClock.elapsedRealtime() - lastConfirmedElapsed <= MODE_STALE_MS
+        val detectorBusy = modeFresh &&
+            (detector.mode == StepDetector.Mode.WALK ||
+                detector.mode == StepDetector.Mode.RUN)
+        if (!detectorBusy) {
+            chipSinceSample += delta
+            if (chipSinceSample >= chipSampleEvery()) {
+                chipSinceSample = 0
+                // Режим в строке - честный: если детектор протух,
+                // пишем IDLE, а не его несвежее мнение.
+                val modeName =
+                    if (modeFresh) detector.mode.name
+                    else StepDetector.Mode.IDLE.name
+                writeTerrainSample(modeName, 0f, 0f, source = 1)
+            }
+        }
+        StepsState.steps.value = walkSteps + runSteps
+        slopeTick(walkSteps + runSteps)
+        marksTick(walkSteps + runSteps)
+        persistPrefs()
+        stepsSinceDbWrite += delta
+        if (stepsSinceDbWrite >= 25) { stepsSinceDbWrite = 0; persistDb() }
+        // v259. Было каждые 10 шагов - это раз в 6 секунд на ходу.
+        // Каждый notify() система может показать заново, отсюда
+        // ощущение постоянных уведомлений.
+        if (walkSteps + runSteps - lastNotifiedSteps >= NOTIF_STEP_STRIDE) {
+            lastNotifiedSteps = walkSteps + runSteps
+            getSystemService(NotificationManager::class.java)
+                .notify(NOTIF_ID, buildNotification(walkSteps + runSteps))
+        }
+        return
+    }
+
+    private fun persistHybridHeld() {
+        if (!this::hybridGuard.isInitialized) return
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+            .putInt(KEY_HYBRID_HELD, hybridGuard.pendingSteps())
+            .apply()
+    }
+
+    private fun handleHybridDecision(
+        d: HybridGuard.Decision,
+        nowRt: Long,
+        probeReason: String
+    ) {
+        persistHybridHeld()
+
+        d.reason?.let { logEvent("[гибрид] " + it) }
+
+        if (d.discarded > 0) {
+            logEvent(
+                "[гибрид] отброшено ${d.discarded} шагов чипа · " +
+                    "HOLD=${d.held}"
+            )
+        }
+
+        if (d.release > 0) {
+            applyAcceptedChipDelta(d.release, nowRt)
+        }
+
+        if (d.requestProbe && screenOff) {
+            val ok = hybridProbe.requestProbe(probeReason)
+            if (!ok) {
+                val failOpen = hybridGuard.onProbeUnavailable()
+                persistHybridHeld()
+                failOpen.reason?.let { logEvent("[гибрид] " + it) }
+                if (failOpen.release > 0) {
+                    applyAcceptedChipDelta(
+                        failOpen.release,
+                        SystemClock.elapsedRealtime()
+                    )
+                }
+            }
+        }
+    }
+
+    private fun onHybridSignificant() {
+        if (!screenOff || !this::activityContext.isInitialized) return
+        val now = SystemClock.elapsedRealtime()
+        val context = activityContext.snapshot().hybridContext(now)
+        handleHybridDecision(
+            hybridGuard.onMotionHint(context, now),
+            now,
+            "SIGNIFICANT"
+        )
+    }
+
+    private fun onHybridProbeResult(
+        summary: EnergyProbe.Summary,
+        reason: String
+    ) {
+        if (!screenOff || !this::activityContext.isInitialized) return
+        val now = SystemClock.elapsedRealtime()
+        val context = activityContext.snapshot().hybridContext(now)
+        val d = hybridGuard.onProbe(context, summary, now)
+        handleHybridDecision(
+            d,
+            now,
+            if (d.requestProbe) "confirm:$reason" else reason
+        )
+    }
+
     override fun onSensorChanged(event: SensorEvent) {
         val nowRt = SystemClock.elapsedRealtime()
         lastSensorEventMs = nowRt
@@ -2244,166 +2520,21 @@ class StepService : Service(), SensorEventListener {
                 // v429: сырая дельта чипа до любых guard-решений.
                 energyShadowOnChip(delta, hwTotal, timeMs, nowRt)
 
-                // v438. Event-driven Activity Guard стоит перед ShakeHold.
-                // Fresh BLOCK получает 30с хвоста чипа, mature BLOCK
-                // подтверждается двумя аппаратными batches.
-                val ctx = activityContext.snapshot()
-                val ag = activityGuard.onChip(ctx, delta, nowRt)
-                ag.message?.let { logEvent("[контекст] " + it) }
-                if (ag.discarded > 0) {
-                    logEvent(
-                        "[контекст] отброшено ${ag.discarded} шагов чипа · " +
-                            "осталось в HOLD ${ag.held}"
-                    )
+                // v439. Screen-on остаётся старой проверенной ветке.
+                // Screen-off идёт через hybrid context + physical evidence.
+                if (!screenOff) {
+                    applyAcceptedChipDelta(delta, nowRt)
+                    return
                 }
-                if (ag.release <= 0) return
-                delta = ag.release
 
-                val nowElapsed = SystemClock.elapsedRealtime()
-                if (!screenOff && nowElapsed < shakeGuardUntilElapsed) {
-                    // Guard 1 (v184): КАРАНТИН ВМЕСТО РАССТРЕЛА.
-                    // Раньше дельта отбрасывалась навсегда, и телефон в
-                    // кармане при включённом экране терял всё: 728 шагов
-                    // за 6 минут (журнал 19.07). Порогом гироскопа это не
-                    // лечится - карман 2.1-4.7 перекрывается с тряской
-                    // 3.6-8.0. Разделяет ровность темпа чипа; решение
-                    // вынесено в ShakeHold, где пороги измерены.
-                    // v187: локомоция уже доказана детектором - не заставляем
-                    // доказывать заново. Правило ровности продолжает
-                    // работать и оборвёт счёт, когда наберётся материал.
-                    if (!shakeHold.isConfirmed && lastConfirmedElapsed > 0L &&
-                        nowElapsed - lastConfirmedElapsed <= carryTrustMs
-                    ) {
-                        if (shakeHold.carryOver()) {
-                            logEvent("Тряска: ходьба уже подтверждена детектором, счёт открыт сразу")
-                        }
-                    }
-                    val gapMs = if (lastChipDeltaElapsed > 0L)
-                        nowElapsed - lastChipDeltaElapsed else -1L
-                    lastChipDeltaElapsed = nowElapsed
-                    val v = shakeHold.onShakenDelta(nowElapsed, delta)
-                    if (StepsState.decisionLog.value) {
-                        // Главное подозрение v391: дельты чипа на беге
-                        // приходят пачками, и разброс ломается ВЫДАЧЕЙ,
-                        // а не человеком. Пауза между приходами — прямая
-                        // проверка этой гипотезы.
-                        logEvent("[реш] чип +" + delta + "ш · пауза " +
-                            (if (gapMs >= 0L) gapMs.toString() + "мс" else "первая") +
-                            " · в карантине " + shakeHold.heldSteps +
-                            " · " + (if (shakeHold.isConfirmed) "счёт открыт" else "карантин"))
-                        if (shakeHold.lastReport.isNotEmpty()) {
-                            logEvent("[реш] страж: " + shakeHold.lastReport)
-                        }
-                    }
-                    v.reason?.let { logEvent("Тряска: " + it) }
-                    if (v.discarded > 0) {
-                        logEvent("Тряска: отброшено ${v.discarded} шагов чипа")
-                        dumpRaw("вето стража")
-                    }
-                    if (v.release <= 0) return
-                    delta = v.release
-                } else if (shakeHold.heldSteps > 0) {
-                    // Тряска кончилась, ритм так и не подтвердился -
-                    // отбрасываем, ровно как до v184.
-                    val lost = shakeHold.onShakeEnded()
-                    logEvent("Тряска кончилась: отброшено $lost шагов чипа")
-                }
-                settleTransportPending(SystemClock.elapsedRealtime())
-                if (!screenOff && detector.mode == StepDetector.Mode.TRANSPORT) {
-                    // Guard 2: чип идёт под меткой транспорта = человек идёт
-                    transportChipAccum += delta
-                    if (transportChipAccum >= TRANSPORT_DESTICK_STEPS) {
-                        logEvent("Метка транспорта снята: чип насчитал " +
-                                "$transportChipAccum шагов - человек идёт")
-                        detector.resetTransient()
-                        features.reset()
-                        transportChipAccum = 0
-                    }
-                } else transportChipAccum = 0
-                rolloverDayIfNeeded()
-                val asRun = !screenOff && detector.mode == StepDetector.Mode.RUN
-                // Интервал шага копим только если детектор его реально мерил
-                // (ходьба/бег с акселерометром). В кармане mode иной - каденс
-                // не искажаем, час останется с нулём и откатится на константу.
-                val iv = detector.lastIntervalMs
-                if (!asRun && iv in 250f..2000f) {
-                    pendCadSum += (iv.toLong()) * delta
-                    pendCadN += delta
-                }
-                // v311. Отдаём тени дельту чипа и решение ДЕТЕКТОРА - чтобы
-                // в журнале два мнения стояли рядом и их можно было сверить.
-                shadowWatch.onChipDelta(delta, asRun)
-                // v317. Ступени замера длины шага. Реплика на каждой сотне
-                // и ровно один раз: повтор на каждом шаге раздражал бы
-                // сильнее, чем молчание.
-                if (distCalActive && distCalChipStart >= 0) {
-                    val done = (hwLastTotal - distCalChipStart).toInt()
-                    val mark = done / 100
-                    if (mark > distCalStepMark && mark in 1..3) {
-                        distCalStepMark = mark
-                        Voice.say(this, "cal_stride_" + (mark * 100) + "_steps")
-                    }
-                }
-                if (asRun) {
-                    runSteps += delta; bumpHour(0, delta)
-                    // v280. Отметка "бег видели". Нужна, чтобы общая точность
-                    // не занижалась у того, кто не бегает. Порог отсекает
-                    // случайные пары шагов, помеченных бегом на торможении.
-                    if (runSteps >= RUN_SEEN_STEPS) {
-                        val pr = getSharedPreferences(PREFS, MODE_PRIVATE)
-                        val last = pr.getLong(CalibrationRegistry.KEY_RUN_SEEN, 0L)
-                        if (System.currentTimeMillis() - last > 6 * 3600_000L) {
-                            pr.edit().putLong(CalibrationRegistry.KEY_RUN_SEEN,
-                                System.currentTimeMillis()).apply()
-                        }
-                    }
-                }
-                else { walkSteps += delta; bumpHour(delta, 0) }
-                if (screenOff) hwSessionAdded += delta
-                // v185: корпус в кармане. Детектор здесь молчит (вето по
-                // гироскопу), но метка уклона, оси гироскопа, наклон
-                // телефона и амплитуда из сырого канала существуют и без
-                // него. Без этой ветки они были бы потеряны.
-                // v216. Раньше здесь стояло просто "детектор не в ходьбе".
-                // Это открывало дыру: нажатие метки будит экран, детектор
-                // встаёт в WALK, экран гаснет - и режим ЗАЛИПАЕТ, потому что
-                // разбудить и сбросить его некому. Канал оставался закрытым,
-                // сам детектор спал, строки не писались вовсе. Измерено
-                // 23 июля: 717 и 795 шагов подъёма дали ноль строк.
-                // Теперь режим блокирует канал, только пока он СВЕЖИЙ:
-                // без подтверждённого шага дольше MODE_STALE_MS "ходьба" -
-                // воспоминание, а не наблюдение.
-                val modeFresh = lastConfirmedElapsed > 0L &&
-                    SystemClock.elapsedRealtime() - lastConfirmedElapsed <= MODE_STALE_MS
-                val detectorBusy = modeFresh &&
-                    (detector.mode == StepDetector.Mode.WALK ||
-                        detector.mode == StepDetector.Mode.RUN)
-                if (!detectorBusy) {
-                    chipSinceSample += delta
-                    if (chipSinceSample >= chipSampleEvery()) {
-                        chipSinceSample = 0
-                        // Режим в строке - честный: если детектор протух,
-                        // пишем IDLE, а не его несвежее мнение.
-                        val modeName =
-                            if (modeFresh) detector.mode.name
-                            else StepDetector.Mode.IDLE.name
-                        writeTerrainSample(modeName, 0f, 0f, source = 1)
-                    }
-                }
-                StepsState.steps.value = walkSteps + runSteps
-                slopeTick(walkSteps + runSteps)
-                marksTick(walkSteps + runSteps)
-                persistPrefs()
-                stepsSinceDbWrite += delta
-                if (stepsSinceDbWrite >= 25) { stepsSinceDbWrite = 0; persistDb() }
-                // v259. Было каждые 10 шагов - это раз в 6 секунд на ходу.
-                // Каждый notify() система может показать заново, отсюда
-                // ощущение постоянных уведомлений.
-                if (walkSteps + runSteps - lastNotifiedSteps >= NOTIF_STEP_STRIDE) {
-                    lastNotifiedSteps = walkSteps + runSteps
-                    getSystemService(NotificationManager::class.java)
-                        .notify(NOTIF_ID, buildNotification(walkSteps + runSteps))
-                }
+                val hybridContext =
+                    activityContext.snapshot().hybridContext(nowRt)
+                val hd = hybridGuard.onChip(
+                    hybridContext,
+                    delta,
+                    nowRt
+                )
+                handleHybridDecision(hd, nowRt, "chip")
                 return
             }
             Sensor.TYPE_ROTATION_VECTOR -> {
@@ -3108,6 +3239,18 @@ class StepService : Service(), SensorEventListener {
     }
 
     override fun onDestroy() {
+        // v439. Clean Stop не имеет права потерять уже пришедший chip HOLD.
+        if (this::hybridGuard.isInitialized) {
+            handleHybridDecision(
+                hybridGuard.onScreenOn(),
+                SystemClock.elapsedRealtime(),
+                "service-stop"
+            )
+        }
+        if (this::hybridProbe.isInitialized) {
+            hybridProbe.stop()
+        }
+
         // Панель меток живёт ровно столько, сколько идёт счёт.
         runCatching {
             getSystemService(NotificationManager::class.java).cancel(NOTIF_ID_MARKS)
@@ -3117,10 +3260,6 @@ class StepService : Service(), SensorEventListener {
         energyCancelAll()
         if (this::activityContext.isInitialized) {
             activityContext.stop()
-            val held = activityGuard.pendingSteps()
-            if (held > 0) {
-                logEvent("[контекст] Stop: снято из HOLD $held шагов")
-            }
         }
         sensorManager.unregisterListener(this)
         runCatching { unregisterReceiver(screenReceiver) }
@@ -3483,6 +3622,8 @@ class StepService : Service(), SensorEventListener {
         const val KEY_HW_ANCHOR_DAY = "hw_anchor_day"
         const val KEY_HW_DAY_PAUSED = "hw_day_paused"
         const val KEY_ENERGY_SHADOW = "energy_shadow"
+        // v439. Crash-safe quarantine of consumed STEP_COUNTER delta.
+        const val KEY_HYBRID_HELD = "hybrid_guard_held"
         // v433. Бюджет измерения, НЕ порог классификации:
         // ~3 с при ~50 Гц дают около 150 физических отсчётов.
         const val ENERGY_PROBE_WINDOW_MS = 3_000L
