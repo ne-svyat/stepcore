@@ -58,6 +58,18 @@ class StepService : Service(), SensorEventListener {
     // Best-effort FIFO flush timing witness.
     private var lastHybridFlushRt = 0L
 
+    // v442. Canonical background WALK/RUN state.
+    private val hybridMotion = HybridMotionFusion()
+    private var lastHybridActivitySampleRt = 0L
+
+    // Latest hardware cadence candidate. It becomes a training sample only
+    // after physical GAIT validates locomotion.
+    private var hybridTempoIntervalMs: Long? = null
+    private var hybridTempoSensorMs = 0L
+    private var hybridTempoSteps = 0
+    private var hybridTempoWasHeld = false
+    private var lastAutoTempoSensorMs = 0L
+
     // --- v391: приборы походки. Ничего не решают, только пишут. ---
     private val gait = GaitFeatures()
     private var gaitWindowStart = 0L
@@ -907,6 +919,7 @@ class StepService : Service(), SensorEventListener {
             reason
         )
         hybridBackground = false
+        hybridMotion.reset()
 
         if (hwSessionAdded > 0) {
             logEvent(
@@ -2247,7 +2260,9 @@ class StepService : Service(), SensorEventListener {
     private fun applyAcceptedChipDelta(
         deltaIn: Int,
         nowRt: Long,
-        fromHybrid: Boolean = false
+        fromHybrid: Boolean = false,
+        backgroundMotion: HybridMotionKind = HybridMotionKind.UNKNOWN,
+        backgroundIntervalMs: Long? = null
     ) {
         var delta = deltaIn
         val nowElapsed = nowRt
@@ -2315,15 +2330,29 @@ class StepService : Service(), SensorEventListener {
         } else transportChipAccum = 0
         rolloverDayIfNeeded()
         val asRun =
-            !fromHybrid &&
+            if (fromHybrid) {
+                backgroundMotion == HybridMotionKind.RUN
+            } else {
                 !screenOff &&
-                detector.mode == StepDetector.Mode.RUN
+                    detector.mode == StepDetector.Mode.RUN
+            }
         // Интервал шага копим только если детектор его реально мерил
         // (ходьба/бег с акселерометром). В кармане mode иной - каденс
         // не искажаем, час останется с нулём и откатится на константу.
         val iv = detector.lastIntervalMs
-        if (!asRun && iv in 250f..2000f) {
+        if (
+            !fromHybrid &&
+            !asRun &&
+            iv in 250f..2000f
+        ) {
             pendCadSum += (iv.toLong()) * delta
+            pendCadN += delta
+        } else if (
+            fromHybrid &&
+            backgroundMotion == HybridMotionKind.WALK &&
+            backgroundIntervalMs != null
+        ) {
+            pendCadSum += backgroundIntervalMs * delta
             pendCadN += delta
         }
         // v311. Отдаём тени дельту чипа и решение ДЕТЕКТОРА - чтобы
@@ -2374,16 +2403,37 @@ class StepService : Service(), SensorEventListener {
         val detectorBusy = modeFresh &&
             (detector.mode == StepDetector.Mode.WALK ||
                 detector.mode == StepDetector.Mode.RUN)
-        if (!detectorBusy) {
+        if (fromHybrid || !detectorBusy) {
             chipSinceSample += delta
             if (chipSinceSample >= chipSampleEvery()) {
                 chipSinceSample = 0
-                // Режим в строке - честный: если детектор протух,
-                // пишем IDLE, а не его несвежее мнение.
+                // v442. SYNX получает тот же canonical motion, который
+                // разделил walkSteps/runSteps. Unknown не притворяется WALK.
                 val modeName =
-                    if (modeFresh) detector.mode.name
-                    else StepDetector.Mode.IDLE.name
-                writeTerrainSample(modeName, 0f, 0f, source = 1)
+                    if (fromHybrid) {
+                        when (backgroundMotion) {
+                            HybridMotionKind.RUN -> StepDetector.Mode.RUN.name
+                            HybridMotionKind.WALK -> StepDetector.Mode.WALK.name
+                            HybridMotionKind.UNKNOWN ->
+                                StepDetector.Mode.IDLE.name
+                        }
+                    } else if (modeFresh) {
+                        detector.mode.name
+                    } else {
+                        StepDetector.Mode.IDLE.name
+                    }
+
+                val chipCadence =
+                    if (fromHybrid && backgroundIntervalMs != null)
+                        backgroundIntervalMs.toFloat()
+                    else 0f
+
+                writeTerrainSample(
+                    modeName,
+                    0f,
+                    chipCadence,
+                    source = 1
+                )
             }
         }
         StepsState.steps.value = walkSteps + runSteps
@@ -2410,10 +2460,113 @@ class StepService : Service(), SensorEventListener {
             .apply()
     }
 
+    private fun maybeRefreshHybridLocomotionSample(nowRt: Long) {
+        if (!hybridBackground) return
+        if (
+            lastHybridActivitySampleRt > 0L &&
+            nowRt - lastHybridActivitySampleRt <
+                HYBRID_ACTIVITY_SAMPLE_MIN_GAP_MS
+        ) return
+
+        lastHybridActivitySampleRt = nowRt
+        activityContext.refreshLocomotionSample { msg -> logEvent(msg) }
+    }
+
+    private fun autoTempoKey(kind: HybridMotionKind): String? = when (kind) {
+        HybridMotionKind.RUN -> KEY_AUTO_TEMPO_RUN
+        HybridMotionKind.WALK -> KEY_AUTO_TEMPO_WALK
+        HybridMotionKind.UNKNOWN -> null
+    }
+
+    /**
+     * v442. Passive corpus, not profile mutation.
+     *
+     * Format: wallMs:intervalMs:steps:sensorMs
+     * Last N clean samples only. Future auto-calibration can compute median/IQR
+     * without asking the user to run a separate calibration ritual.
+     */
+    private fun recordAutoTempoSample(
+        kind: HybridMotionKind,
+        intervalMs: Long,
+        steps: Int,
+        sensorMs: Long
+    ) {
+        val key = autoTempoKey(kind) ?: return
+        if (sensorMs <= 0L || sensorMs == lastAutoTempoSensorMs) return
+        if (steps < HybridMotionFusion.MIN_CHIP_STEPS) return
+
+        lastAutoTempoSensorMs = sensorMs
+
+        val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+        val old = prefs.getString(key, "") ?: ""
+        val rows = old.split(';')
+            .filter { it.isNotBlank() }
+            .toMutableList()
+
+        rows.add(
+            System.currentTimeMillis().toString() + ":" +
+                intervalMs + ":" +
+                steps + ":" +
+                sensorMs
+        )
+
+        while (rows.size > AUTO_TEMPO_CORPUS_CAP) {
+            rows.removeAt(0)
+        }
+
+        prefs.edit()
+            .putString(key, rows.joinToString(";"))
+            .apply()
+
+        if (rows.size == 1 || rows.size % 5 == 0) {
+            logEvent(
+                "[автокал] корпус " +
+                    (if (kind == HybridMotionKind.RUN) "RUN" else "WALK") +
+                    ": " + rows.size +
+                    " чистых окон · последний " + intervalMs + "мс/ш"
+            )
+        }
+    }
+
+    private fun applyHybridMotionVerdict(
+        verdict: HybridMotionFusion.Verdict,
+        tempoSteps: Int,
+        tempoSensorMs: Long
+    ) {
+        if (verdict.changed) {
+            val ru = when (verdict.motion) {
+                HybridMotionKind.RUN -> "БЕГ"
+                HybridMotionKind.WALK -> "ХОДЬБА"
+                HybridMotionKind.UNKNOWN -> "НЕИЗВЕСТНО"
+            }
+            StepsState.mode.value = verdict.motion.name
+            logEvent("[движ] фон: " + ru + " · " + verdict.reason)
+        }
+
+        if (
+            verdict.sampleEligible &&
+            verdict.sampleIntervalMs != null
+        ) {
+            recordAutoTempoSample(
+                verdict.motion,
+                verdict.sampleIntervalMs,
+                tempoSteps,
+                tempoSensorMs
+            )
+        }
+
+        if (verdict.needsSemanticRefresh) {
+            maybeRefreshHybridLocomotionSample(
+                SystemClock.elapsedRealtime()
+            )
+        }
+    }
+
     private fun handleHybridDecision(
         d: HybridGuard.Decision,
         nowRt: Long,
-        probeReason: String
+        probeReason: String,
+        validatedIntervalMs: Long? = null
     ) {
         persistHybridHeld()
 
@@ -2430,21 +2583,28 @@ class StepService : Service(), SensorEventListener {
             applyAcceptedChipDelta(
                 d.release,
                 nowRt,
-                fromHybrid = true
+                fromHybrid = true,
+                backgroundMotion = hybridMotion.current(nowRt),
+                backgroundIntervalMs = validatedIntervalMs
             )
         }
 
         if (d.requestProbe && hybridBackground) {
+            // v442. Transition can stay coarse/stale; Sampling is only
+            // WALK/RUN semantic evidence and has no quantity veto.
+            maybeRefreshHybridLocomotionSample(nowRt)
             val ok = hybridProbe.requestProbe(probeReason)
             if (!ok) {
                 val failOpen = hybridGuard.onProbeUnavailable()
                 persistHybridHeld()
                 failOpen.reason?.let { logEvent("[гибрид] " + it) }
                 if (failOpen.release > 0) {
+                    val failNow = SystemClock.elapsedRealtime()
                     applyAcceptedChipDelta(
                         failOpen.release,
-                        SystemClock.elapsedRealtime(),
-                        fromHybrid = true
+                        failNow,
+                        fromHybrid = true,
+                        backgroundMotion = hybridMotion.current(failNow)
                     )
                 }
             }
@@ -2492,11 +2652,53 @@ class StepService : Service(), SensorEventListener {
         if (!hybridBackground || !this::activityContext.isInitialized) return
         val now = SystemClock.elapsedRealtime()
         val context = activityContext.snapshot().hybridContext(now)
+
+        val physical = hybridGuard.classify(summary)
         val d = hybridGuard.onProbe(context, summary, now)
+
+        var validatedInterval: Long? = null
+
+        if (physical == HybridGuard.Physical.GAIT) {
+            val tempoUsable =
+                hybridTempoIntervalMs != null &&
+                    hybridTempoSensorMs > 0L &&
+                    (
+                        !hybridTempoWasHeld ||
+                            d.release > 0
+                    )
+
+            validatedInterval =
+                if (tempoUsable) hybridTempoIntervalMs
+                else null
+
+            val mv = hybridMotion.onGait(
+                context,
+                validatedInterval,
+                now
+            )
+
+            applyHybridMotionVerdict(
+                mv,
+                if (tempoUsable) hybridTempoSteps else 0,
+                if (tempoUsable) hybridTempoSensorMs else 0L
+            )
+
+            if (d.release > 0 && hybridTempoWasHeld) {
+                hybridTempoWasHeld = false
+            }
+        } else if (d.discarded > 0 && hybridTempoWasHeld) {
+            // The cadence belonged to a batch just proven false.
+            hybridTempoIntervalMs = null
+            hybridTempoSensorMs = 0L
+            hybridTempoSteps = 0
+            hybridTempoWasHeld = false
+        }
+
         handleHybridDecision(
             d,
             now,
-            if (d.requestProbe) "confirm:$reason" else reason
+            if (d.requestProbe) "confirm:$reason" else reason,
+            validatedIntervalMs = validatedInterval
         )
     }
 
@@ -2632,6 +2834,14 @@ class StepService : Service(), SensorEventListener {
 
                 val hybridContext =
                     activityContext.snapshot().hybridContext(nowRt)
+
+                val chipInterval =
+                    hybridMotion.chipIntervalMs(
+                        delta,
+                        prevHybridChipSensorMs,
+                        timeMs
+                    )
+
                 val hd = hybridGuard.onChip(
                     hybridContext,
                     delta,
@@ -2639,7 +2849,27 @@ class StepService : Service(), SensorEventListener {
                     prevChipSensorMs = prevHybridChipSensorMs,
                     chipSensorMs = timeMs
                 )
-                handleHybridDecision(hd, nowRt, "chip")
+
+                if (chipInterval != null) {
+                    hybridTempoIntervalMs = chipInterval
+                    hybridTempoSensorMs = timeMs
+                    hybridTempoSteps = delta
+                    hybridTempoWasHeld = hd.held > 0
+                }
+
+                handleHybridDecision(
+                    hd,
+                    nowRt,
+                    "chip",
+                    validatedIntervalMs =
+                        if (
+                            hd.release > 0 &&
+                            !hybridTempoWasHeld &&
+                            hybridMotion.current(nowRt) !=
+                                HybridMotionKind.UNKNOWN
+                        ) chipInterval
+                        else null
+                )
                 return
             }
             Sensor.TYPE_ROTATION_VECTOR -> {
@@ -3732,6 +3962,14 @@ class StepService : Service(), SensorEventListener {
 
         // v441. Timing assist only, never a verdict.
         const val HYBRID_FLUSH_MIN_GAP_MS = 10_000L
+
+        // v442. One-shot GMS Sampling fallback is throttled.
+        const val HYBRID_ACTIVITY_SAMPLE_MIN_GAP_MS = 30_000L
+
+        // Passive auto-calibration corpus. Profile is NOT mutated in v442.
+        const val KEY_AUTO_TEMPO_WALK = "auto_tempo_walk_v1"
+        const val KEY_AUTO_TEMPO_RUN = "auto_tempo_run_v1"
+        const val AUTO_TEMPO_CORPUS_CAP = 48
 
         // v433. Бюджет измерения, НЕ порог классификации:
         // ~3 с при ~50 Гц дают около 150 физических отсчётов.

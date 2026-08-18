@@ -28,6 +28,12 @@ internal object ActivityContextContract {
     const val KEY_SEQ = "seq"
     const val KEY_TRANSITION_SEEN = "transition_seen"
 
+    // v442. Fresh Sampling snapshot is independent from Transition state.
+    // It is used only for WALK/RUN subtype, never for quantity veto.
+    const val KEY_SAMPLE_RAW_TYPE = "sample_raw_type"
+    const val KEY_SAMPLE_CONFIDENCE = "sample_confidence"
+    const val KEY_SAMPLE_RT = "sample_rt"
+
     const val FAMILY_UNKNOWN = 0
     const val FAMILY_LOCOMOTION = 1
     const val FAMILY_BLOCK = 2
@@ -90,6 +96,23 @@ internal object ActivityContextContract {
             .putString(KEY_SOURCE, SOURCE_NONE)
             .putLong(KEY_SEQ, 0L)
             .putBoolean(KEY_TRANSITION_SEEN, false)
+            .putInt(KEY_SAMPLE_RAW_TYPE, DetectedActivity.UNKNOWN)
+            .putInt(KEY_SAMPLE_CONFIDENCE, 0)
+            .putLong(KEY_SAMPLE_RT, 0L)
+            .apply()
+    }
+
+    fun saveSample(
+        context: Context,
+        type: Int,
+        confidence: Int,
+        eventRt: Long
+    ) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putInt(KEY_SAMPLE_RAW_TYPE, type)
+            .putInt(KEY_SAMPLE_CONFIDENCE, confidence)
+            .putLong(KEY_SAMPLE_RT, eventRt)
             .apply()
     }
 
@@ -206,9 +229,38 @@ class ActivityContextReceiver : BroadcastReceiver() {
             ActivityContextContract.PREFS,
             Context.MODE_PRIVATE
         )
+        val top = result.mostProbableActivity
+
+        // v442. Activity Recognition may report hierarchical activities:
+        // ON_FOOT can be the top activity while RUNNING/WALKING is also
+        // present with useful confidence. For semantic WALK/RUN subtype,
+        // prefer the best specific locomotion activity when confidence is
+        // strong enough. The coarse guard seed still uses `top`.
+        val specificLocomotion =
+            result.probableActivities
+                .filter {
+                    it.type == DetectedActivity.RUNNING ||
+                        it.type == DetectedActivity.WALKING
+                }
+                .maxByOrNull { it.confidence }
+
+        val semantic =
+            if (
+                specificLocomotion != null &&
+                specificLocomotion.confidence >=
+                    HybridMotionFusion.SAMPLE_CONFIDENCE_MIN
+            ) specificLocomotion
+            else top
+
+        // Fresh one-shot sample is only a semantic witness.
+        ActivityContextContract.saveSample(
+            context,
+            semantic.type,
+            semantic.confidence,
+            result.elapsedRealtimeMillis
+        )
 
         if (!p.getBoolean(ActivityContextContract.KEY_TRANSITION_SEEN, false)) {
-            val top = result.mostProbableActivity
             ActivityContextContract.save(
                 context,
                 top.type,
@@ -237,7 +289,10 @@ internal data class ActivityContextSnapshot(
     val stateSinceRt: Long,
     val stableFamily: Int,
     val source: String,
-    val seq: Long
+    val seq: Long,
+    val sampleRawType: Int,
+    val sampleConfidence: Int,
+    val sampleRt: Long
 ) {
     fun usable(nowRt: Long): Boolean = when (source) {
         ActivityContextContract.SOURCE_TRANSITION,
@@ -419,8 +474,39 @@ internal class ActivityContextTracker(private val context: Context) {
                 ActivityContextContract.KEY_SOURCE,
                 ActivityContextContract.SOURCE_NONE
             ) ?: ActivityContextContract.SOURCE_NONE,
-            p.getLong(ActivityContextContract.KEY_SEQ, 0L)
+            p.getLong(ActivityContextContract.KEY_SEQ, 0L),
+            p.getInt(
+                ActivityContextContract.KEY_SAMPLE_RAW_TYPE,
+                DetectedActivity.UNKNOWN
+            ),
+            p.getInt(ActivityContextContract.KEY_SAMPLE_CONFIDENCE, 0),
+            p.getLong(ActivityContextContract.KEY_SAMPLE_RT, 0L)
         )
+    }
+
+    /**
+     * v442. On-demand one-shot Sampling fallback for WALK/RUN subtype.
+     * It NEVER replaces Transition state used by HybridGuard.
+     */
+    fun refreshLocomotionSample(log: (String) -> Unit) {
+        if (!havePermission() || !gmsOk()) return
+
+        runCatching {
+            client.requestActivityUpdates(
+                0L,
+                ActivityContextContract.seedPendingIntent(context)
+            ).addOnFailureListener { e ->
+                log(
+                    "[контекст] locomotion sample fail-open: " +
+                        (e.message ?: e.javaClass.simpleName)
+                )
+            }
+        }.onFailure { e ->
+            log(
+                "[контекст] locomotion sample fail-open: " +
+                    (e.message ?: e.javaClass.simpleName)
+            )
+        }
     }
 }
 
@@ -430,11 +516,11 @@ internal class ActivityContextTracker(private val context: Context) {
  * STILL сам не имеет права удалить ни одного шага.
  */
 internal fun ActivityContextSnapshot.hybridContext(nowRt: Long): HybridContext {
-    if (!usable(nowRt)) {
-        return HybridContext(HybridContextHint.UNKNOWN, -1L)
-    }
+    val mainUsable = usable(nowRt)
 
-    val hint = when {
+    val hint = if (!mainUsable) {
+        HybridContextHint.UNKNOWN
+    } else when {
         stableFamily == ActivityContextContract.FAMILY_LOCOMOTION ->
             HybridContextHint.LOCOMOTION
 
@@ -452,8 +538,33 @@ internal fun ActivityContextSnapshot.hybridContext(nowRt: Long): HybridContext {
         else -> HybridContextHint.UNKNOWN
     }
 
+    val transitionLocomotion =
+        if (!mainUsable) HybridLocomotionHint.UNKNOWN
+        else when (rawType) {
+            DetectedActivity.RUNNING -> HybridLocomotionHint.RUNNING
+            DetectedActivity.WALKING -> HybridLocomotionHint.WALKING
+            DetectedActivity.ON_FOOT -> HybridLocomotionHint.ON_FOOT
+            else -> HybridLocomotionHint.UNKNOWN
+        }
+
+    val sampleAge =
+        if (sampleRt > 0L)
+            (nowRt - sampleRt).coerceAtLeast(0L)
+        else -1L
+
+    val sampleLocomotion = when (sampleRawType) {
+        DetectedActivity.RUNNING -> HybridLocomotionHint.RUNNING
+        DetectedActivity.WALKING -> HybridLocomotionHint.WALKING
+        DetectedActivity.ON_FOOT -> HybridLocomotionHint.ON_FOOT
+        else -> HybridLocomotionHint.UNKNOWN
+    }
+
     return HybridContext(
         hint = hint,
-        stateAgeMs = stateAge(nowRt)
+        stateAgeMs = if (mainUsable) stateAge(nowRt) else -1L,
+        locomotion = transitionLocomotion,
+        sampleLocomotion = sampleLocomotion,
+        sampleConfidence = sampleConfidence,
+        sampleAgeMs = sampleAge
     )
 }

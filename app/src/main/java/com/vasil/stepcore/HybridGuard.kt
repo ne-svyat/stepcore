@@ -9,7 +9,11 @@ internal enum class HybridContextHint {
 
 internal data class HybridContext(
     val hint: HybridContextHint,
-    val stateAgeMs: Long = -1L
+    val stateAgeMs: Long = -1L,
+    val locomotion: HybridLocomotionHint = HybridLocomotionHint.UNKNOWN,
+    val sampleLocomotion: HybridLocomotionHint = HybridLocomotionHint.UNKNOWN,
+    val sampleConfidence: Int = 0,
+    val sampleAgeMs: Long = -1L
 )
 
 /**
